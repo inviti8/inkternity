@@ -482,42 +482,14 @@ void Toolbar::top_toolbar() {
                 }
             });
 
-            // Inline canvas-rename field. Bound to `canvasNameInput`;
-            // when not focused, we mirror the current canvas's filename
-            // stem each frame. Pressing Enter commits the rename via
-            // World::rename_on_disk (moves the .inkternity + every
-            // sidecar). Pressing Escape or clicking away discards the
-            // pending edit (the per-frame sync restores the field).
-            // Hosted canvases (collab/subscription) aren't renamable —
-            // moving the file out from under live subscribers is unsafe.
-            if (!main.world->clientStillConnecting && !main.world->netServer && !main.world->netClient) {
-                if (!canvasNameInputFocused) {
-                    canvasNameInput = main.world->filePath.empty()
-                        ? main.world->name
-                        : main.world->filePath.stem().string();
-                }
-                input_text(gui, "canvas filename", &canvasNameInput, {
-                    .emptyText = "Canvas name",
-                    .onEnter = [&] {
-                        if (!main.world->rename_on_disk(canvasNameInput)) {
-                            // Failure: revert the input to the current
-                            // on-disk name so the user sees what's
-                            // actually persisted, not their failed try.
-                            canvasNameInput = main.world->filePath.empty()
-                                ? main.world->name
-                                : main.world->filePath.stem().string();
-                        }
-                        canvasNameInputFocused = false;
-                    },
-                    .onSelect = [&] { canvasNameInputFocused = true; },
-                    .onDeselect = [&] {
-                        // Discard pending edit on focus loss without
-                        // Enter — the next frame's sync will reset the
-                        // buffer to the on-disk stem.
-                        canvasNameInputFocused = false;
-                    },
-                });
-            }
+            // Reader mode + subscriber/viewer gating: editing-related
+            // buttons hide so a read-only session can't surface controls
+            // that mutate the canvas (undo, redo, grid, layer). Mirrors
+            // the phone-UI gating pattern. The reader-mode toggle stays
+            // visible regardless so the artist can exit.
+            const bool inReaderMode = main.world->readerMode.is_active();
+            const bool isViewer = main.world->ownClientData && main.world->ownClientData->is_viewer();
+            const bool showEditButtons = !inReaderMode && !isViewer;
 
             if(!main.world->clientStillConnecting) {
                 if(main.world->netObjMan.is_connected()) {
@@ -525,24 +497,36 @@ void Toolbar::top_toolbar() {
                         playerMenuOpen = !playerMenuOpen;
                     });
                 }
-                icon_button_top_toolbar("Menu Undo Button", "data/icons/undo.svg", false, [&] {
-                    main.world->undo_with_checks();
-                });
-                icon_button_top_toolbar("Menu Redo Button", "data/icons/redo.svg", false, [&] {
-                    main.world->redo_with_checks();
-                });
-                Element* gridMenuButton = icon_button_top_toolbar("Grids Button", "data/icons/grid.svg", gridMenu.popupOpen, [&] {
-                    if(gridMenu.popupOpen)
-                        stop_displaying_grid_menu();
-                    else
-                        gridMenu.popupOpen = true;
-                });
-                Element* layerMenuButton = icon_button_top_toolbar("Layer Menu Button", "data/icons/layer.svg", layerMenuPopupOpen, [&] {
-                    if(layerMenuPopupOpen)
-                        stop_displaying_layer_menu();
-                    else
-                        layerMenuPopupOpen = true;
-                });
+                if (showEditButtons) {
+                    icon_button_top_toolbar("Menu Undo Button", "data/icons/undo.svg", false, [&] {
+                        main.world->undo_with_checks();
+                    });
+                    icon_button_top_toolbar("Menu Redo Button", "data/icons/redo.svg", false, [&] {
+                        main.world->redo_with_checks();
+                    });
+                }
+                Element* gridMenuButton = nullptr;
+                Element* layerMenuButton = nullptr;
+                if (showEditButtons) {
+                    gridMenuButton = icon_button_top_toolbar("Grids Button", "data/icons/grid.svg", gridMenu.popupOpen, [&] {
+                        if(gridMenu.popupOpen)
+                            stop_displaying_grid_menu();
+                        else
+                            gridMenu.popupOpen = true;
+                    });
+                    layerMenuButton = icon_button_top_toolbar("Layer Menu Button", "data/icons/layer.svg", layerMenuPopupOpen, [&] {
+                        if(layerMenuPopupOpen)
+                            stop_displaying_layer_menu();
+                        else
+                            layerMenuPopupOpen = true;
+                    });
+                } else {
+                    // Tool button hidden mid-popup: auto-close so the
+                    // popup body doesn't render attached to a vanished
+                    // trigger element.
+                    if (gridMenu.popupOpen)     gridMenu.popupOpen     = false;
+                    if (layerMenuPopupOpen)     layerMenuPopupOpen     = false;
+                }
                 // Reader-mode toggle: lives in the top toolbar (mirrors the
                 // phone-UI placement) so it remains reachable once the
                 // editor palette below disappears on toggle-on.
@@ -558,7 +542,7 @@ void Toolbar::top_toolbar() {
                 // tool there's nothing to surface.
                 Element* brushCustomizationMenuButton = nullptr;
                 Element* savedPresetsMenuButton = nullptr;
-                if(main.world && main.world->drawProg.drawTool
+                if(showEditButtons && main.world && main.world->drawProg.drawTool
                    && main.world->drawProg.drawTool->get_type() == DrawingProgramToolType::MYPAINTBRUSH) {
                     brushCustomizationMenuButton = icon_button_top_toolbar(
                         "Brush Customization Button",

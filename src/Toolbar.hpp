@@ -168,15 +168,6 @@ class Toolbar {
 
         std::string downloadNameSet;
 
-        // DISTRIBUTION-PHASE1.md §4 polish — inline rename. The text
-        // input in the top toolbar binds to `canvasNameInput`; on
-        // commit (Enter) we call World::rename_on_disk and the canvas
-        // file + sidecars move. `canvasNameInputFocused` gates the
-        // per-frame "sync from filePath" pass so we don't clobber the
-        // user's in-progress typing.
-        std::string canvasNameInput;
-        bool canvasNameInputFocused = false;
-
         struct PaletteData {
             size_t selectedPalette = 0;
             bool addingPalette = false;
