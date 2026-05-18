@@ -29,9 +29,14 @@ Files saved by Inkternity use the `.inkternity` extension; existing `.infpnt` fi
 
 - **Waypoints** — droppable canvas markers that capture camera state, panel framing, and a position in a directed reading graph
 - **Tree-view editor** — collapsible side panel for connecting waypoints into a reading order with optional branches; bidirectional sync with the canvas
-- **Reader mode** — chrome-free presentation that follows the waypoint graph; arrow-key navigation; per-branch choice UI
+- **Reader mode** — chrome-free presentation that follows the waypoint graph; arrow-key navigation; per-branch choice UI; per-waypoint speed multipliers and easing
+- **Transitions** — waypoints can be flagged as transition points so the reader auto-advances through them, building cinematic camera moves between story beats
 - **Waypoint skins** — capture a rectangle of the canvas (`ButtonSelectTool`) as a waypoint's skin, used as the artwork for nav buttons in reader mode and as node visuals in the tree view
-- **libmypaint ink/marker brushes** — curated brush set built on [libmypaint](https://github.com/mypaint/libmypaint) (technical pen, fine inker, brush pen, fine/broad markers, wet ink) with persistent tile data per layer
+- **Pixel (raster) brushes** — curated set built on [libmypaint](https://github.com/mypaint/libmypaint) (Sharp / Textured categories: technical pen, fine inker, brush pen, fine/broad markers, wet ink, pencil) with persistent tile data per layer
+- **Brush customization + saved presets** — tune any libmypaint parameter (size, opacity, smudge, jitter, dabs, tracking, pressure curves…), capture a square icon from the canvas, and save the tuned brush to a per-user library
+- **Stroke vectorize** — drag a rect over recorded libmypaint strokes to convert them into editable vector beziers
+- **Artist avatar** — capture a 256×256 square from the canvas; a downscaled 64×64 broadcasts to peers and renders above their remote cursor during collaboration
+- **Subscription hosting** — alongside ephemeral collab lobbies, a canvas with portal-issued metadata (or dev keys) can be published under a stable share code; subscribers join read-only as live viewers
 
 ## Inherited from InfiniPaint
 
@@ -53,7 +58,7 @@ Files saved by Inkternity use the `.inkternity` extension; existing `.infpnt` fi
 
 ## Installation
 
-Inkternity is in active Phase 1 development. Build from source via [BUILDING.md](docs/BUILDING.md). Pre-built installers will land with the Phase 1 release.
+Inkternity is under active development. Phase 1 (waypoint graph, reader mode, tree view), Phase 2 (transitions + per-waypoint timing), and Phase 3 (brush customization, saved-preset library, artist avatars) have all landed; release-candidate installers are produced from each tagged build. Build from source via [BUILDING.md](docs/BUILDING.md).
 
 ## Contribution
 
