@@ -56,7 +56,7 @@ void BrushCustomizationDrawer::render_body() {
         // in Toolbar.cpp already prevents this from being reachable in
         // the common case, but a tool switch could theoretically race
         // an open drawer -- bail rather than dereference nullptr.
-        GUIStuff::ElementHelpers::text_label(gui, "Switch to a MyPaint brush to customize.");
+        GUIStuff::ElementHelpers::text_label(gui, "Switch to a Pixel brush to customize.");
         return;
     }
 

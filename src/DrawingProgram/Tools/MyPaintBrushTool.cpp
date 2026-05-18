@@ -223,7 +223,7 @@ void MyPaintBrushTool::gui_toolbox(Toolbar&) {
     auto& cfg = drawP.world.main.toolConfig.myPaintBrush;
 
     gui.new_id("mypaint brush tool", [&] {
-        text_label_centered(gui, "MyPaint Brush");
+        text_label_centered(gui, "Pixel Brush");
         render_brush_picker_row(gui, cfg, brush_);
         render_brush_tunable_sliders(gui, cfg, brush_);
     });

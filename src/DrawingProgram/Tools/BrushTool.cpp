@@ -177,7 +177,7 @@ void BrushTool::gui_toolbox(Toolbar& t) {
     auto& gui = drawP.world.main.g.gui;
 
     gui.new_id("brush tool", [&] {
-        text_label_centered(gui, "Brush");
+        text_label_centered(gui, "Vector Brush");
         checkbox_boolean_field(gui, "hasroundcaps", "Round Caps", &drawP.world.main.toolConfig.brush.hasRoundCaps);
         drawP.world.main.toolConfig.relative_width_gui(drawP, "Size");
     });

@@ -184,7 +184,7 @@ void SavedPresetsDrawer::render_body() {
 
     auto& drawTool = main.world->drawProg.drawTool;
     if (!drawTool || drawTool->get_type() != DrawingProgramToolType::MYPAINTBRUSH) {
-        GUIStuff::ElementHelpers::text_label(gui, "Switch to a MyPaint brush to pick a preset.");
+        GUIStuff::ElementHelpers::text_label(gui, "Switch to a Pixel brush to pick a preset.");
         return;
     }
 
