@@ -1,4 +1,5 @@
 #pragma once
+#include "BrushCustomizationDrawer.hpp"
 #include "HostMode.hpp"
 #include "GUIStuff/Elements/ScrollArea.hpp"
 #include "DrawData.hpp"
@@ -74,6 +75,11 @@ class Toolbar {
         bool drawGui = true;
 
         bool app_close_requested();
+
+        // Accessor for nested-view components (e.g. BrushCustomizationDrawer)
+        // that need to walk back to MainProgram. Returning the reference
+        // keeps callers from having to re-plumb MainProgram everywhere.
+        MainProgram& main_program() { return main; }
     private:
         static void sdl_open_file_dialog_callback(void* userData, const char * const * fileList, int filter);
 
@@ -88,8 +94,10 @@ class Toolbar {
         void stop_displaying_grid_menu();
         void stop_displaying_bookmark_menu();
         void stop_displaying_layer_menu();
+        void stop_displaying_brush_customization_menu();
         void bookmark_menu(GUIStuff::Element* bookmarkMenuButton);
         void layer_menu(GUIStuff::Element* layerMenuButton);
+        void brush_customization_menu(GUIStuff::Element* triggerButton);
         void drawing_program_gui();
         void options_menu();
         void file_picker_gui_refresh_entries();
@@ -183,6 +191,12 @@ class Toolbar {
 
         bool bookmarkMenuPopupOpen = false;
         bool layerMenuPopupOpen = false;
+        // PHASE3.md §3 A1.M4 -- toolbar toggle state for the brush
+        // customization popup. Button + popup only render when the
+        // active tool is MyPaintBrushTool (the drawer is meaningless
+        // for any other tool).
+        bool brushCustomizationMenuPopupOpen = false;
+        BrushCustomizationDrawer brushCustomizationDrawer{*this};
 
         struct GridMenu {
             bool popupOpen = false;

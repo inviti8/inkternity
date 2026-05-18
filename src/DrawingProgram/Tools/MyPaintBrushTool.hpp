@@ -41,6 +41,16 @@ class MyPaintBrushTool : public DrawingProgramToolBase {
         virtual void input_mouse_motion_callback(const InputManager::MouseMotionCallbackArgs& motion) override;
         virtual void input_pen_axis_callback(const InputManager::PenAxisCallbackArgs& axis) override;
 
+#ifdef HVYM_HAS_LIBMYPAINT
+        // PHASE3 A1.M4 — exposed for the customization drawer to read +
+        // mutate base values live. Returned pointer is valid for the
+        // tool's lifetime; the brush instance is recreated only when
+        // MyPaintBrushTool is destroyed (tool switch). Drawer must
+        // bail when get_type() != MYPAINTBRUSH (callers check this
+        // before calling get_brush()).
+        MyPaintBrush* get_brush() { return brush_; }
+#endif
+
     private:
         void begin_stroke(const Vector2f& canvasPos, float pressure);
         void continue_stroke(const Vector2f& canvasPos, float pressure);

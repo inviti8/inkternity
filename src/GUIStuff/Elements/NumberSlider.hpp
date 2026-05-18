@@ -37,7 +37,14 @@ template <typename T> class NumberSlider : public Element {
         virtual void update() override {
             smooth_two_way_animation_time(dd.holdAnimation, gui.io.deltaTime, dd.isHeld, HOLD_ANIMATION_TIME);
             smooth_two_way_animation_time(dd.hoverAnimation, gui.io.deltaTime, mouseHovering && !gui.last_interaction_is_touch(), gui.io.theme->hoverExpandTime);
-            if(oldDD != dd) {
+            // Also invalidate when the slider's bounding box has moved (e.g.
+            // the slider lives inside a ScrollArea and the user scrolled).
+            // Without this gate, the slider's last draw stays cached at its
+            // prior screen position, and the scroll surface paints over it
+            // wherever it moved to -- the slider visually disappears until
+            // a hover / value / hold change forces a redraw.
+            bool bbChanged = boundingBox != oldBoundingBox;
+            if(oldDD != dd || bbChanged) {
                 gui.invalidate_draw_element(this, {
                     .top = 10.0f,
                     .bottom = 10.0f,
@@ -45,6 +52,7 @@ template <typename T> class NumberSlider : public Element {
                     .right = 10.0f
                 });
                 oldDD = dd;
+                oldBoundingBox = boundingBox;
             }
         }
 
@@ -159,6 +167,10 @@ template <typename T> class NumberSlider : public Element {
 
         DisplayData dd;
         DisplayData oldDD;
+        // Snapshot of the slider's bounding box from the previous frame;
+        // used by update() to invalidate when scrolling / window resize
+        // moves the slider without changing its display data.
+        std::optional<SCollision::AABB<float>> oldBoundingBox;
 
         NumberSliderData config;
 };

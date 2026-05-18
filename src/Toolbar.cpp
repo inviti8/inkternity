@@ -541,12 +541,35 @@ void Toolbar::top_toolbar() {
                         bookmarkMenuPopupOpen = true;
                 });
 
+                // PHASE3 A1.M4 -- brush customization drawer toggle. Visible
+                // only when the active tool is the MyPaint brush; the drawer
+                // exclusively edits libmypaint base values, so for any other
+                // tool there's nothing to surface.
+                Element* brushCustomizationMenuButton = nullptr;
+                if(main.world && main.world->drawProg.drawTool
+                   && main.world->drawProg.drawTool->get_type() == DrawingProgramToolType::MYPAINTBRUSH) {
+                    brushCustomizationMenuButton = icon_button_top_toolbar(
+                        "Brush Customization Button",
+                        "data/icons/live-brush.svg",
+                        brushCustomizationMenuPopupOpen, [&] {
+                        if(brushCustomizationMenuPopupOpen)
+                            stop_displaying_brush_customization_menu();
+                        else
+                            brushCustomizationMenuPopupOpen = true;
+                    });
+                } else if(brushCustomizationMenuPopupOpen) {
+                    // Tool switched away while the popup was open -- auto-close.
+                    brushCustomizationMenuPopupOpen = false;
+                }
+
                 if(gridMenu.popupOpen)
                     grid_menu(gridMenuButton);
                 if(bookmarkMenuPopupOpen)
                     bookmark_menu(bookmarkMenuButton);
                 if(layerMenuPopupOpen)
                     layer_menu(layerMenuButton);
+                if(brushCustomizationMenuPopupOpen && brushCustomizationMenuButton)
+                    brush_customization_menu(brushCustomizationMenuButton);
             }
             if(menuPopUpOpen) {
                 gui.set_z_index(5, [&] {
@@ -962,6 +985,11 @@ void Toolbar::stop_displaying_bookmark_menu() {
     main.g.gui.set_to_layout();
 }
 
+void Toolbar::stop_displaying_brush_customization_menu() {
+    brushCustomizationMenuPopupOpen = false;
+    main.g.gui.set_to_layout();
+}
+
 void Toolbar::stop_displaying_layer_menu() {
     main.world->drawProg.layerMan.listGUI.refresh_gui_data();
     layerMenuPopupOpen = false;
@@ -993,6 +1021,59 @@ void Toolbar::bookmark_menu(Element* bookmarkMenuButton) {
             .onClick = [&, bookmarkMenuButton] (LayoutElement* l, const InputManager::MouseButtonCallbackArgs& button) {
                 if(!l->mouseHovering && !l->childMouseHovering && !bookmarkMenuButton->mouseHovering && button.down)
                     stop_displaying_bookmark_menu();
+            }
+        });
+    });
+}
+
+void Toolbar::brush_customization_menu(Element* triggerButton) {
+    auto& gui = main.g.gui;
+    auto& io = gui.io;
+
+    gui.set_z_index(gui.get_z_index() + 1, [&] {
+        gui.element<LayoutElement>("brush customization menu", [&] (LayoutElement*, const Clay_ElementId& lId) {
+            CLAY(lId, {
+                .layout = {
+                    // FIXED, not FIT: the inner ScrollArea declares GROW
+                    // sizing in both axes, and a GROW child inside a FIT
+                    // parent is unresolvable (parent wants child's size,
+                    // child wants parent's size). The general-settings
+                    // window uses the same FIXED-outer + GROW-ScrollArea
+                    // pattern via center_obstructing_window_gui.
+                    .sizing = {.width = CLAY_SIZING_FIXED(380), .height = CLAY_SIZING_FIXED(500) },
+                    .padding = CLAY_PADDING_ALL(io.theme->padding1),
+                    .childGap = io.theme->childGap1,
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_TOP},
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM
+                },
+                .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+                .cornerRadius = CLAY_CORNER_RADIUS(io.theme->windowCorners1),
+                .floating = {.offset = {.x = 0, .y = static_cast<float>(io.theme->padding1)}, .zIndex = gui.get_z_index(), .attachPoints = {.element = CLAY_ATTACH_POINT_RIGHT_TOP, .parent = CLAY_ATTACH_POINT_RIGHT_BOTTOM}, .attachTo = CLAY_ATTACH_TO_PARENT}
+            }) {
+                // 57 params -> the body has to scroll. Same pattern as
+                // close_popup_gui above.
+                gui.clipping_element<ScrollArea>("brush customization scroll area", ScrollArea::Options{
+                    .scrollVertical = true,
+                    .clipVertical = true,
+                    .scrollbarY = ScrollArea::ScrollbarType::NORMAL,
+                    .innerContent = [&](const ScrollArea::InnerContentParameters&) {
+                        CLAY_AUTO_ID({
+                            .layout = {
+                                .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0) },
+                                .childGap = io.theme->childGap1,
+                                .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP},
+                                .layoutDirection = CLAY_TOP_TO_BOTTOM
+                            }
+                        }) {
+                            brushCustomizationDrawer.render_body();
+                        }
+                    }
+                });
+            }
+        }, LayoutElement::Callbacks {
+            .onClick = [&, triggerButton] (LayoutElement* l, const InputManager::MouseButtonCallbackArgs& button) {
+                if(!l->mouseHovering && !l->childMouseHovering && !triggerButton->mouseHovering && button.down)
+                    stop_displaying_brush_customization_menu();
             }
         });
     });
