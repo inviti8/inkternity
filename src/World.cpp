@@ -38,6 +38,28 @@
 #include "CanvasComponents/CanvasComponentAllocator.hpp"
 #include "WorldScreenshot.hpp"
 
+#ifdef _WIN32
+#include <cstdio>
+#include <windows.h>
+namespace {
+// Wraps a no-arg callable in a Windows structured-exception (SEH) guard so
+// access violations during cereal serialization don't terminate the process.
+// Returns 0 on success or the SEH exception code on failure. The handler
+// body intentionally contains no C++ objects with destructors — MSVC won't
+// emit the right unwind tables if a function mixes SEH with C++ unwinding.
+template <typename Fn>
+unsigned long seh_guard_call(Fn&& fn) noexcept {
+    __try {
+        fn();
+        return 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return GetExceptionCode();
+    }
+}
+}
+#endif
+
 #ifdef __EMSCRIPTEN__
     #include <EmscriptenHelpers/emscripten_browser_file.h>
 #endif
@@ -645,8 +667,28 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAt, bool dis
         {
             std::stringstream fWorldDataToCompress;
             {
-                cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
-                save_file(a);
+                #ifdef _WIN32
+                    // SEH-guard the cereal recursion: an access violation
+                    // deep in serialization (e.g. a null member ptr) becomes
+                    // a catchable runtime_error instead of terminating the
+                    // process and silently losing the artist's work.
+                    const unsigned long sehCode = seh_guard_call([&] {
+                        cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
+                        save_file(a);
+                    });
+                    if(sehCode != 0) {
+                        char buf[24];
+                        std::snprintf(buf, sizeof(buf), "0x%08lx", sehCode);
+                        throw std::runtime_error(
+                            std::string("Internal exception (code ") + buf +
+                            ") while serializing canvas. Your work is still "
+                            "in memory — try Save As again to a different "
+                            "path, or close any open tool dialogs and retry.");
+                    }
+                #else
+                    cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
+                    save_file(a);
+                #endif
             }
 
             std::vector<char> compressedData(ZSTD_compressBound(fWorldDataToCompress.view().size()));
@@ -665,9 +707,32 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAt, bool dis
                 f.view()
             );
         #else
-            if(!SDL_SaveFile(filePath.string().c_str(), f.view().data(), f.view().size()))
+            // Atomic write: serialize the full byte buffer to <path>.tmp
+            // first, then rename it over the target. A crash mid-write
+            // can no longer corrupt the prior good file at the same path,
+            // and a partial .tmp stays on disk for forensic recovery.
+            auto tmpPath = filePath;
+            tmpPath += ".tmp";
+            if(!SDL_SaveFile(tmpPath.string().c_str(), f.view().data(), f.view().size()))
                 throw std::runtime_error("SDL_SaveFile failed with error: " + std::string(SDL_GetError()));
-            else if(saveThumbnail && !disableThumbnailSaving) {
+            std::error_code rec;
+            std::filesystem::rename(tmpPath, filePath, rec);
+            if(rec) {
+                // rename may fail across drives or on permission edge cases.
+                // Fall back to copy + remove so the user's bytes still land
+                // at the target path; if even copy fails, surface the tmp
+                // location so the artist can recover manually.
+                std::filesystem::copy_file(tmpPath, filePath,
+                    std::filesystem::copy_options::overwrite_existing, rec);
+                if(rec)
+                    throw std::runtime_error(
+                        "Could not finalize save at " + filePath.string() +
+                        ": " + rec.message() +
+                        " (canvas bytes remain at " + tmpPath.string() + ")");
+                std::filesystem::remove(tmpPath, rec);
+            }
+
+            if(saveThumbnail && !disableThumbnailSaving) {
                 Vector2f imageCenter{main.window.size.x() * 0.5f, main.window.size.y() * 0.5f};
                 float imageDim = std::max(main.window.size.x(), main.window.size.y());
                 Vector2f imageDimVec{imageDim * 0.5f, imageDim * 0.5f};
