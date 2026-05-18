@@ -90,6 +90,27 @@ class World {
         void save_to_file(const std::filesystem::path& filePathToSaveAt, bool disableThumbnailSaving = false);
         void load_from_file(const std::filesystem::path& filePathToLoadFrom, std::string_view buffer);
 
+        // Periodic in-progress autosave. Called from World::update each
+        // frame; cheap when there's nothing to do. Writes a snapshot to
+        // autosave_file_path() every AUTOSAVE_INTERVAL_SECONDS when the
+        // canvas has unsaved local changes, and silently no-ops in reader
+        // mode, viewer mode, or while a client is mid-connect. Does NOT
+        // mutate filePath / name / set_save_action — autosaves are a
+        // recovery breadcrumb, not a "the artist saved" signal.
+        void autosave_tick();
+
+        // <configPath>/saves/.autosave/<autosaveSessionId>.inkternity.
+        // Per-World id is generated in the constructor and is stable for
+        // the World's lifetime so the autosave file gets overwritten in
+        // place each tick. FileSelectScreen scans this dir on launch and
+        // surfaces orphans as "Recovered Unsaved Work".
+        std::filesystem::path autosave_file_path() const;
+
+        // Remove the autosave file (if any) belonging to this World.
+        // Called by save_to_file on a real-save success so the recovery
+        // entry doesn't outlive the work it was protecting.
+        void delete_autosave_file();
+
         // Rename the canvas file on disk to `newStem.inkternity` in the
         // same directory, carrying every sidecar (thumbnail, publish
         // marker, lock if held by us) with it. Updates filePath + name
@@ -186,6 +207,15 @@ class World {
     private:
         bool saveThumbnail = false;
         bool hasUnsavedLocalChanges = false;
+
+        // Stable per-World id used as the autosave filename stem. Generated
+        // in the constructor (random hex), so each open canvas gets its
+        // own .autosave file and they don't collide. Persists for the
+        // lifetime of the World object — not the canvas — so re-opening
+        // the same file in a new session creates a fresh autosave id.
+        std::string autosaveSessionId;
+        std::chrono::steady_clock::time_point lastAutosaveAttemptTime{};
+        static constexpr int AUTOSAVE_INTERVAL_SECONDS = 180; // 3 min
 
         void load_empty_canvas(const std::optional<std::filesystem::path>& filePathEmptyAutoSaveDir = std::nullopt);
 

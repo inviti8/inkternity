@@ -30,9 +30,11 @@ FileSelectScreen::FileSelectScreen(MainProgram& m): Screen(m) {
     savePath = main.conf.configPath / "saves";
     trashPath = main.conf.configPath / "trash";
     trashInfoPath = main.conf.configPath / "trashInfo.json";
+    autosavePath = savePath / ".autosave";
 
     SDL_CreateDirectory(savePath.string().c_str());
     SDL_CreateDirectory(trashPath.string().c_str());
+    SDL_CreateDirectory(autosavePath.string().c_str());
 
     try {
         nlohmann::json j(nlohmann::json::parse(read_file_to_string(trashInfoPath)));
@@ -40,11 +42,25 @@ FileSelectScreen::FileSelectScreen(MainProgram& m): Screen(m) {
     }
     catch(...) {}
 
-    update_file_list(fileList, savePath, false);
+    refresh_main_file_list();
 
     // Update trash list once to get trash info up to date
     std::vector<FileInfo> trashListTemp;
     update_file_list(trashListTemp, trashPath, true);
+}
+
+void FileSelectScreen::refresh_main_file_list() {
+    update_file_list(fileList, savePath, false);
+    // Surface any autosaves left behind by a previous session (process
+    // crash, force-quit, OS reboot). Prepended so the artist sees their
+    // unprotected work before anything else in the file list.
+    std::vector<FileInfo> recovered;
+    update_file_list(recovered, autosavePath, false);
+    for(auto& e : recovered)
+        e.isAutosave = true;
+    fileList.insert(fileList.begin(),
+        std::make_move_iterator(recovered.begin()),
+        std::make_move_iterator(recovered.end()));
 }
 
 void FileSelectScreen::gui_layout_run() {
@@ -70,6 +86,7 @@ void FileSelectScreen::update_file_list(std::vector<FileInfo>& fL, const std::fi
                 FileInfo fileInfoToAdd;
                 fileInfoToAdd.fileName = p.stem().string();
                 fileInfoToAdd.fileExtension = fExt;
+                fileInfoToAdd.basePath = savePath;
 
                 if(trashUpdate) {
                     auto it = trashInfo.files.find(fileInfoToAdd.fileName);
@@ -589,12 +606,12 @@ void FileSelectScreen::edit_action_bar() {
                                     if(selectedMenu == SelectedMenu::FILES) {
                                         edit_action_bar_button("trash", "data/icons/trash.svg", "Trash", [&] {
                                             move_selected_files(savePath, trashPath, TrashMoveType::MOVE_TO_TRASH);
-                                            update_file_list(fileList, savePath, false);
+                                            refresh_main_file_list();
                                             editMode = false;
                                         });
                                         edit_action_bar_button("duplicate", "data/icons/RemixIcon/file-copy-line.svg", "Duplicate", [&] {
                                             duplicate_selected_files(savePath);
-                                            update_file_list(fileList, savePath, false);
+                                            refresh_main_file_list();
                                             editMode = false;
                                         });
                                     }
@@ -841,7 +858,7 @@ void FileSelectScreen::main_menu() {
                             if(mainMenuOpenAnim->is_at_end()) {
                                 icon_text_transparent_option_selected_button("Files", "data/icons/folder.svg", "Files", selectedMenu == SelectedMenu::FILES, [&] {
                                     selectedMenu = SelectedMenu::FILES;
-                                    update_file_list(fileList, savePath, false);
+                                    refresh_main_file_list();
                                     mainMenuOpenAnim->animation_trigger_reverse();
                                     if(fileViewScrollArea) fileViewScrollArea->reset_scroll();
                                 });
@@ -875,16 +892,27 @@ void FileSelectScreen::file_view() {
     std::filesystem::path folderPath = (selectedMenu == SelectedMenu::TRASH) ? trashPath : savePath;
 
     auto fileButton = [&] (size_t i, bool isList, const Vector2f& iconSize) {
-        std::filesystem::path filePath = folderPath / (fileList[i].fileName + fileList[i].fileExtension);
-        const bool isPublished = PublishedCanvases::is_published(filePath);
+        // Per-entry basePath wins so autosave entries (rooted at
+        // autosavePath) open from their own dir without polluting the
+        // selectedMenu-keyed folderPath.
+        const std::filesystem::path entryDir = fileList[i].basePath.empty()
+            ? folderPath
+            : fileList[i].basePath;
+        std::filesystem::path filePath = entryDir / (fileList[i].fileName + fileList[i].fileExtension);
+        const bool isAutosaveEntry = fileList[i].isAutosave;
+        const bool isPublished = !isAutosaveEntry && PublishedCanvases::is_published(filePath);
         const bool isHostedByUs = isPublished && PublishedCanvases::is_locked_by_us(filePath);
         const bool isHostedByOther = isPublished && !isHostedByUs && PublishedCanvases::is_locked_by_anyone(filePath);
         gui.element<SelectableButton>("file button", SelectableButton::Data{
             .isSelected = editMode && fileList[i].selected,
-            .onClick = [&, filePath, i] {
-                if(editMode)
+            .onClick = [&, filePath, i, isAutosaveEntry] {
+                // Edit mode (trash / duplicate / move) operates on real
+                // saves only; autosave entries are recovery breadcrumbs
+                // — selecting one would invite operations that assume
+                // savePath. Open path stays clickable in edit mode.
+                if(editMode && !isAutosaveEntry)
                     fileList[i].selected = !fileList[i].selected;
-                else {
+                else if(!editMode) {
                     CustomEvents::emit_event<CustomEvents::OpenInfiniPaintFileEvent>({
                         .isClient = false,
                         .saveThumbnail = true,
@@ -907,7 +935,7 @@ void FileSelectScreen::file_view() {
                             .layout = { .sizing = {.width = CLAY_SIZING_FIXED(iconSize.x()), .height = CLAY_SIZING_FIXED(iconSize.y()) }},
                         }) {
                             gui.element<ImageDisplay>("ico", ImageDisplay::Data{
-                                .imgPath = folderPath / (fileList[i].fileName + ".jpg"),
+                                .imgPath = entryDir / (fileList[i].fileName + ".jpg"),
                                 .radius = 20
                             });
                         }
@@ -919,9 +947,10 @@ void FileSelectScreen::file_view() {
                                 .layoutDirection = CLAY_TOP_TO_BOTTOM
                             }
                         }) {
-                            text_label(gui, fileList[i].fileName);
+                            text_label(gui, isAutosaveEntry ? "Recovered unsaved work" : fileList[i].fileName);
                             text_label_light(gui, fileList[i].lastModifyDate);
-                            if (isHostedByUs)         text_label(gui, "* Hosting (this instance)");
+                            if (isAutosaveEntry)      text_label(gui, "* Open to recover");
+                            else if (isHostedByUs)         text_label(gui, "* Hosting (this instance)");
                             else if (isHostedByOther) text_label(gui, "* Hosting (another instance)");
                             else if (isPublished)     text_label(gui, "* Published (idle)");
                         }
@@ -941,7 +970,7 @@ void FileSelectScreen::file_view() {
                             .layout = { .sizing = {.width = CLAY_SIZING_FIXED(iconSize.x()), .height = CLAY_SIZING_FIXED(iconSize.y()) }},
                         }) {
                             gui.element<ImageDisplay>("ico", ImageDisplay::Data{
-                                .imgPath = folderPath / (fileList[i].fileName + ".jpg"),
+                                .imgPath = entryDir / (fileList[i].fileName + ".jpg"),
                                 .radius = 20
                             });
                         }
@@ -954,7 +983,7 @@ void FileSelectScreen::file_view() {
                             }) {
                                 if(l->get_bb()) {
                                     RichText::TextData fileNameText;
-                                    fileNameText.paragraphs.emplace_back(fileList[i].fileName);
+                                    fileNameText.paragraphs.emplace_back(isAutosaveEntry ? "Recovered" : fileList[i].fileName);
                                     gui.element<TextParagraph>("file name", TextParagraph::Data{
                                         .text = fileNameText,
                                         .maxGrowX = l->get_bb().value().width(),
@@ -964,7 +993,8 @@ void FileSelectScreen::file_view() {
                             }
                         });
                         text_label_light(gui, fileList[i].lastModifyDate);
-                        if (isPublished) text_label(gui, "* Published");
+                        if (isAutosaveEntry)   text_label(gui, "* Unsaved");
+                        else if (isPublished)  text_label(gui, "* Published");
                     }
                 }
             }

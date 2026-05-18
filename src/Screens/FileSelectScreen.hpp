@@ -27,6 +27,12 @@ class FileSelectScreen : public Screen {
         std::filesystem::path savePath;
         std::filesystem::path trashPath;
         std::filesystem::path trashInfoPath;
+        // Hidden subdir of savePath where Worlds drop periodic in-progress
+        // autosaves (World::autosave_tick). Entries that survive a clean
+        // save get deleted by World::delete_autosave_file; what remains is
+        // work the artist hasn't yet committed to a real file. Rendered
+        // inline at the top of the main file list with a "Recovered" badge.
+        std::filesystem::path autosavePath;
 
         void save_files();
 
@@ -39,9 +45,25 @@ class FileSelectScreen : public Screen {
             SDL_Time lastModifyTime;
             std::string lastModifyDate;
             bool selected = false;
+            // Directory the entry lives in. Set per-entry so autosave
+            // entries (under savePath/.autosave) and regular saves
+            // (under savePath) can coexist in one list without the
+            // open path being inferred from selectedMenu alone.
+            std::filesystem::path basePath;
+            // True for entries scanned out of autosavePath. Disables
+            // edit-mode select / trash / duplicate (those operations
+            // would silently fail since they assume savePath), and
+            // triggers the "Recovered" badge in the file tile.
+            bool isAutosave = false;
         };
 
         void update_file_list(std::vector<FileInfo>& fL, const std::filesystem::path& savePath, bool trashUpdate);
+        // Repopulate fileList for the FILES tab — regular saves plus
+        // any leftover autosave-recovery entries prepended. Replaces
+        // bare update_file_list(fileList, savePath, false) calls so the
+        // autosave breadcrumbs don't vanish on tab switch or edit-mode
+        // refresh.
+        void refresh_main_file_list();
 
         TrashInfo trashInfo;
         std::vector<FileInfo> fileList;

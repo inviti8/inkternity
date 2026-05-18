@@ -37,6 +37,7 @@
 #include "CanvasComponents/CanvasComponentContainer.hpp"
 #include "CanvasComponents/CanvasComponentAllocator.hpp"
 #include "WorldScreenshot.hpp"
+#include <Helpers/Random.hpp>
 
 #ifdef _WIN32
 #include <cstdio>
@@ -78,6 +79,8 @@ World::World(MainProgram& initMain, const CustomEvents::OpenInfiniPaintFileEvent
     canvasTheme(*this)
 {
     saveThumbnail = worldInfo.saveThumbnail;
+    autosaveSessionId = Random::get().alphanumeric_str(16);
+    lastAutosaveAttemptTime = std::chrono::steady_clock::now();
 
     init_net_obj_type_list();
     netObjMan.set_netobj_destroy_callback([&undo = undo](const NetworkingObjects::NetObjID& idToDestroy) {
@@ -294,6 +297,7 @@ void World::redo_with_checks() {
 
 void World::update() {
     connection_update();
+    autosave_tick();
 }
 
 void World::on_tab_out() {
@@ -751,10 +755,116 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAt, bool dis
 
         Logger::get().log("USERINFO", "File saved");
         undo.set_save_action();
+        // The canvas just got persisted to the artist's chosen path, so
+        // the autosave breadcrumb for this World is no longer protecting
+        // anything. Removing it keeps the recovery list from accumulating
+        // stale entries across long editing sessions.
+        delete_autosave_file();
     }
     catch(const std::exception& e) {
         Logger::get().log("WORLDFATAL", std::string("Save error: ") + e.what());
     }
+}
+
+std::filesystem::path World::autosave_file_path() const {
+    return main.conf.configPath / "saves" / ".autosave" /
+           (autosaveSessionId + DOT_FILE_EXTENSION);
+}
+
+void World::delete_autosave_file() {
+    std::error_code ec;
+    std::filesystem::remove(autosave_file_path(), ec);
+}
+
+void World::autosave_tick() {
+#ifdef __EMSCRIPTEN__
+    // Browser builds have no filesystem we can rely on for recovery;
+    // the page-close confirmation already covers data-loss surface.
+    return;
+#else
+    if(!hasUnsavedLocalChanges) return;
+    if(clientStillConnecting) return;
+    if(readerMode.is_active()) return;
+    // Subscribers are read-only viewers — they don't own the canvas
+    // state and don't need a recovery breadcrumb.
+    if(ownClientData && ownClientData->is_viewer()) return;
+    // In a collab/subscription client session, the host owns persistence;
+    // the local copy is a live mirror, not the source of truth.
+    if(netClient) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    if(now - lastAutosaveAttemptTime < std::chrono::seconds(AUTOSAVE_INTERVAL_SECONDS))
+        return;
+    lastAutosaveAttemptTime = now;
+
+    const auto path = autosave_file_path();
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if(ec) {
+        Logger::get().log("INFO",
+            "[autosave] could not create dir " + path.parent_path().string() +
+            ": " + ec.message());
+        return;
+    }
+
+    // We deliberately don't call save_to_file: it would mutate filePath /
+    // name / set_save_action and treat this snapshot as the artist's
+    // canonical save. Reproduce just the serialize + atomic-write parts
+    // here, sharing the SEH guard with save_to_file's main path on Windows.
+    try {
+        std::stringstream f;
+        f.write(VersionConstants::CURRENT_SAVEFILE_HEADER.c_str(),
+                VersionConstants::SAVEFILE_HEADER_LEN);
+        {
+            std::stringstream fWorldDataToCompress;
+            {
+                #ifdef _WIN32
+                    const unsigned long sehCode = seh_guard_call([&] {
+                        cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
+                        save_file(a);
+                    });
+                    if(sehCode != 0) {
+                        char buf[24];
+                        std::snprintf(buf, sizeof(buf), "0x%08lx", sehCode);
+                        Logger::get().log("INFO",
+                            std::string("[autosave] SEH (") + buf +
+                            ") during serialization; skipping this tick");
+                        return;
+                    }
+                #else
+                    cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
+                    save_file(a);
+                #endif
+            }
+            std::vector<char> compressedData(ZSTD_compressBound(fWorldDataToCompress.view().size()));
+            size_t trueCompressedSize = ZSTD_compress(
+                compressedData.data(), compressedData.size(),
+                fWorldDataToCompress.view().data(),
+                fWorldDataToCompress.view().size(), ZSTD_CLEVEL_DEFAULT);
+            std::string_view compressedF(compressedData.data(), trueCompressedSize);
+            f << compressedF;
+        }
+
+        auto tmpPath = path;
+        tmpPath += ".tmp";
+        if(!SDL_SaveFile(tmpPath.string().c_str(), f.view().data(), f.view().size())) {
+            Logger::get().log("INFO",
+                std::string("[autosave] SDL_SaveFile failed: ") + SDL_GetError());
+            return;
+        }
+        std::error_code rec;
+        std::filesystem::rename(tmpPath, path, rec);
+        if(rec) {
+            std::filesystem::copy_file(tmpPath, path,
+                std::filesystem::copy_options::overwrite_existing, rec);
+            std::filesystem::remove(tmpPath, rec);
+        }
+    }
+    catch(const std::exception& e) {
+        Logger::get().log("INFO",
+            std::string("[autosave] failed: ") + e.what());
+    }
+#endif
 }
 
 void World::load_empty_canvas(const std::optional<std::filesystem::path>& filePathEmptyAutoSaveDir) {
@@ -769,12 +879,28 @@ void World::load_empty_canvas(const std::optional<std::filesystem::path>& filePa
 }
 
 void World::load_from_file(const std::filesystem::path& filePathToLoadFrom, std::string_view buffer) {
-    filePath = filePathToLoadFrom;
+    // If the artist opened this canvas from the autosave-recovery
+    // directory, adopt the file's stem as our session id and clear
+    // filePath. That way (a) subsequent autosaves overwrite the same
+    // .autosave file instead of spawning a duplicate, (b) the cleanup
+    // hook in save_to_file actually removes the recovered breadcrumb
+    // when the artist finally saves to a real path, and (c) the canvas
+    // is treated as never-saved-to-a-real-file, so File > Save will
+    // open the Save As dialog as the artist would expect.
+    const auto autosaveDir = main.conf.configPath / "saves" / ".autosave";
+    std::error_code ec;
+    if(std::filesystem::equivalent(filePathToLoadFrom.parent_path(), autosaveDir, ec)) {
+        autosaveSessionId = filePathToLoadFrom.stem().string();
+        filePath = std::filesystem::path();
+    }
+    else {
+        filePath = filePathToLoadFrom;
+    }
 
     std::string byteDataFromFile;
 
     if(buffer.empty()) {
-        byteDataFromFile = read_file_to_string(filePath);
+        byteDataFromFile = read_file_to_string(filePathToLoadFrom);
         buffer = byteDataFromFile;
     }
 
