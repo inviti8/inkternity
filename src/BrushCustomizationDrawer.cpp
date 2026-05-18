@@ -16,10 +16,18 @@
 #include "Brushes/BrushPresets.hpp"
 #include "Brushes/MyPaintBrushParams.hpp"
 #include "Brushes/UserBrushPresets.hpp"
+#include "DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
 extern "C" {
 #include <mypaint-brush.h>
 }
 #endif
+
+#include <include/core/SkData.h>
+#include <include/core/SkImage.h>
+#include <include/core/SkPixmap.h>
+#include <include/core/SkStream.h>
+#include <include/encode/SkPngEncoder.h>
+#include <cstring>
 
 #include <string>
 #include <vector>
@@ -229,6 +237,27 @@ void BrushCustomizationDrawer::render_save_modal() {
             {"Textured", HVYM::Brushes::BrushCategory::TEXTURED},
         });
 
+    // Icon section. capturedIcon_ is set by the SquareCanvasCaptureTool
+    // callback after the artist drags a square on the canvas. No inline
+    // preview yet (no SkImage-from-memory display widget in tree); A2
+    // drawer renders the on-disk icon once it's saved.
+    if (capturedIcon_) {
+        text_label(gui, "Icon: 64x64 captured");
+        text_button(gui, "save preset clear icon", "Clear icon", TextButtonOptions{
+            .wide    = true,
+            .onClick = [this, &gui]() {
+                capturedIcon_ = nullptr;
+                gui.set_to_layout();
+            },
+        });
+    } else {
+        text_label(gui, "Icon: (none)");
+    }
+    text_button(gui, "save preset capture icon", "Capture icon...", TextButtonOptions{
+        .wide    = true,
+        .onClick = [this]() { start_icon_capture(); },
+    });
+
     text_button(gui, "save preset confirm", "Save", TextButtonOptions{
         .wide    = true,
         .onClick = [this, brush, &main, &gui]() {
@@ -237,12 +266,31 @@ void BrushCustomizationDrawer::render_save_modal() {
             preset.name     = saveModalName_;
             preset.category = saveModalCategory_;
             preset.params   = HVYM::Brushes::brush_params_from_live(brush);
-            // Sidecar PNG is A1.M6's responsibility; pass nullopt here
-            // so save() leaves any pre-existing icon alone (or, on a
-            // fresh save, doesn't create an empty one).
-            UserBrushPresets::save(main.conf.configPath, preset, std::nullopt);
+
+            // PNG-encode the captured icon (Waypoint::encode_skin_png
+            // shape). std::nullopt when no icon: UserBrushPresets::save
+            // removes any pre-existing sidecar so the identicon
+            // fallback takes over.
+            std::optional<std::vector<uint8_t>> iconBytes;
+            if (capturedIcon_) {
+                sk_sp<SkImage> raster = capturedIcon_->makeRasterImage(nullptr);
+                SkPixmap pix;
+                if (raster && raster->peekPixels(&pix)) {
+                    SkDynamicMemoryWStream stream;
+                    if (SkPngEncoder::Encode(&stream, pix, {})) {
+                        auto data = stream.detachAsData();
+                        if (data) {
+                            std::vector<uint8_t> bytes(data->size());
+                            std::memcpy(bytes.data(), data->bytes(), data->size());
+                            iconBytes = std::move(bytes);
+                        }
+                    }
+                }
+            }
+            UserBrushPresets::save(main.conf.configPath, preset, iconBytes);
             saveModalOpen_ = false;
             saveModalName_.clear();
+            capturedIcon_ = nullptr;
             gui.set_to_layout();
         },
     });
@@ -251,8 +299,38 @@ void BrushCustomizationDrawer::render_save_modal() {
         .onClick = [this, &gui]() {
             saveModalOpen_ = false;
             saveModalName_.clear();
+            capturedIcon_ = nullptr;
             gui.set_to_layout();
         },
     });
+#endif
+}
+
+void BrushCustomizationDrawer::start_icon_capture() {
+#ifdef HVYM_HAS_LIBMYPAINT
+    auto& main = toolbar_.main_program();
+    if (!main.world) return;
+    auto& drawP = main.world->drawProg;
+    const auto previousToolType = drawP.drawTool ? drawP.drawTool->get_type()
+                                                 : DrawingProgramToolType::MYPAINTBRUSH;
+
+    // The capture tool needs an unobstructed canvas, so close the
+    // drawer popup before activating it. The save modal flag stays
+    // true so the capture callback re-opens the popup directly into
+    // the modal (rather than dumping the artist back to the params
+    // view, where they'd have to click Save as preset... again).
+    toolbar_.set_brush_customization_menu_open(false);
+
+    auto onCapture = [this](sk_sp<SkImage> image) {
+        capturedIcon_ = std::move(image);
+        // Re-open the drawer popup. saveModalOpen_ was preserved, so
+        // render_body sees it true and routes straight back to the
+        // save-modal view with the icon now attached.
+        toolbar_.set_brush_customization_menu_open(true);
+    };
+
+    auto tool = std::make_unique<SquareCanvasCaptureTool>(
+        drawP, /*targetSize=*/64, previousToolType, std::move(onCapture));
+    drawP.switch_to_tool_ptr(std::move(tool));
 #endif
 }

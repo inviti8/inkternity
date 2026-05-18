@@ -990,6 +990,11 @@ void Toolbar::stop_displaying_brush_customization_menu() {
     main.g.gui.set_to_layout();
 }
 
+void Toolbar::set_brush_customization_menu_open(bool open) {
+    brushCustomizationMenuPopupOpen = open;
+    main.g.gui.set_to_layout();
+}
+
 void Toolbar::stop_displaying_layer_menu() {
     main.world->drawProg.layerMan.listGUI.refresh_gui_data();
     layerMenuPopupOpen = false;

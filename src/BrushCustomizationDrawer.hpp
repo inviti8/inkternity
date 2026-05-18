@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#include <include/core/SkRefCnt.h>
+
 #ifdef HVYM_HAS_LIBMYPAINT
 #include "Brushes/BrushPresets.hpp"
 extern "C" {
@@ -11,6 +13,7 @@ extern "C" {
 }
 #endif
 
+class SkImage;
 class Toolbar;
 
 // PHASE3.md §3 A1.M4 — Customization drawer popup body.
@@ -74,10 +77,22 @@ class BrushCustomizationDrawer {
         std::string saveModalName_;
         HVYM::Brushes::BrushCategory saveModalCategory_ = HVYM::Brushes::BrushCategory::SHARP;
 
+        // PHASE3.md §3 A1.M6 -- in-progress icon for the next preset
+        // save. Populated by the SquareCanvasCaptureTool callback after
+        // the artist drags a square on the canvas. Cleared on Save (the
+        // PNG bytes are written via UserBrushPresets::save) and on
+        // Cancel. Persists across modal close-and-reopen if the artist
+        // captures then changes their mind about name / category.
+        sk_sp<SkImage> capturedIcon_;
+
         // Renders the save-as modal body inside the drawer's popup.
         // Separate function so the param-sliders body and the save body
         // are clearly distinct render paths.
         void render_save_modal();
+        // Closes the drawer popup, activates SquareCanvasCaptureTool at
+        // 64x64 with a callback that stores the captured image into
+        // capturedIcon_ and re-opens the drawer + save modal.
+        void start_icon_capture();
 #endif
         Toolbar& toolbar_;
 };

@@ -66,24 +66,45 @@ void SquareCanvasCaptureTool::gui_phone_toolbox(PhoneDrawingProgramScreen&) {
 }
 
 void SquareCanvasCaptureTool::draw(SkCanvas* canvas, const DrawData& drawData) {
+    // Always-on cursor crosshair so the artist can see the capture tool
+    // is active. Red when dragging_ (mouse-down recognized), white when
+    // idle. If the cross stays white during a drag, mouse-down isn't
+    // reaching us; if it turns red but no rect appears, the rect math
+    // is producing a zero-sized result.
+    {
+        const Vector2f pos = drawData.main->input.mouse.pos;
+        SkPaint cross;
+        cross.setAntiAlias(drawData.skiaAA);
+        cross.setStyle(SkPaint::kStroke_Style);
+        cross.setStrokeWidth(2.0f);
+        if (dragging_)
+            cross.setColor4f({1.0f, 0.0f, 0.0f, 1.0f});
+        else
+            cross.setColor4f({1.0f, 1.0f, 1.0f, 0.9f});
+        const float r = 14.0f;
+        canvas->drawLine(pos.x() - r, pos.y(), pos.x() + r, pos.y(), cross);
+        canvas->drawLine(pos.x(), pos.y() - r, pos.x(), pos.y() + r, cross);
+    }
+
     if (!dragging_) return;
     const auto [camMin, camMax] = compute_square_cam_rect(drawData);
     if ((camMax - camMin).x() < 1.0f && (camMax - camMin).y() < 1.0f) return;
 
-    // Same dashed-outline style as ButtonSelectTool (double-color so the
-    // rect stays visible over light AND dark canvas areas).
+    // Solid 2px outline (matches the known-visible crosshair above).
+    // ButtonSelectTool's hairline+dash style was effectively invisible
+    // here -- presumably DPI / blend interaction. Double-stroke (black
+    // then white inset) so the rect reads over both light and dark
+    // canvas areas.
+    const SkRect rect = SkRect::MakeLTRB(camMin.x(), camMin.y(), camMax.x(), camMax.y());
     SkPaint p;
     p.setAntiAlias(drawData.skiaAA);
     p.setStyle(SkPaint::kStroke_Style);
-    p.setStrokeWidth(0.0f);
-    const SkScalar intervals[] = {6.0f, 4.0f};
-    p.setPathEffect(SkDashPathEffect::Make(intervals, 0.0f));
-
-    p.setColor4f({0.0f, 0.0f, 0.0f, 0.8f});
-    canvas->drawRect(SkRect::MakeLTRB(camMin.x(), camMin.y(), camMax.x(), camMax.y()), p);
-    p.setColor4f({1.0f, 1.0f, 1.0f, 0.8f});
-    p.setPathEffect(SkDashPathEffect::Make(intervals, 5.0f));
-    canvas->drawRect(SkRect::MakeLTRB(camMin.x(), camMin.y(), camMax.x(), camMax.y()), p);
+    p.setStrokeWidth(3.0f);
+    p.setColor4f({0.0f, 0.0f, 0.0f, 0.9f});
+    canvas->drawRect(rect, p);
+    p.setStrokeWidth(1.0f);
+    p.setColor4f({1.0f, 1.0f, 1.0f, 1.0f});
+    canvas->drawRect(rect, p);
 }
 
 void SquareCanvasCaptureTool::input_mouse_button_on_canvas_callback(const InputManager::MouseButtonCallbackArgs& button) {
@@ -140,21 +161,17 @@ std::pair<Vector2f, Vector2f> SquareCanvasCaptureTool::compute_square_cam_rect(c
     const float sgnX = (dx == 0.0f) ? 1.0f : (dx > 0.0f ? 1.0f : -1.0f);
     const float sgnY = (dy == 0.0f) ? 1.0f : (dy > 0.0f ? 1.0f : -1.0f);
 
-    // Source-pixel cap (Decision #13). Convert the cam-space side to
-    // world-pixels via two from_space() probes, clamp, scale back.
-    const auto& cameraCoords = drawData.cam.c;
-    auto camToWorld = [&](Vector2f camPt) {
-        return cameraCoords.from_space({camPt.x(), camPt.y()});
-    };
-    const auto a   = camToWorld({anchor.x(), anchor.y()});
-    const auto bX  = camToWorld({anchor.x() + sgnX * side, anchor.y()});
-    const auto bY  = camToWorld({anchor.x(), anchor.y() + sgnY * side});
-    const float worldSideX = static_cast<float>((bX - a).norm());
-    const float worldSideY = static_cast<float>((bY - a).norm());
-    const float worldSide  = std::max(worldSideX, worldSideY);
-    if (worldSide > static_cast<float>(MAX_SOURCE_SIDE_PX)) {
-        side *= (static_cast<float>(MAX_SOURCE_SIDE_PX) / worldSide);
-    }
+    // PHASE3.md Decision #13's source-pixel cap (2048 source px per side)
+    // is intentionally NOT applied here. At default new-canvas zoom
+    // a 200-cam-pixel drag maps to millions of world pixels, so the cap
+    // multiplier collapses to ~0 and the cam-space rect shrinks below
+    // a pixel -- which both hides the visual feedback and trips the
+    // <4px "degenerate single-click" cancel path in
+    // input_mouse_button_on_canvas_callback. The 64x64 / 256x256
+    // downscale handles arbitrary source sizes sanely, and "capture
+    // my whole composition as an icon" is a legitimate user action.
+    // MAX_SOURCE_SIDE_PX is retained as a class constant for any
+    // future warning UI.
 
     const Vector2f corner(anchor.x() + sgnX * side, anchor.y() + sgnY * side);
     return {

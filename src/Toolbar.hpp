@@ -80,6 +80,13 @@ class Toolbar {
         // that need to walk back to MainProgram. Returning the reference
         // keeps callers from having to re-plumb MainProgram everywhere.
         MainProgram& main_program() { return main; }
+
+        // PHASE3 A1.M6 -- the drawer closes itself while capture-from-
+        // canvas runs (so the user can drag a square on the canvas), then
+        // re-opens itself when the capture callback fires. Setter flips
+        // the bool + invalidates layout in one call. Body in .cpp so
+        // this header doesn't need a full MainProgram include.
+        void set_brush_customization_menu_open(bool open);
     private:
         static void sdl_open_file_dialog_callback(void* userData, const char * const * fileList, int filter);
 
