@@ -27,7 +27,12 @@ enum class DrawingProgramToolType : int {
     MYPAINTBRUSH,
     WAYPOINT,
     BUTTONSELECT,
-    STROKEVECTORIZE
+    STROKEVECTORIZE,
+    // PHASE3.md Shared.M1 — short-lived capture tool, constructed
+    // directly with target-size + callback args via switch_to_tool_ptr.
+    // Never reached through allocate_tool_type (the by-type path has no
+    // place to plumb the callback; see DrawingProgramToolBase.cpp).
+    SQUARECANVASCAPTURE
 };
 
 class DrawingProgramToolBase {

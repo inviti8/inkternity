@@ -63,6 +63,14 @@ std::unique_ptr<DrawingProgramToolBase> DrawingProgramToolBase::allocate_tool_ty
             return std::make_unique<ButtonSelectTool>(drawP);
         case DrawingProgramToolType::STROKEVECTORIZE:
             return std::make_unique<StrokeVectorizeTool>(drawP);
+        case DrawingProgramToolType::SQUARECANVASCAPTURE:
+            // PHASE3.md Shared.M1 — this tool is always constructed
+            // directly with (targetSize, previousToolType, callback)
+            // and installed via switch_to_tool_ptr. The by-type path
+            // has no place to plumb those args, so we deliberately
+            // fail-soft (caller falls back to a sensible default
+            // rather than getting a half-configured tool).
+            return nullptr;
     }
     return nullptr;
 }
