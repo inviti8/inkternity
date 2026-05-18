@@ -20,7 +20,7 @@ void DrawingProgramLayerManager::server_init_no_file() {
     layerTreeRoot->get_folder().set_component_list_callbacks(*this); // Only need to call set_component_list_callbacks on root, and the rest will get the callbacks set as well
     // PHASE2: replace the legacy single "First Layer" with the named
     // Sketch / Color / Ink trio. ensure_named_layers handles the
-    // stack-anchor placement and sets editingLayer to INK.
+    // stack-anchor placement and sets editingLayer to SKETCH.
     ensure_named_layers();
 }
 
@@ -29,12 +29,12 @@ void DrawingProgramLayerManager::ensure_named_layers() {
     auto& rootList = layerTreeRoot->get_folder().folderList;
 
     bool hasSketch = false, hasColor = false, hasInk = false;
-    NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> inkRef;
+    NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> sketchRef;
     for(auto& info : *rootList) {
         switch(info.obj->get_kind()) {
-            case LayerKind::SKETCH:  hasSketch = true; break;
+            case LayerKind::SKETCH:  hasSketch = true; sketchRef = info.obj; break;
             case LayerKind::COLOR:   hasColor  = true; break;
-            case LayerKind::INK:     hasInk = true; inkRef = info.obj; break;
+            case LayerKind::INK:     hasInk = true; break;
             case LayerKind::DEFAULT: break;
         }
     }
@@ -49,6 +49,7 @@ void DrawingProgramLayerManager::ensure_named_layers() {
     bool justAddedSketch = false;
     if(!hasSketch) {
         sketchIt = rootList->emplace_direct(rootList, rootList->end(), drawP.world.netObjMan, "Sketch", false, LayerKind::SKETCH);
+        sketchRef = sketchIt->obj;
         justAddedSketch = true;
     }
     if(!hasColor) {
@@ -58,14 +59,14 @@ void DrawingProgramLayerManager::ensure_named_layers() {
             rootList->emplace_direct(rootList, rootList->end(), drawP.world.netObjMan, "Color", false, LayerKind::COLOR);
     }
     if(!hasInk) {
-        auto inkIt = rootList->emplace_direct(rootList, rootList->begin(), drawP.world.netObjMan, "Ink", false, LayerKind::INK);
-        inkRef = inkIt->obj;
+        rootList->emplace_direct(rootList, rootList->begin(), drawP.world.netObjMan, "Ink", false, LayerKind::INK);
     }
 
-    // Default editingLayer to INK so the artist's first stroke goes
-    // into the right layer; survives lazy-create across loads.
-    if(!inkRef.expired())
-        editingLayer = inkRef;
+    // Default editingLayer to SKETCH so a new canvas opens on the
+    // bottom-most pipeline layer (artists begin in pencils, then ink
+    // on top); survives lazy-create across loads.
+    if(!sketchRef.expired())
+        editingLayer = sketchRef;
 }
 
 NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> DrawingProgramLayerManager::get_named_layer(LayerKind k) {
@@ -357,7 +358,7 @@ void DrawingProgramLayerManager::load_file(cereal::PortableBinaryInputArchive& a
     drawP.rebuild_cache();
     // PHASE2: ensure Sketch / Color / Ink exist; lazy-create any missing
     // (legacy InfiniPaint files and pre-Phase-2 Inkternity files have
-    // none) and set editingLayer to INK.
+    // none) and set editingLayer to SKETCH.
     ensure_named_layers();
 }
 
