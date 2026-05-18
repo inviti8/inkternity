@@ -456,13 +456,11 @@ void DrawingProgram::toolbar_gui(Toolbar& t) {
                     .isSelected = world.treeView.is_visible(),
                     .onClick = [this] { world.treeView.toggle(); }
                 });
-
-                // Reader-mode toggle (M7-a). Open eye = "viewing as a reader".
-                svg_icon_button(gui, "Reader Mode Toggle Button", "data/icons/eyeopen.svg", {
-                    .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
-                    .isSelected = world.readerMode.is_active(),
-                    .onClick = [this] { world.readerMode.toggle(); }
-                });
+                // The reader-mode toggle used to live here next to the
+                // tree-view toggle, but desktop reader mode now hides this
+                // entire editor palette (matching phone behavior). To keep
+                // the toggle reachable when active, it lives in the top
+                // toolbar -- see Toolbar::top_toolbar.
             }
         });
     });

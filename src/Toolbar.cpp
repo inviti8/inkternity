@@ -227,7 +227,13 @@ void Toolbar::layout_run() {
             }
         }) {
             top_toolbar();
-            if(!main.world->clientStillConnecting)
+            // Reader mode hides the editor palette (tool buttons, color
+            // pickers, tool options, tree-view) so the canvas reads as
+            // a finished surface. Mirrors PhoneDrawingProgramScreen's
+            // gating of bottom_toolbar(). The top toolbar stays so the
+            // reader-mode toggle remains reachable.
+            const bool inReaderMode = main.world->readerMode.is_active();
+            if(!main.world->clientStillConnecting && !inReaderMode)
                 drawing_program_gui();
             if(!closePopupData.worldsToClose.empty())
                 close_popup_gui();
@@ -537,11 +543,13 @@ void Toolbar::top_toolbar() {
                     else
                         layerMenuPopupOpen = true;
                 });
-                Element* bookmarkMenuButton = icon_button_top_toolbar("Bookmark Menu Button", "data/icons/bookmark.svg", bookmarkMenuPopupOpen, [&] {
-                    if(bookmarkMenuPopupOpen)
-                        stop_displaying_bookmark_menu();
-                    else
-                        bookmarkMenuPopupOpen = true;
+                // Reader-mode toggle: lives in the top toolbar (mirrors the
+                // phone-UI placement) so it remains reachable once the
+                // editor palette below disappears on toggle-on.
+                icon_button_top_toolbar("Reader Mode Toggle Button",
+                                        "data/icons/RemixIcon/book-open-line.svg",
+                                        main.world->readerMode.is_active(), [&] {
+                    main.world->readerMode.toggle();
                 });
 
                 // PHASE3 A1.M4 -- brush customization drawer toggle. Visible
@@ -586,8 +594,6 @@ void Toolbar::top_toolbar() {
 
                 if(gridMenu.popupOpen)
                     grid_menu(gridMenuButton);
-                if(bookmarkMenuPopupOpen)
-                    bookmark_menu(bookmarkMenuButton);
                 if(layerMenuPopupOpen)
                     layer_menu(layerMenuButton);
                 if(brushCustomizationMenuPopupOpen && brushCustomizationMenuButton)

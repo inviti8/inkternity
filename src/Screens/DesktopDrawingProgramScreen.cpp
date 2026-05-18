@@ -1,5 +1,7 @@
 #include "DesktopDrawingProgramScreen.hpp"
 #include "../MainProgram.hpp"
+#include "../World.hpp"
+#include "../ReaderMode/ReaderMode.hpp"
 #include "DrawingProgramScreen.hpp"
 
 DesktopDrawingProgramScreen::DesktopDrawingProgramScreen(MainProgram& m):
@@ -14,6 +16,11 @@ void DesktopDrawingProgramScreen::update() {
 
 void DesktopDrawingProgramScreen::gui_layout_run() {
     toolbar.layout_run();
+    // Branch-choice + back-button overlay for reader mode. Floating
+    // element (pinned to screen bottom-center), self-gates on
+    // readerMode.is_active(), so it's safe to call unconditionally.
+    if (main.world)
+        render_reader_branch_overlay(*main.world, main.g.gui);
 }
 
 bool DesktopDrawingProgramScreen::app_close_requested() {
