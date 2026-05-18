@@ -737,19 +737,32 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAt, bool dis
             }
 
             if(saveThumbnail && !disableThumbnailSaving) {
-                Vector2f imageCenter{main.window.size.x() * 0.5f, main.window.size.y() * 0.5f};
-                float imageDim = std::max(main.window.size.x(), main.window.size.y());
-                Vector2f imageDimVec{imageDim * 0.5f, imageDim * 0.5f};
-                SCollision::AABB<float> imageBounds{imageCenter - imageDimVec, imageCenter + imageDimVec};
-                world_take_screenshot(main.world, {
-                    .filePath = filePath.parent_path() / (filePath.stem().string() + ".jpg"),
-                    .type = WorldScreenshotInfo::ScreenshotType::JPG,
-                    .imageSizePixels = {512, 512},
-                    .cameraCoords = drawData.cam.c,
-                    .imageBounds = imageBounds,
-                    .transparentBackground = false,
-                    .displayGrid = false
-                });
+                // Thumbnail is a JPG sidecar for the file-select tile.
+                // Generation can fail transiently — e.g. take_screenshot_area_hw
+                // returns "Error copy pixmap" if the GPU readback path is
+                // momentarily unhappy. The canvas bytes already landed
+                // atomically above, so this is a sidecar miss, not a save
+                // failure. Swallow + log INFO so the artist doesn't see a
+                // misleading WORLDFATAL toast; the next save will retry.
+                try {
+                    Vector2f imageCenter{main.window.size.x() * 0.5f, main.window.size.y() * 0.5f};
+                    float imageDim = std::max(main.window.size.x(), main.window.size.y());
+                    Vector2f imageDimVec{imageDim * 0.5f, imageDim * 0.5f};
+                    SCollision::AABB<float> imageBounds{imageCenter - imageDimVec, imageCenter + imageDimVec};
+                    world_take_screenshot(main.world, {
+                        .filePath = filePath.parent_path() / (filePath.stem().string() + ".jpg"),
+                        .type = WorldScreenshotInfo::ScreenshotType::JPG,
+                        .imageSizePixels = {512, 512},
+                        .cameraCoords = drawData.cam.c,
+                        .imageBounds = imageBounds,
+                        .transparentBackground = false,
+                        .displayGrid = false
+                    });
+                }
+                catch(const std::exception& e) {
+                    Logger::get().log("INFO",
+                        std::string("[save] thumbnail generation failed (canvas was saved): ") + e.what());
+                }
             }
         #endif
 
