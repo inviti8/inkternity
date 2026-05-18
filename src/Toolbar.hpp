@@ -2,6 +2,8 @@
 #include "BrushCustomizationDrawer.hpp"
 #include "SavedPresetsDrawer.hpp"
 #include "HostMode.hpp"
+#include <include/core/SkImage.h>
+#include <include/core/SkRefCnt.h>
 #include "GUIStuff/Elements/ScrollArea.hpp"
 #include "DrawData.hpp"
 #include "TimePoint.hpp"
@@ -108,6 +110,21 @@ class Toolbar {
         void layer_menu(GUIStuff::Element* layerMenuButton);
         void brush_customization_menu(GUIStuff::Element* triggerButton);
         void saved_presets_menu(GUIStuff::Element* triggerButton);
+        // PHASE3 §4 B.M2 -- avatar tile (clickable image) lives in the
+        // top toolbar; popover is its on-click submenu with capture /
+        // clear controls. tile() returns the trigger Element so the
+        // popover can attach to it.
+        GUIStuff::Element* avatar_tile();
+        void avatar_popover(GUIStuff::Element* triggerTile);
+        // Pulls the master avatar PNG off disk into avatarImage_. Called
+        // lazily on first render and after every save (B.M3 capture
+        // callback). No-op when no avatar file exists.
+        void refresh_avatar_from_disk();
+        // PHASE3 §4 B.M3 -- avatar capture entry point. Closes the
+        // popover, switches the active tool to SquareCanvasCaptureTool
+        // at 256x256, callback writes via AvatarStore and re-refreshes
+        // the in-memory image.
+        void start_avatar_capture();
         void drawing_program_gui();
         void options_menu();
         void file_picker_gui_refresh_entries();
@@ -212,6 +229,15 @@ class Toolbar {
         // customization drawer.
         bool savedPresetsMenuPopupOpen = false;
         SavedPresetsDrawer savedPresetsDrawer{*this};
+
+        // PHASE3 §4 B.M2 -- in-memory copy of the master avatar PNG.
+        // Loaded from disk on first render (avatarLoaded_=false until
+        // then) and refreshed after every B.M3 capture so the tile
+        // updates without an app relaunch. nullptr when the artist has
+        // never captured an avatar.
+        sk_sp<SkImage> avatarImage;
+        bool avatarLoaded = false;
+        bool avatarPopoverOpen = false;
 
         struct GridMenu {
             bool popupOpen = false;

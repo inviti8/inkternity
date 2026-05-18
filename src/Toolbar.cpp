@@ -1,7 +1,10 @@
 #include "Toolbar.hpp"
+#include "AvatarStore.hpp"
 #include "CustomEvents.hpp"
 #include "DrawingProgram/Tools/DrawingProgramToolBase.hpp"
+#include "DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
 #include "FileHelpers.hpp"
+#include "GUIStuff/Elements/MemoryImageDisplay.hpp"
 #include "GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 #include "GUIStuff/ElementHelpers/LayoutHelpers.hpp"
 #include "GUIStuff/ElementHelpers/PopupHelpers.hpp"
@@ -576,6 +579,11 @@ void Toolbar::top_toolbar() {
                     if(savedPresetsMenuPopupOpen)       savedPresetsMenuPopupOpen       = false;
                 }
 
+                // PHASE3 §4 B.M2 -- avatar tile (always visible; not
+                // tool-gated since the avatar is a per-artist identity
+                // surface, not a tool-specific control).
+                Element* avatarTile = avatar_tile();
+
                 if(gridMenu.popupOpen)
                     grid_menu(gridMenuButton);
                 if(bookmarkMenuPopupOpen)
@@ -586,6 +594,8 @@ void Toolbar::top_toolbar() {
                     brush_customization_menu(brushCustomizationMenuButton);
                 if(savedPresetsMenuPopupOpen && savedPresetsMenuButton)
                     saved_presets_menu(savedPresetsMenuButton);
+                if(avatarPopoverOpen && avatarTile)
+                    avatar_popover(avatarTile);
             }
             if(menuPopUpOpen) {
                 gui.set_z_index(5, [&] {
@@ -1050,6 +1060,119 @@ void Toolbar::bookmark_menu(Element* bookmarkMenuButton) {
             }
         });
     });
+}
+
+void Toolbar::refresh_avatar_from_disk() {
+    avatarImage = AvatarStore::load_master(main.conf.configPath);
+    avatarLoaded = true;
+}
+
+Element* Toolbar::avatar_tile() {
+    auto& gui = main.g.gui;
+    auto& io = gui.io;
+
+    // Lazy load on first render -- Toolbar's constructor runs before
+    // main.conf is fully initialized so we can't load there.
+    if (!avatarLoaded) refresh_avatar_from_disk();
+
+    const float side = 30.0f;
+    Element* result = nullptr;
+    gui.new_id("Avatar Tile", [&] {
+        result = gui.element<LayoutElement>("tile", [&] (LayoutElement*, const Clay_ElementId& lId) {
+            CLAY(lId, {
+                .layout = {
+                    .sizing = { .width = CLAY_SIZING_FIXED(side), .height = CLAY_SIZING_FIXED(side) }
+                },
+                .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor2),
+                .cornerRadius = CLAY_CORNER_RADIUS(4.0f)
+            }) {
+                gui.element<MemoryImageDisplay>("img", MemoryImageDisplay::Data{
+                    .img    = avatarImage,
+                    .radius = 4.0f
+                });
+            }
+        }, LayoutElement::Callbacks{
+            .onClick = [this, &gui](LayoutElement* l, const InputManager::MouseButtonCallbackArgs& button) {
+                if (l->mouseHovering && button.down
+                    && button.button == InputManager::MouseButton::LEFT) {
+                    avatarPopoverOpen = !avatarPopoverOpen;
+                    gui.set_to_layout();
+                }
+            }
+        });
+    });
+    return result;
+}
+
+void Toolbar::avatar_popover(Element* triggerTile) {
+    auto& gui = main.g.gui;
+    auto& io = gui.io;
+
+    gui.set_z_index(gui.get_z_index() + 1, [&] {
+        gui.element<LayoutElement>("avatar popover", [&](LayoutElement*, const Clay_ElementId& lId) {
+            CLAY(lId, {
+                .layout = {
+                    .sizing = { .width = CLAY_SIZING_FIT(180), .height = CLAY_SIZING_FIT(0) },
+                    .padding = CLAY_PADDING_ALL(io.theme->padding1),
+                    .childGap = io.theme->childGap1,
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_TOP },
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM
+                },
+                .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+                .cornerRadius = CLAY_CORNER_RADIUS(io.theme->windowCorners1),
+                .floating = {.offset = {.x = 0, .y = static_cast<float>(io.theme->padding1)}, .zIndex = gui.get_z_index(), .attachPoints = {.element = CLAY_ATTACH_POINT_RIGHT_TOP, .parent = CLAY_ATTACH_POINT_RIGHT_BOTTOM}, .attachTo = CLAY_ATTACH_TO_PARENT}
+            }) {
+                using namespace GUIStuff::ElementHelpers;
+                text_button(gui, "avatar capture", "Capture from canvas...", TextButtonOptions{
+                    .wide    = true,
+                    .onClick = [this]() { start_avatar_capture(); }
+                });
+                // "Choose from file..." is reserved for a future polish
+                // phase per PHASE3.md §4 Surface shape. Not rendered
+                // here to avoid the misleading "looks clickable, does
+                // nothing" affordance -- when it ships, this is the
+                // place to wire it in.
+                if (avatarImage) {
+                    text_button(gui, "avatar clear", "Clear", TextButtonOptions{
+                        .wide    = true,
+                        .onClick = [this, &gui]() {
+                            AvatarStore::clear(main.conf.configPath);
+                            avatarImage = nullptr;
+                            avatarPopoverOpen = false;
+                            gui.set_to_layout();
+                        }
+                    });
+                }
+            }
+        }, LayoutElement::Callbacks{
+            .onClick = [&, triggerTile](LayoutElement* l, const InputManager::MouseButtonCallbackArgs& button) {
+                if (!l->mouseHovering && !l->childMouseHovering && !triggerTile->mouseHovering && button.down) {
+                    avatarPopoverOpen = false;
+                    main.g.gui.set_to_layout();
+                }
+            }
+        });
+    });
+}
+
+void Toolbar::start_avatar_capture() {
+    if (!main.world) return;
+    auto& drawP = main.world->drawProg;
+    const auto previousToolType = drawP.drawTool ? drawP.drawTool->get_type()
+                                                 : DrawingProgramToolType::BRUSH;
+    avatarPopoverOpen = false;
+    main.g.gui.set_to_layout();
+
+    auto onCapture = [this](sk_sp<SkImage> image) {
+        if (!image) return;
+        if (AvatarStore::save(main.conf.configPath, image))
+            refresh_avatar_from_disk();
+        main.g.gui.set_to_layout();
+    };
+    auto tool = std::make_unique<SquareCanvasCaptureTool>(
+        drawP, /*targetSize=*/AvatarStore::MASTER_SIDE_PX,
+        previousToolType, std::move(onCapture));
+    drawP.switch_to_tool_ptr(std::move(tool));
 }
 
 void Toolbar::saved_presets_menu(Element* triggerButton) {
