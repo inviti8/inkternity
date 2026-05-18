@@ -16,6 +16,7 @@
 #include "../World.hpp"
 #include "Helpers/StringHelpers.hpp"
 #include "PhoneDrawingProgramScreen.hpp"
+#include "DesktopDrawingProgramScreen.hpp"
 #include <SDL3/SDL_misc.h>
 #include <SDL3/SDL_time.h>
 #include <SDL3/SDL_timer.h>
@@ -1053,7 +1054,18 @@ void FileSelectScreen::start_edit_mode() {
 
 void FileSelectScreen::input_open_infinipaint_file_callback(const CustomEvents::OpenInfiniPaintFileEvent& openFile) {
     main.create_new_tab(openFile);
+    // Phone UI is reserved for touch-first builds (Android, web). On
+    // desktop OSes the Phone screen's condensed top/bottom toolbars hide
+    // features that only the full Toolbar surfaces, and a Windows/macOS/
+    // Linux user landing on the Phone UI by default loses access to
+    // those. Gate the selection on platform: Android always gets phone,
+    // Emscripten (web) stays phone-first since it commonly runs on
+    // touch devices, everything else gets the desktop screen.
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     main.set_screen([&] (std::unique_ptr<Screen>) { return std::make_unique<PhoneDrawingProgramScreen>(main); });
+#else
+    main.set_screen([&] (std::unique_ptr<Screen>) { return std::make_unique<DesktopDrawingProgramScreen>(main); });
+#endif
 }
 
 void FileSelectScreen::input_global_back_button_callback() {
