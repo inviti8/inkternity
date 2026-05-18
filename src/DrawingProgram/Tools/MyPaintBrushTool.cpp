@@ -58,9 +58,10 @@ void ensure_overrides_initialized(ToolConfiguration::MyPaintBrushToolConfig& cfg
         const size_t oldSize = cfg.overrides.size();
         cfg.overrides.resize(need);
         for (size_t i = oldSize; i < need; ++i) {
-            cfg.overrides[i].diameter = presets[i].defaults.diameter;
-            cfg.overrides[i].hardness = presets[i].defaults.hardness;
-            cfg.overrides[i].opacity  = presets[i].defaults.opacity;
+            const auto presetDefaults = HVYM::Brushes::defaults_for(presets[i]);
+            cfg.overrides[i].diameter = presetDefaults.diameter;
+            cfg.overrides[i].hardness = presetDefaults.hardness;
+            cfg.overrides[i].opacity  = presetDefaults.opacity;
         }
     } else if (cfg.overrides.size() > need) {
         cfg.overrides.resize(need);
