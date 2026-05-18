@@ -661,7 +661,19 @@ void World::autosave_to_directory(const std::filesystem::path& directoryToSaveAt
     save_to_file(directoryToSaveAt / std::filesystem::path(nameToSaveUnder + "." + FILE_EXTENSION), true);
 }
 
-void World::save_to_file(const std::filesystem::path& filePathToSaveAt, bool disableThumbnailSaving) {
+void World::save_to_file(const std::filesystem::path& filePathToSaveAtRaw, bool disableThumbnailSaving) {
+    // The SDL save dialog on Windows doesn't auto-append the filter
+    // extension when the artist types a bare name like "test" — the
+    // returned path arrives extensionless and the saved file is then
+    // invisible to subsequent Open dialogs filtered on .inkternity.
+    // Normalize here so every save path (Save As, Save, autosave) lands
+    // a properly-tagged file. Already-tagged paths pass through unchanged.
+    std::filesystem::path filePathToSaveAt = filePathToSaveAtRaw;
+    {
+        const auto ext = filePathToSaveAt.extension().string();
+        if(ext != DOT_FILE_EXTENSION && ext != LEGACY_DOT_FILE_EXTENSION)
+            filePathToSaveAt += DOT_FILE_EXTENSION;
+    }
     try {
         filePath = filePathToSaveAt;
 
