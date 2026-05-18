@@ -102,19 +102,54 @@ void SavedPresetsDrawer::render_category(HVYM::Brushes::BrushCategory cat) {
         const int64_t tileId = 1000 +
             static_cast<int64_t>(std::hash<std::string>{}(jsonPath) & 0x7fffffff);
         gui.new_id(tileId, [&] {
-            text_button(gui, "tile", preset.name, TextButtonOptions{
-                .isSelected = isActive,
-                .wide       = true,
-                .onClick    = [brush, &cfg, jsonPath, &gui] {
-                    cfg.activeUserPresetPath = jsonPath;
-                    // Apply once immediately for instant feedback;
-                    // begin_stroke re-applies via the same path so
-                    // the selection sticks across strokes.
-                    if (auto params = UserBrushPresets::read_params_json(jsonPath))
-                        HVYM::Brushes::apply_brush_params(brush, *params);
-                    gui.set_to_layout();
-                },
-            });
+            // Horizontal row: name button + small delete button. Delete
+            // is the only context-menu action shipped in v1; Rename,
+            // Edit, Duplicate are deferred to A2.M3-extended.
+            CLAY_AUTO_ID({
+                .layout = {
+                    .sizing          = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+                    .childGap        = 4,
+                    .childAlignment  = {.x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER},
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT
+                }
+            }) {
+                CLAY_AUTO_ID({
+                    .layout = {
+                        .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)}
+                    }
+                }) {
+                    text_button(gui, "tile", preset.name, TextButtonOptions{
+                        .isSelected = isActive,
+                        .wide       = true,
+                        .onClick    = [brush, &cfg, jsonPath, &gui] {
+                            cfg.activeUserPresetPath = jsonPath;
+                            // Apply once immediately for instant feedback;
+                            // begin_stroke re-applies via the same path so
+                            // the selection sticks across strokes.
+                            if (auto params = UserBrushPresets::read_params_json(jsonPath))
+                                HVYM::Brushes::apply_brush_params(brush, *params);
+                            gui.set_to_layout();
+                        },
+                    });
+                }
+                // Capture the path + cat + name by value -- the underlying
+                // userPresets_ list gets rebuilt on next render, so the
+                // BrushPreset* would dangle by the time the onClick fires.
+                const auto categoryCopy = preset.category;
+                const auto nameCopy     = preset.name;
+                text_button(gui, "del", "X", TextButtonOptions{
+                    .onClick = [this, &cfg, jsonPath, categoryCopy, nameCopy, &gui]() {
+                        UserBrushPresets::remove(toolbar_.main_program().conf.configPath,
+                                                 categoryCopy, nameCopy);
+                        // If the deleted preset was active, drop the
+                        // reference so apply_active falls back to the
+                        // curated path on next stroke.
+                        if (cfg.activeUserPresetPath == jsonPath)
+                            cfg.activeUserPresetPath.clear();
+                        gui.set_to_layout();
+                    }
+                });
+            }
         });
     }
 }
