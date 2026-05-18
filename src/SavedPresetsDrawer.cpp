@@ -9,6 +9,7 @@
 #include "GUIStuff/ElementHelpers/ButtonHelpers.hpp"
 #include "GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "GUIStuff/ElementHelpers/TextBoxHelpers.hpp"
+#include "GUIStuff/Elements/ImageDisplay.hpp"
 
 #ifdef HVYM_HAS_LIBMYPAINT
 #include "Brushes/BrushPresets.hpp"
@@ -102,9 +103,10 @@ void SavedPresetsDrawer::render_category(HVYM::Brushes::BrushCategory cat) {
         const int64_t tileId = 1000 +
             static_cast<int64_t>(std::hash<std::string>{}(jsonPath) & 0x7fffffff);
         gui.new_id(tileId, [&] {
-            // Horizontal row: name button + small delete button. Delete
-            // is the only context-menu action shipped in v1; Rename,
-            // Edit, Duplicate are deferred to A2.M3-extended.
+            // Horizontal row: icon thumbnail (when sidecar PNG exists) +
+            // name button + small delete button. Delete is the only
+            // context-menu action shipped in v1; Rename, Edit, Duplicate
+            // are deferred to A2.M3-extended.
             CLAY_AUTO_ID({
                 .layout = {
                     .sizing          = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
@@ -113,6 +115,24 @@ void SavedPresetsDrawer::render_category(HVYM::Brushes::BrushCategory cat) {
                     .layoutDirection = CLAY_LEFT_TO_RIGHT
                 }
             }) {
+                // Captured icon thumbnail (PHASE3.md §3 A1.M6 sidecar
+                // PNG). ImageDisplay decodes from the filesystem path
+                // each layout, which is fine for icons -- they don't
+                // change in place the way the avatar does (preset re-
+                // capture writes a different slug). Skipped when the
+                // preset has no sidecar so the tile collapses to text.
+                if (!preset.iconPath.empty()) {
+                    CLAY_AUTO_ID({
+                        .layout = {
+                            .sizing = {.width = CLAY_SIZING_FIXED(28), .height = CLAY_SIZING_FIXED(28)}
+                        }
+                    }) {
+                        gui.element<ImageDisplay>("icon", ImageDisplay::Data{
+                            .imgPath = preset.iconPath,
+                            .radius  = 4.0f
+                        });
+                    }
+                }
                 CLAY_AUTO_ID({
                     .layout = {
                         .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)}
