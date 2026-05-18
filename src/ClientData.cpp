@@ -5,6 +5,12 @@
 #include "MainProgram.hpp"
 #include "ScaleUpCanvas.hpp"
 
+#include <include/codec/SkPngDecoder.h>
+#include <include/core/SkData.h>
+#include <include/core/SkImageInfo.h>
+#include <include/core/SkRect.h>
+#include <include/core/SkSamplingOptions.h>
+
 using namespace NetworkingObjects;
 
 enum class ClientDataCommand : uint8_t {
@@ -31,6 +37,22 @@ void ClientData::set_from_init_struct(const InitStruct& initStruct) {
     displayName = initStruct.displayName;
     gridSize = initStruct.gridSize;
     isViewer = initStruct.isViewer;
+    avatarPng = initStruct.avatarPng;
+    avatarImageCache = nullptr;
+    avatarDecodeTried = false;
+}
+
+const sk_sp<SkImage>& ClientData::ensure_avatar_decoded() const {
+    if (avatarDecodeTried) return avatarImageCache;
+    avatarDecodeTried = true;
+    if (avatarPng.empty()) return avatarImageCache;
+    auto data = SkData::MakeWithCopy(avatarPng.data(), avatarPng.size());
+    if (!data) return avatarImageCache;
+    auto codec = SkCodec::MakeFromData(data, {SkPngDecoder::Decoder()});
+    if (!codec) return avatarImageCache;
+    sk_sp<SkImage> img = std::get<0>(codec->getImage());
+    if (img) avatarImageCache = img->makeRasterImage(nullptr);
+    return avatarImageCache;
 }
 
 void ClientData::register_class(World& world) {
@@ -187,6 +209,13 @@ const Vector3f& ClientData::get_cursor_color() const {
 }
 
 void ClientData::draw_cursor(SkCanvas* canvas, const DrawData& drawData) const {
+    // PHASE3 Decision #9 subscriber-visibility rule: hide cursor +
+    // avatar for remote clients flagged isViewer. SUBSCRIPTION-host
+    // and reader-mode peers are viewers from a working artist's
+    // perspective; rendering their cursors would clutter the canvas
+    // once a popular page has more than a couple of subscribers.
+    if (isViewer) return;
+
     if((drawData.cam.c.inverseScale << 10) > camCoords.inverseScale && drawData.clampDrawMinimum < camCoords.inverseScale) {
         canvas->save();
         camCoords.transform_sk_canvas(canvas, drawData);
@@ -200,6 +229,21 @@ void ClientData::draw_cursor(SkCanvas* canvas, const DrawData& drawData) const {
         p.setStrokeWidth(1.0f);
         p.setColor4f({cursorColor.x(), cursorColor.y(), cursorColor.z(), 0.7f});
         canvas->drawCircle(0.0f, 0.0f, 5.0f, p);
+
+        // PHASE3 §4 B.M5 -- composite the avatar wire form over the
+        // cursor circle. Circle stays as a fallback edge indicator
+        // for peers with no avatar (avatarPng empty -> decode returns
+        // nullptr, skip the composite). 16px on each side reads well
+        // alongside the 5px cursor circle and the displayName chip.
+        const auto& avatar = ensure_avatar_decoded();
+        if (avatar) {
+            constexpr float kAvatarSize = 16.0f;
+            constexpr float kHalf       = kAvatarSize * 0.5f;
+            SkRect dst = SkRect::MakeXYWH(-kHalf, -kAvatarSize - 2.0f,
+                                          kAvatarSize, kAvatarSize);
+            canvas->drawImageRect(avatar, dst,
+                                  SkSamplingOptions{SkFilterMode::kLinear, SkMipmapMode::kNone});
+        }
 
         SkFont f = drawData.main->g.gui.io.get_font(18.0f);
         SkFontMetrics metrics;

@@ -4,6 +4,11 @@
 #include <Helpers/NetworkingObjects/NetObjTemporaryPtr.hpp>
 #include <Helpers/NetworkingObjects/NetObjManager.hpp>
 
+#include <include/core/SkImage.h>
+#include <include/core/SkRefCnt.h>
+#include <cstdint>
+#include <vector>
+
 class ClientData {
     public:
         struct InitStruct {
@@ -19,6 +24,12 @@ class ClientData {
             // token verification (sub-only mode); false otherwise
             // (vanilla collab join). Used for viewer-mode UI gating.
             bool isViewer = false;
+            // PHASE3 §4 B.M4 -- 64x64 PNG wire form of the artist's
+            // avatar. Empty when the artist has never captured one;
+            // receiver falls back to the existing colored-circle
+            // cursor rendering. Populated on join by loading the local
+            // avatar_wire.png via AvatarStore::load_wire_bytes.
+            std::vector<uint8_t> avatarPng;
         };
 
         ClientData();
@@ -43,10 +54,15 @@ class ClientData {
         void draw_cursor(SkCanvas* canvas, const DrawData& drawData) const;
 
         template <typename Archive> void serialize(Archive& a) {
-            a(camCoords, windowSize, cursorPos, cursorColor, displayName, gridSize, isViewer);
+            a(camCoords, windowSize, cursorPos, cursorColor, displayName, gridSize, isViewer, avatarPng);
         }
     private:
         void set_from_init_struct(const InitStruct& initStruct);
+        // Lazy PNG-decode of avatarPng into avatarImageCache. Idempotent;
+        // returns the cache or nullptr if avatarPng is empty / decode
+        // fails. Called from the const draw_cursor path, hence mutable.
+        const sk_sp<SkImage>& ensure_avatar_decoded() const;
+
         CoordSpaceHelper camCoords;
         Vector2f windowSize;
         Vector2f cursorPos;
@@ -55,5 +71,11 @@ class ClientData {
         std::string displayName;
         uint32_t gridSize;
         bool isViewer = false;
+        // PHASE3 §4 B.M4 -- received PNG bytes + lazy decode cache.
+        // Wire form is 64x64; cache is decoded once per peer and held
+        // for the session.
+        std::vector<uint8_t> avatarPng;
+        mutable sk_sp<SkImage> avatarImageCache;
+        mutable bool avatarDecodeTried = false;
 };
 

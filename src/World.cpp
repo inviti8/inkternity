@@ -9,6 +9,7 @@
 #include <Helpers/NetworkingObjects/NetObjGenericSerializedClass.hpp>
 #include <Helpers/NetworkingObjects/DelayUpdateSerializedClassManager.hpp>
 #include "Subscription/TokenVerifier.hpp"
+#include "AvatarStore.hpp"
 #include "PublishedCanvases.hpp"
 #include "MainProgram.hpp"
 #include <cereal/types/string.hpp>
@@ -87,9 +88,15 @@ World::World(MainProgram& initMain, const CustomEvents::OpenInfiniPaintFileEvent
 
 void World::init_client_data_list() {
     clients = netObjMan.make_obj<NetworkingObjects::NetObjUnorderedSet<ClientData>>();
+    // PHASE3 §4 B.M4 -- broadcast the local avatar with the rest of the
+    // ClientData payload on first construction. Wire form (64x64 PNG)
+    // is precomputed by AvatarStore::save so we don't re-downscale per
+    // broadcast. Empty bytes when the artist has never captured one,
+    // and receivers fall back to the colored-circle cursor.
     ownClientData = clients->emplace_direct(clients, ClientData::InitStruct{
         .cursorColor = get_random_cursor_color(),
-        .displayName = main.conf.displayName
+        .displayName = main.conf.displayName,
+        .avatarPng   = AvatarStore::load_wire_bytes(main.conf.configPath)
     });
     init_client_data_list_callbacks();
 }
@@ -176,8 +183,12 @@ void World::init_client(const std::string& serverFullID, const std::string& subs
     // P0-C7 / P0-D2: handshake extended with subscriber token. Empty
     // string for vanilla collab joins; non-empty when the subscriber
     // pasted a token into the Connect-with-token dialog.
+    // PHASE3 §4 B.M4 -- bundle the local avatar's wire bytes (64x64
+    // PNG) into the initial handshake so the host can populate the new
+    // ClientData with our avatar before broadcasting it to other peers.
+    auto avatarWireBytes = AvatarStore::load_wire_bytes(main.conf.configPath);
     netClient->send_items_to_server(RELIABLE_COMMAND_CHANNEL, SERVER_INITIAL_DATA,
-                                    main.conf.displayName, subscriberToken);
+                                    main.conf.displayName, subscriberToken, avatarWireBytes);
 }
 
 void World::focus_update() {
@@ -513,7 +524,7 @@ void World::start_hosting(HostMode mode, const std::string& initNetSource, const
         ClientData::InitStruct newClientData;
         newClientData.cursorColor = get_random_cursor_color();
         std::string subscriberToken;
-        message(newClientData.displayName, subscriberToken);
+        message(newClientData.displayName, subscriberToken, newClientData.avatarPng);
         ensure_display_name_unique(newClientData.displayName);
 
         // In SUBSCRIPTION host mode, run the five-check token verification
