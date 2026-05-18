@@ -2,8 +2,10 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 
 #ifdef HVYM_HAS_LIBMYPAINT
+#include "Brushes/BrushPresets.hpp"
 extern "C" {
 #include <mypaint-brush-settings.h>
 }
@@ -62,6 +64,20 @@ class BrushCustomizationDrawer {
         // the drawer (so a user who only ever tunes Smudge doesn't have
         // to re-expand it every time). Default: only Basic expanded.
         std::array<bool, 16> groupExpanded_{};
+
+        // PHASE3.md §3 A1.M5 -- save-as modal state. When saveModalOpen_
+        // is true, render_body swaps the param-sliders view for a name
+        // + category input form. On confirm we snapshot the live brush
+        // via brush_params_from_live and write through
+        // UserBrushPresets::save into <configPath>/brush_presets/.
+        bool saveModalOpen_ = false;
+        std::string saveModalName_;
+        HVYM::Brushes::BrushCategory saveModalCategory_ = HVYM::Brushes::BrushCategory::SHARP;
+
+        // Renders the save-as modal body inside the drawer's popup.
+        // Separate function so the param-sliders body and the save body
+        // are clearly distinct render paths.
+        void render_save_modal();
 #endif
         Toolbar& toolbar_;
 };

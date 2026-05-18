@@ -108,6 +108,16 @@ void apply_tunable_overrides(MyPaintBrush* brush, float diameter, float hardness
 // previously-applied preset survives.
 void apply_brush_params(MyPaintBrush* brush, const BrushParams& params);
 
+// Inverse of apply_brush_params: snapshot every base value plus any
+// PRESSURE pressure-mapping curves the brush currently has installed.
+// Used by the customization-drawer Save flow (PHASE3.md §3 A1.M5) so
+// a saved user preset preserves both the artist's slider edits AND
+// whatever pressure response was inherited from the curated preset
+// it was tuned on top of. Multi-point curves are flattened to a
+// 2-point linear approximation (first + last points); v1 ships
+// scalar-only sliders with no curve editor.
+BrushParams brush_params_from_live(MyPaintBrush* brush);
+
 }  // namespace HVYM::Brushes
 
 #endif  // HVYM_HAS_LIBMYPAINT

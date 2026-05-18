@@ -214,6 +214,31 @@ void apply_tunable_overrides(MyPaintBrush* brush, float diameter, float hardness
     mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_OPAQUE, opacity);
 }
 
+BrushParams brush_params_from_live(MyPaintBrush* brush) {
+    BrushParams params;
+    if (!brush) return params;
+    for (int i = 0; i < MYPAINT_BRUSH_SETTINGS_COUNT; ++i) {
+        const auto id = static_cast<MyPaintBrushSetting>(i);
+        params.baseValues[i] = mypaint_brush_get_base_value(brush, id);
+
+        // Capture any PRESSURE curve installed on this setting. The
+        // curated presets only ever use 2-point linear curves, but a
+        // future-imported .myb file could have richer shapes. For v1
+        // we flatten richer curves to (first point y, last point y)
+        // -- losing intermediate shape but preserving the overall
+        // low/high feel. The customization-drawer UI shouldn't be able
+        // to author multi-point curves yet anyway.
+        const int n = mypaint_brush_get_mapping_n(brush, id, MYPAINT_BRUSH_INPUT_PRESSURE);
+        if (n >= 2) {
+            float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+            mypaint_brush_get_mapping_point(brush, id, MYPAINT_BRUSH_INPUT_PRESSURE, 0,     &x0, &y0);
+            mypaint_brush_get_mapping_point(brush, id, MYPAINT_BRUSH_INPUT_PRESSURE, n - 1, &x1, &y1);
+            params.pressureMappings.push_back(LinearPressureMapping{id, y0, y1});
+        }
+    }
+    return params;
+}
+
 void apply_brush_params(MyPaintBrush* brush, const BrushParams& params) {
     if (!brush) return;
     // Base values: write every slot so switching presets fully resets

@@ -7,6 +7,7 @@
 #include "DrawingProgram/Tools/MyPaintBrushTool.hpp"
 #include "GUIStuff/GUIManager.hpp"
 #include "GUIStuff/ElementHelpers/ButtonHelpers.hpp"
+#include "GUIStuff/ElementHelpers/RadioButtonHelpers.hpp"
 #include "GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
 #include "GUIStuff/ElementHelpers/TextBoxHelpers.hpp"
@@ -14,6 +15,7 @@
 #ifdef HVYM_HAS_LIBMYPAINT
 #include "Brushes/BrushPresets.hpp"
 #include "Brushes/MyPaintBrushParams.hpp"
+#include "Brushes/UserBrushPresets.hpp"
 extern "C" {
 #include <mypaint-brush.h>
 }
@@ -65,15 +67,42 @@ void BrushCustomizationDrawer::render_body() {
     using namespace GUIStuff;
     using namespace ElementHelpers;
 
+    // When the save-as modal is open we replace the params view with
+    // the modal body so the popup stays the same size and the modal
+    // is unambiguously the focus.
+    if (saveModalOpen_) {
+        render_save_modal();
+        return;
+    }
+
     text_label_centered(gui, "Brush Customization");
 
-    // Active preset name -- read-only label for now. A1.M5 turns this
-    // into a Save / Save-as button cluster.
+    // Active preset name + "Save as preset..." button. The button
+    // snapshots the live brush state (base values + pressure curves)
+    // into a BrushParams via brush_params_from_live, then opens a
+    // modal for the artist to pick a name + category before writing
+    // to <configPath>/brush_presets/<category>/<slug>.json via
+    // UserBrushPresets::save.
     auto& cfg = main.toolConfig.myPaintBrush;
     const auto& presets = HVYM::Brushes::curated_presets();
     if (!presets.empty() && cfg.activePresetIndex >= 0
         && cfg.activePresetIndex < static_cast<int>(presets.size())) {
-        text_label(gui, std::string("Active preset: ") + presets[cfg.activePresetIndex].name);
+        text_label(gui, std::string("Based on: ") + presets[cfg.activePresetIndex].name);
+        // Seed the save-as category from the active curated preset's
+        // category so the artist's saved tweak lands in the same bucket
+        // by default.
+        text_button(gui, "save as preset", "Save as preset...", TextButtonOptions{
+            .wide    = true,
+            .onClick = [this, &cfg, &presets, &gui]() {
+                if (cfg.activePresetIndex >= 0
+                    && cfg.activePresetIndex < static_cast<int>(presets.size())) {
+                    saveModalCategory_ = presets[cfg.activePresetIndex].category;
+                    saveModalName_     = std::string("My ") + presets[cfg.activePresetIndex].name;
+                }
+                saveModalOpen_ = true;
+                gui.set_to_layout();
+            },
+        });
     }
 
     // Group the params by BrushParamGroup. Render each group as an
@@ -169,4 +198,61 @@ void BrushCustomizationDrawer::render_body() {
         }
     }
 #endif  // HVYM_HAS_LIBMYPAINT
+}
+
+void BrushCustomizationDrawer::render_save_modal() {
+#ifdef HVYM_HAS_LIBMYPAINT
+    auto& main = toolbar_.main_program();
+    auto& gui  = main.g.gui;
+    if (!main.world) return;
+    auto& drawTool = main.world->drawProg.drawTool;
+    if (!drawTool || drawTool->get_type() != DrawingProgramToolType::MYPAINTBRUSH) {
+        // Tool switched away mid-modal -- just close.
+        saveModalOpen_ = false;
+        return;
+    }
+    auto* brushTool = static_cast<MyPaintBrushTool*>(drawTool.get());
+    MyPaintBrush* brush = brushTool->get_brush();
+    if (!brush) return;
+
+    using namespace GUIStuff;
+    using namespace ElementHelpers;
+
+    text_label_centered(gui, "Save brush preset");
+    input_text_field(gui, "save preset name", "Name", &saveModalName_);
+
+    text_label(gui, "Category:");
+    radio_button_selector<HVYM::Brushes::BrushCategory>(
+        gui, "save preset category", &saveModalCategory_,
+        {
+            {"Sharp",    HVYM::Brushes::BrushCategory::SHARP},
+            {"Textured", HVYM::Brushes::BrushCategory::TEXTURED},
+        });
+
+    text_button(gui, "save preset confirm", "Save", TextButtonOptions{
+        .wide    = true,
+        .onClick = [this, brush, &main, &gui]() {
+            if (saveModalName_.empty()) return;  // require a name; click is a no-op
+            HVYM::Brushes::BrushPreset preset;
+            preset.name     = saveModalName_;
+            preset.category = saveModalCategory_;
+            preset.params   = HVYM::Brushes::brush_params_from_live(brush);
+            // Sidecar PNG is A1.M6's responsibility; pass nullopt here
+            // so save() leaves any pre-existing icon alone (or, on a
+            // fresh save, doesn't create an empty one).
+            UserBrushPresets::save(main.conf.configPath, preset, std::nullopt);
+            saveModalOpen_ = false;
+            saveModalName_.clear();
+            gui.set_to_layout();
+        },
+    });
+    text_button(gui, "save preset cancel", "Cancel", TextButtonOptions{
+        .wide    = true,
+        .onClick = [this, &gui]() {
+            saveModalOpen_ = false;
+            saveModalName_.clear();
+            gui.set_to_layout();
+        },
+    });
+#endif
 }
