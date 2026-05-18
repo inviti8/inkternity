@@ -39,7 +39,7 @@ bool SavedPresetsDrawer::matches_filter(const std::string& name) const {
     return lower(name).find(needle) != std::string::npos;
 }
 
-void SavedPresetsDrawer::render_category(HVYM::Brushes::BrushCategory cat) {
+void SavedPresetsDrawer::render_curated_section(HVYM::Brushes::BrushCategory cat) {
     using namespace GUIStuff;
     using namespace ElementHelpers;
     auto& main = toolbar_.main_program();
@@ -51,28 +51,42 @@ void SavedPresetsDrawer::render_category(HVYM::Brushes::BrushCategory cat) {
     MyPaintBrush* brush = brushTool->get_brush();
     auto& cfg = main.toolConfig.myPaintBrush;
 
-    // Collect everything in this category that passes the filter so we
-    // can decide whether to render the header at all (no header for an
-    // empty section -- visual noise reduction during search).
     const auto& curated = HVYM::Brushes::curated_presets();
     std::vector<int> curatedIdxs;
     for (int i = 0; i < static_cast<int>(curated.size()); ++i) {
         if (curated[i].category == cat && matches_filter(curated[i].name))
             curatedIdxs.push_back(i);
     }
-    std::vector<const HVYM::Brushes::BrushPreset*> userInCat;
-    for (const auto& p : userPresets_) {
-        if (p.category == cat && matches_filter(p.name))
-            userInCat.push_back(&p);
-    }
-    if (curatedIdxs.empty() && userInCat.empty()) return;
+    if (curatedIdxs.empty()) return;
 
-    text_label_centered(gui, cat == HVYM::Brushes::BrushCategory::SHARP ? "Sharp" : "Textured");
+    const bool isSharp = cat == HVYM::Brushes::BrushCategory::SHARP;
+    bool& expanded = isSharp ? presetsSharpExpanded_ : presetsTexturedExpanded_;
+    // Auto-expand when the artist is searching so matches inside a
+    // collapsed section aren't hidden. The state flips back to the
+    // user's manual choice once the search field clears.
+    const bool searchActive = !searchQuery_.empty();
+    const bool open = expanded || searchActive;
+
+    const std::string headerLabel =
+        std::string(open ? "- Presets " : "+ Presets ") + (isSharp ? "Sharp" : "Textured");
+    // Section header IDs sit in a small negative-int region so they
+    // can't collide with curated tile IDs (1..N) or user tile IDs
+    // (1000..1000+2^31). Curated header range: -1..-99.
+    const int64_t headerId = isSharp ? -1 : -2;
+    gui.new_id(headerId, [&] {
+        text_button(gui, "section header", headerLabel, TextButtonOptions{
+            .wide    = true,
+            .onClick = [&expanded, &gui]() {
+                expanded = !expanded;
+                gui.set_to_layout();
+            },
+        });
+    });
+    if (!open) return;
 
     // Numeric IDs disambiguate tiles across renders. Curated tiles use
-    // 1..N (their index + 1); user tiles use 1000 + N. See the matching
-    // pattern in BrushCustomizationDrawer for why string-IDs aren't
-    // safe here.
+    // 1..N (their index + 1). See the matching pattern in
+    // BrushCustomizationDrawer for why string-IDs aren't safe here.
     for (int i : curatedIdxs) {
         const auto& preset = curated[i];
         const bool isActive = cfg.activeUserPresetPath.empty() && cfg.activePresetIndex == i;
@@ -91,6 +105,47 @@ void SavedPresetsDrawer::render_category(HVYM::Brushes::BrushCategory cat) {
             });
         });
     }
+}
+
+void SavedPresetsDrawer::render_user_section(HVYM::Brushes::BrushCategory cat) {
+    using namespace GUIStuff;
+    using namespace ElementHelpers;
+    auto& main = toolbar_.main_program();
+    if (!main.world) return;
+    auto& gui = main.g.gui;
+    auto& drawTool = main.world->drawProg.drawTool;
+    if (!drawTool || drawTool->get_type() != DrawingProgramToolType::MYPAINTBRUSH) return;
+    auto* brushTool = static_cast<MyPaintBrushTool*>(drawTool.get());
+    MyPaintBrush* brush = brushTool->get_brush();
+    auto& cfg = main.toolConfig.myPaintBrush;
+
+    std::vector<const HVYM::Brushes::BrushPreset*> userInCat;
+    for (const auto& p : userPresets_) {
+        if (p.category == cat && matches_filter(p.name))
+            userInCat.push_back(&p);
+    }
+    if (userInCat.empty()) return;
+
+    const bool isSharp = cat == HVYM::Brushes::BrushCategory::SHARP;
+    bool& expanded = isSharp ? userSharpExpanded_ : userTexturedExpanded_;
+    const bool searchActive = !searchQuery_.empty();
+    const bool open = expanded || searchActive;
+
+    const std::string headerLabel =
+        std::string(open ? "- " : "+ ") + (isSharp ? "Sharp" : "Textured");
+    // User header range: -10..-99 (separate from curated -1..-9).
+    const int64_t headerId = isSharp ? -10 : -11;
+    gui.new_id(headerId, [&] {
+        text_button(gui, "section header", headerLabel, TextButtonOptions{
+            .wide    = true,
+            .onClick = [&expanded, &gui]() {
+                expanded = !expanded;
+                gui.set_to_layout();
+            },
+        });
+    });
+    if (!open) return;
+
     for (const auto* presetPtr : userInCat) {
         const auto& preset = *presetPtr;
         // Use the json sibling path as the persistent identifier.
@@ -201,7 +256,12 @@ void SavedPresetsDrawer::render_body() {
     text_label_centered(gui, "Saved Presets");
     input_text_field(gui, "saved presets search", "Search", &searchQuery_);
 
-    render_category(HVYM::Brushes::BrushCategory::SHARP);
-    render_category(HVYM::Brushes::BrushCategory::TEXTURED);
+    // Curated presets render first (collapsed by default) so the
+    // artist's own brushes -- the primary content of this drawer --
+    // are immediately visible below.
+    render_curated_section(HVYM::Brushes::BrushCategory::SHARP);
+    render_curated_section(HVYM::Brushes::BrushCategory::TEXTURED);
+    render_user_section(HVYM::Brushes::BrushCategory::SHARP);
+    render_user_section(HVYM::Brushes::BrushCategory::TEXTURED);
 #endif
 }

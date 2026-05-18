@@ -54,7 +54,18 @@ class SavedPresetsDrawer {
         std::vector<HVYM::Brushes::BrushPreset> userPresets_;
         bool userPresetsScanned_ = false;
 
-        void render_category(HVYM::Brushes::BrushCategory cat);
+        // Collapse state for the four sections. Curated ("Presets ...")
+        // ship closed: the artist already chose their starting point on
+        // the toolbar, and the saved-presets drawer's primary purpose
+        // is browsing the artist's own library. User sections ship open
+        // so saved brushes are visible at a glance.
+        bool presetsSharpExpanded_     = false;
+        bool presetsTexturedExpanded_  = false;
+        bool userSharpExpanded_        = true;
+        bool userTexturedExpanded_     = true;
+
+        void render_curated_section(HVYM::Brushes::BrushCategory cat);
+        void render_user_section(HVYM::Brushes::BrushCategory cat);
         // Case-insensitive substring filter against searchQuery_.
         bool matches_filter(const std::string& name) const;
 #endif
