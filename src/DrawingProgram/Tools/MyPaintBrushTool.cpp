@@ -2,6 +2,8 @@
 
 #include "../DrawingProgram.hpp"
 #include "../../MainProgram.hpp"
+#include "../../Brushes/BrushPresets.hpp"
+#include "../../Brushes/UserBrushPresets.hpp"
 #include "../../CanvasComponents/MyPaintLayerCanvasComponent.hpp"
 #include "../../CanvasComponents/CanvasComponentContainer.hpp"
 #include "Helpers/NetworkingObjects/NetObjTemporaryPtr.decl.hpp"
@@ -69,6 +71,20 @@ void ensure_overrides_initialized(ToolConfiguration::MyPaintBrushToolConfig& cfg
 }
 
 void apply_active_preset_with_overrides(MyPaintBrush* brush, ToolConfiguration::MyPaintBrushToolConfig& cfg) {
+    // PHASE3 A2.M2: user preset takes precedence when its path is set.
+    // We re-read the JSON every apply (every begin_stroke) so on-disk
+    // edits made externally show up next stroke. Files are tiny and
+    // the OS caches the buffer; cost is negligible.
+    if (!cfg.activeUserPresetPath.empty()) {
+        if (auto params = UserBrushPresets::read_params_json(cfg.activeUserPresetPath)) {
+            HVYM::Brushes::apply_brush_params(brush, *params);
+            return;
+        }
+        // File missing or unparseable -- fall back to the curated path
+        // and forget the user-preset selection so we don't keep hitting
+        // the same dead path stroke after stroke.
+        cfg.activeUserPresetPath.clear();
+    }
     ensure_overrides_initialized(cfg);
     const int idx = (cfg.activePresetIndex >= 0 && cfg.activePresetIndex < static_cast<int>(cfg.overrides.size()))
                   ? cfg.activePresetIndex : 0;
@@ -170,6 +186,7 @@ void render_brush_picker_row(GUIStuff::GUIManager& gui,
                 .size = SMALL_BUTTON_SIZE + 4,
                 .onClick = [brush, &cfg, i] {
                     cfg.activePresetIndex = i;
+                    cfg.activeUserPresetPath.clear();  // curated wins -- drop any user-preset override
                     apply_active_preset_with_overrides(brush, cfg);
                 }
             });

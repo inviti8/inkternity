@@ -58,7 +58,14 @@ class ToolConfiguration {
         struct MyPaintBrushToolConfig {
             int activePresetIndex = 0;  // index into HVYM::Brushes::curated_presets()
             std::vector<MyPaintBrushPresetOverrides> overrides;  // sized to match preset count on first use
-            NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(MyPaintBrushToolConfig, activePresetIndex, overrides)
+            // PHASE3 A2.M2 -- when non-empty, takes precedence over
+            // activePresetIndex: apply_active_preset_with_overrides
+            // reads BrushParams from this file via UserBrushPresets and
+            // applies them in place of the curated preset + overrides
+            // path. Cleared when the user picks a curated preset from
+            // the brush picker. Empty path = legacy curated-only mode.
+            std::string activeUserPresetPath;
+            NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(MyPaintBrushToolConfig, activePresetIndex, overrides, activeUserPresetPath)
         } myPaintBrush;
 
         struct ScreenshotToolConfig {

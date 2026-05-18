@@ -1,5 +1,6 @@
 #pragma once
 #include "BrushCustomizationDrawer.hpp"
+#include "SavedPresetsDrawer.hpp"
 #include "HostMode.hpp"
 #include "GUIStuff/Elements/ScrollArea.hpp"
 #include "DrawData.hpp"
@@ -102,9 +103,11 @@ class Toolbar {
         void stop_displaying_bookmark_menu();
         void stop_displaying_layer_menu();
         void stop_displaying_brush_customization_menu();
+        void stop_displaying_saved_presets_menu();
         void bookmark_menu(GUIStuff::Element* bookmarkMenuButton);
         void layer_menu(GUIStuff::Element* layerMenuButton);
         void brush_customization_menu(GUIStuff::Element* triggerButton);
+        void saved_presets_menu(GUIStuff::Element* triggerButton);
         void drawing_program_gui();
         void options_menu();
         void file_picker_gui_refresh_entries();
@@ -204,6 +207,11 @@ class Toolbar {
         // for any other tool).
         bool brushCustomizationMenuPopupOpen = false;
         BrushCustomizationDrawer brushCustomizationDrawer{*this};
+        // PHASE3.md §3 A2.M2 -- toolbar toggle state for the saved-
+        // presets browser popup. Same MyPaintBrush gating as the
+        // customization drawer.
+        bool savedPresetsMenuPopupOpen = false;
+        SavedPresetsDrawer savedPresetsDrawer{*this};
 
         struct GridMenu {
             bool popupOpen = false;
