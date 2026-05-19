@@ -88,12 +88,17 @@ class Waypoint {
         void clear_skin()                 { skin.reset(); }
 
         // PHASE2 M4: per-waypoint speed multiplier for the reader-mode
-        // camera transition INTO this waypoint. Range 0.1 .. 2.0. The
+        // camera transition INTO this waypoint. Range 0.1 .. 10.0. The
         // applied transition duration is globalDuration / multiplier,
-        // so 2.0 plays the transition twice as fast and 0.5 plays it
-        // half-speed. Default 1.0 leaves the global behavior unchanged.
+        // so 10.0 plays the transition ten times as fast and 0.5 plays
+        // it half-speed. Default 1.0 leaves the global behavior
+        // unchanged. FRAME_ANIM.md §8: the upper bound was widened from
+        // 2.0 to 10.0 so frame-animation chains can approximate hard
+        // cuts by cranking the multiplier high enough that the
+        // smooth-pan is shorter than perceptible (≈16ms at typical
+        // jumpTransitionTime defaults).
         static constexpr float TRANSITION_SPEED_MIN = 0.1f;
-        static constexpr float TRANSITION_SPEED_MAX = 2.0f;
+        static constexpr float TRANSITION_SPEED_MAX = 10.0f;
         static constexpr float TRANSITION_SPEED_DEFAULT = 1.0f;
         float get_transition_speed_multiplier() const { return transitionSpeedMultiplier; }
         void set_transition_speed_multiplier(float v) { transitionSpeedMultiplier = std::clamp(v, TRANSITION_SPEED_MIN, TRANSITION_SPEED_MAX); }

@@ -3,8 +3,12 @@
 #include "../DrawingProgram.hpp"
 #include "../../MainProgram.hpp"
 #include "../../World.hpp"
+#include "../../ResourceManager.hpp"
+#include "../../CanvasComponents/ImageCanvasComponent.hpp"
 #include "../../CanvasComponents/WaypointCanvasComponent.hpp"
 #include "../../CanvasComponents/CanvasComponentContainer.hpp"
+#include "../../DrawingProgram/Layers/DrawingProgramLayerManager.hpp"
+#include "../../DrawingProgram/Layers/DrawingProgramLayerListItem.hpp"
 #include "../../Waypoints/Waypoint.hpp"
 #include "../../Waypoints/WaypointGraph.hpp"
 #include "../../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
@@ -13,14 +17,22 @@
 #include "../../GUIStuff/ElementHelpers/LayoutHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
+#include "../../GUIStuff/ElementHelpers/RadioButtonHelpers.hpp"
 #include "../../GUIStuff/Elements/DropDown.hpp"
 #include "Helpers/NetworkingObjects/NetObjTemporaryPtr.decl.hpp"
 #include "Helpers/SCollision.hpp"
 
 #include <include/core/SkCanvas.h>
+#include <include/core/SkData.h>
+#include <include/core/SkImage.h>
+#include <include/core/SkImageInfo.h>
 #include <include/core/SkPaint.h>
 #include <include/core/SkPath.h>
 #include <include/core/SkPathBuilder.h>
+#include <include/core/SkPixmap.h>
+#include <include/core/SkStream.h>
+#include <include/core/SkSurface.h>
+#include <include/encode/SkPngEncoder.h>
 
 #include <SDL3/SDL_keyboard.h>
 
@@ -102,15 +114,33 @@ void WaypointTool::draw(SkCanvas* canvas, const DrawData& drawData) {
     canvas->drawPath(pb.detach(), outline);
 }
 
+// FRAME_ANIM.md §3 — settings-panel block for the Frame step axis radio.
+// Shared between the desktop and phone tool panels.
+namespace {
+void gui_frame_step_block(GUIStuff::GUIManager& gui,
+                          FrameStepAxis& axisChoice) {
+    using namespace GUIStuff::ElementHelpers;
+    text_label(gui, "Frame step");
+    radio_button_selector<FrameStepAxis>(gui, "frame step axis", &axisChoice, {
+        {"+X", FrameStepAxis::POS_X},
+        {"-X", FrameStepAxis::NEG_X},
+        {"+Y", FrameStepAxis::POS_Y},
+        {"-Y", FrameStepAxis::NEG_Y}
+    });
+}
+}  // namespace
+
 void WaypointTool::gui_toolbox(Toolbar&) {
     using namespace GUIStuff;
     using namespace ElementHelpers;
     auto& gui = drawP.world.main.g.gui;
     gui.new_id("waypoint tool", [&] {
         text_label_centered(gui, "Waypoint");
+        bool renderedSelectedBlock = false;
         if (drawP.world.wpGraph.has_selection()) {
             auto wpRef = drawP.world.netObjMan.get_obj_temporary_ref_from_id<Waypoint>(drawP.world.wpGraph.get_selected());
             if (wpRef) {
+                renderedSelectedBlock = true;
                 input_text_field(gui, "label", "Label", &wpRef->mutable_label(), {
                     // P0.5-LIVE-SYNC: publish label changes so already-
                     // connected subscribers see the rename immediately
@@ -174,10 +204,21 @@ void WaypointTool::gui_toolbox(Toolbar&) {
                             }});
                     }
                 }
-                return;
             }
         }
-        text_label(gui, "Click an existing marker, or click empty canvas to drop one.");
+        if (!renderedSelectedBlock)
+            text_label(gui, "Click an existing marker, or click empty canvas to drop one.");
+
+        // FRAME_ANIM.md §3 — Next Frame + axis radio + onion-skin toggle.
+        // Always rendered; Next Frame works without a selection.
+        gui_frame_step_block(gui, frameStepAxis);
+        text_button(gui, "next frame", "Next frame",
+            { .onClick = [this] { next_frame_step(frameStepAxis); } });
+        slider_scalar_field<int>(gui, "copy layer offset", "Copy layer offset",
+            &frameCopyLayerOffset,
+            FRAME_COPY_LAYER_OFFSET_MIN, FRAME_COPY_LAYER_OFFSET_MAX);
+        text_button(gui, "copy frame", "Copy frame from selection",
+            { .onClick = [this] { copy_frame_to_current(); } });
     });
 }
 
@@ -242,11 +283,185 @@ void WaypointTool::gui_phone_toolbox(PhoneDrawingProgramScreen&) {
                 }
             }
         }
+        // FRAME_ANIM.md §3 — same Next Frame + axis radio + onion-skin
+        // controls as the desktop panel. Always rendered.
+        gui_frame_step_block(gui, frameStepAxis);
+        text_button(gui, "next frame", "Next frame",
+            { .onClick = [this] { next_frame_step(frameStepAxis); } });
+        slider_scalar_field<int>(gui, "copy layer offset", "Copy layer offset",
+            &frameCopyLayerOffset,
+            FRAME_COPY_LAYER_OFFSET_MIN, FRAME_COPY_LAYER_OFFSET_MAX);
+        text_button(gui, "copy frame", "Copy frame from selection",
+            { .onClick = [this] { copy_frame_to_current(); } });
     });
 }
 
 void WaypointTool::invalidate_marker_caches() {
     drawP.drawCache.clear_own_cached_surfaces();
+}
+
+void WaypointTool::next_frame_step(FrameStepAxis axis) {
+    // FRAME_ANIM.md §3 — snap the editor camera by exactly one window
+    // viewport in the chosen axis. The offset is taken in the live
+    // camera's own local (screen) space, then projected to world via
+    // (from_space(offset) − from_space(0)). This handles rotation
+    // correctly: stepping +X always moves the view to *screen-right*,
+    // regardless of how the camera is rotated relative to the world.
+    const Vector2f windowSize = drawP.world.main.window.size.cast<float>();
+    Vector2f screenOffset{0.0f, 0.0f};
+    switch (axis) {
+        case FrameStepAxis::POS_X: screenOffset = { windowSize.x(), 0.0f}; break;
+        case FrameStepAxis::NEG_X: screenOffset = {-windowSize.x(), 0.0f}; break;
+        case FrameStepAxis::POS_Y: screenOffset = {0.0f,  windowSize.y()}; break;
+        case FrameStepAxis::NEG_Y: screenOffset = {0.0f, -windowSize.y()}; break;
+    }
+
+    const CoordSpaceHelper& current = drawP.world.drawData.cam.c;
+    const WorldVec worldOffset = current.from_space(screenOffset) - current.from_space({0.0f, 0.0f});
+
+    CoordSpaceHelper target = current;
+    target.pos = current.pos + worldOffset;
+    drawP.world.drawData.cam.smooth_move_to(drawP.world, target, windowSize);
+
+    // Stash the just-cleared selection as the pending chain source.
+    // When the artist drops a new waypoint after Next Frame,
+    // drop_waypoint sees this and auto-wires an edge from the previous
+    // waypoint to the new one — so the chain builds without the artist
+    // having to shift+click on an offscreen previous waypoint. Clearing
+    // wpGraph selection lets the settings panel render its
+    // "no waypoint selected" state cleanly (no stale label-input
+    // caching to fight).
+    if (drawP.world.wpGraph.has_selection()) {
+        pendingChainSourceId = drawP.world.wpGraph.get_selected();
+        hasPendingChainSource = true;
+        drawP.world.wpGraph.clear_selection();
+    }
+}
+
+void WaypointTool::copy_frame_to_current() {
+    // FRAME_ANIM.md §4 — one-shot raster paste of the PREVIOUS frame's
+    // active-layer content into the live viewport. "Previous" is
+    // resolved via the waypoint graph: the from-node of the FIRST
+    // incoming edge to the currently-selected waypoint. The first-edge
+    // tiebreaker matches the TRANSITIONS.md §5 convention.
+    if (!drawP.layerMan.is_a_layer_being_edited()) return;
+    if (!drawP.world.wpGraph.has_selection()) return;
+    const NetworkingObjects::NetObjID currentId = drawP.world.wpGraph.get_selected();
+
+    // Walk edges for the first one whose .to == current; its .from is
+    // the source. No incoming edge → no previous frame → no-op.
+    NetworkingObjects::NetObjID sourceId{};
+    bool foundIncoming = false;
+    auto& edges = drawP.world.wpGraph.get_edges();
+    if (edges) {
+        for (auto& info : *edges) {
+            if (info.obj->get_to() == currentId) {
+                sourceId = info.obj->get_from();
+                foundIncoming = true;
+                break;
+            }
+        }
+    }
+    if (!foundIncoming) return;
+
+    auto srcRef = drawP.world.netObjMan.get_obj_temporary_ref_from_id<Waypoint>(sourceId);
+    if (!srcRef) return;
+
+    const Vector<int32_t, 2> sourceWindow = srcRef->get_window_size();
+    if (sourceWindow.x() <= 0 || sourceWindow.y() <= 0) return;  // pre-Phase-2 save artefact guard
+
+    auto editingLayerPtr = drawP.layerMan.get_editing_layer().lock();
+    if (!editingLayerPtr) return;
+
+    // 1. Render ONLY the currently-edited layer's content at the source
+    // frame's view into an offscreen surface sized to that frame's
+    // windowSize. Skips the live draw-cache (takingScreenshot=true) and
+    // keeps the offscreen transparent where the layer has nothing.
+    SkImageInfo info = SkImageInfo::Make(sourceWindow.x(), sourceWindow.y(),
+                                         kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(info);
+    if (!surface) return;
+    SkCanvas* off = surface->getCanvas();
+    off->clear(SkColor4f{0.0f, 0.0f, 0.0f, 0.0f});
+
+    DrawData oc = drawP.world.drawData;
+    oc.cam.c = srcRef->get_coords();
+    oc.cam.set_viewing_area(sourceWindow.cast<float>());
+    oc.takingScreenshot       = true;
+    oc.transparentBackground  = true;
+    oc.drawGrids              = false;
+    oc.refresh_draw_optimizing_values();
+    editingLayerPtr->draw(off, oc);
+
+    // 2. Encode the offscreen as PNG bytes so it can ride the existing
+    // ResourceData / ResourceManager path (same one used for dropped
+    // image files and clipboard pastes).
+    sk_sp<SkImage> snapshot = surface->makeImageSnapshot();
+    if (!snapshot) return;
+    sk_sp<SkImage> raster = snapshot->makeRasterImage(nullptr);
+    if (!raster) raster = snapshot;
+    SkPixmap pix;
+    if (!raster->peekPixels(&pix)) return;
+    SkDynamicMemoryWStream stream;
+    if (!SkPngEncoder::Encode(&stream, pix, {})) return;
+    sk_sp<SkData> pngData = stream.detachAsData();
+    if (!pngData) return;
+
+    // 3. Register the PNG as a resource and grab its NetObjID.
+    ResourceData newResource;
+    newResource.data = std::make_shared<std::string>(
+        reinterpret_cast<const char*>(pngData->bytes()), pngData->size());
+    newResource.name = "frame_copy.png";
+    NetworkingObjects::NetObjID imageID =
+        drawP.world.rMan.add_resource(newResource).get_net_id();
+
+    // 4. Resolve destination layer. Walk the flattened layer order; if
+    // current_index + offset is out of bounds, fall back to the
+    // currently-edited layer (per the design's "defaults to same layer"
+    // contract).
+    DrawingProgramLayerListItem* destLayer = editingLayerPtr.get();
+    if (frameCopyLayerOffset != 0) {
+        auto flat = drawP.layerMan.get_flattened_layer_list();
+        int curIdx = -1;
+        for (size_t i = 0; i < flat.size(); ++i) {
+            if (flat[i] == editingLayerPtr.get()) {
+                curIdx = static_cast<int>(i);
+                break;
+            }
+        }
+        if (curIdx >= 0) {
+            const int targetIdx = curIdx + frameCopyLayerOffset;
+            if (targetIdx >= 0 && targetIdx < static_cast<int>(flat.size()))
+                destLayer = flat[targetIdx];
+        }
+    }
+
+    // 5. Build the ImageCanvasComponent and place it on destLayer at
+    // the live camera's framing rect. coords = the live cam-space
+    // (matches drop_waypoint pattern), p1/p2 = the live window's pixel
+    // extent in that local space. The image lands exactly where the
+    // artist's current view is, in world space.
+    CanvasComponentContainer* container = new CanvasComponentContainer(
+        drawP.world.netObjMan, CanvasComponentType::IMAGE);
+    container->coords = drawP.world.drawData.cam.c;
+    auto& img = static_cast<ImageCanvasComponent&>(container->get_comp());
+    img.d.p1 = Vector2f{0.0f, 0.0f};
+    img.d.p2 = drawP.world.main.window.size.cast<float>();
+    img.d.imageID = imageID;
+
+    // Insert into the destination layer's component list (same call
+    // shape as add_component_to_layer_being_edited, just on an explicit
+    // layer instead of editingLayer). commit_update + send_comp_update
+    // finalise world bounds and broadcast to subscribers; the undo
+    // entry lets the artist undo the paste if they pasted on the wrong
+    // layer.
+    auto& destComponents = destLayer->get_layer().components;
+    auto newIt = destComponents->push_back_and_send_create(destComponents, container);
+    CanvasComponentContainer::ObjInfo* objInfo = &(*newIt);
+    container->commit_update(drawP);
+    container->send_comp_update(drawP, true);
+    if (container->get_world_bounds().has_value())
+        drawP.layerMan.add_undo_place_component(objInfo);
 }
 
 void WaypointTool::right_click_popup_gui(Toolbar&, Vector2f) {}
@@ -359,6 +574,19 @@ void WaypointTool::drop_waypoint(const Vector2f& clickPos) {
     container->send_comp_update(drawP, true);
     if (container->get_world_bounds().has_value())
         drawP.layerMan.add_undo_place_component(objInfo);
+
+    // FRAME_ANIM.md §4 — if the previous gesture was Next Frame, the
+    // selection at that moment was stashed as pendingChainSourceId.
+    // Auto-wire an edge `pending -> new` so the animation chain builds
+    // without the artist having to shift+click an offscreen previous
+    // waypoint. Uses add_edge_enforcing_invariant so the transition-
+    // point single-out rule (TRANSITIONS.md §4) is respected if the
+    // previous waypoint happens to be a transition.
+    if (hasPendingChainSource) {
+        drawP.world.wpGraph.add_edge_enforcing_invariant(
+            pendingChainSourceId, newWaypointId, std::optional<std::string>{});
+        hasPendingChainSource = false;
+    }
 
     drawP.world.wpGraph.select(newWaypointId);
 }
