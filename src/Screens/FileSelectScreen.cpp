@@ -511,8 +511,17 @@ void FileSelectScreen::move_selected_files(const std::filesystem::path& fromPath
             // Preserve the existing extension on move/rename so legacy
             // .infpnt files don't silently change format-by-association.
             // First save will migrate to the canonical .inkternity extension.
-            std::filesystem::path filePath = fromPath / (f.fileName + f.fileExtension);
-            std::filesystem::path thumbnailPath = fromPath / (f.fileName + ".jpg");
+            //
+            // Source dir is per-entry via f.basePath, not the caller's
+            // fromPath, so autosave entries (rooted at autosavePath)
+            // and regular saves (rooted at savePath) can be mixed in
+            // one selection without the rename targeting the wrong
+            // folder. fromPath stays as a fallback for any callers
+            // that pre-date the per-entry basePath field.
+            const std::filesystem::path entryBase =
+                f.basePath.empty() ? fromPath : f.basePath;
+            std::filesystem::path filePath = entryBase / (f.fileName + f.fileExtension);
+            std::filesystem::path thumbnailPath = entryBase / (f.fileName + ".jpg");
             std::filesystem::path newFilePath = toPath / (newFileName + f.fileExtension);
             std::filesystem::path newThumbnailPath = toPath / (newFileName + ".jpg");
             SDL_RenamePath(filePath.string().c_str(), newFilePath.string().c_str());
@@ -543,6 +552,12 @@ void FileSelectScreen::duplicate_selected_files(const std::filesystem::path& inP
 
     for(const FileInfo& f : fileList) {
         if(f.selected) {
+            // Duplicating an orphaned autosave makes no sense — it'd
+            // produce a second orphan with no original to recover.
+            // Trash + select-out-of-trash is the right path if the
+            // artist actually wants a copy of the recovered content
+            // promoted to a regular save.
+            if(f.isAutosave) continue;
             std::string newFileName = ensure_string_unique(toFolderListNames, f.fileName);
             toFolderListNames.emplace_back(newFileName);
             std::filesystem::path filePath = inPath / (f.fileName + f.fileExtension);
@@ -906,11 +921,16 @@ void FileSelectScreen::file_view() {
         gui.element<SelectableButton>("file button", SelectableButton::Data{
             .isSelected = editMode && fileList[i].selected,
             .onClick = [&, filePath, i, isAutosaveEntry] {
-                // Edit mode (trash / duplicate / move) operates on real
-                // saves only; autosave entries are recovery breadcrumbs
-                // — selecting one would invite operations that assume
-                // savePath. Open path stays clickable in edit mode.
-                if(editMode && !isAutosaveEntry)
+                // Edit mode selection. Autosave entries used to be
+                // gated out here (the assumption was "operations
+                // assume savePath"), but artists hit the bug of having
+                // no way to clear orphaned autosaves — they have to
+                // be selectable so Trash can route them to the trash
+                // bin like regular saves. move_selected_files uses
+                // each entry's basePath so the source path is right
+                // for both kinds. Duplicate still skips autosave
+                // entries (duplicating an orphan makes no sense).
+                if(editMode)
                     fileList[i].selected = !fileList[i].selected;
                 else if(!editMode) {
                     CustomEvents::emit_event<CustomEvents::OpenInfiniPaintFileEvent>({
