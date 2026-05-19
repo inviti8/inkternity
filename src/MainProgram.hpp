@@ -17,6 +17,7 @@
 #include "GUIHolder.hpp"
 #include "GlobalConfig.hpp"
 #include "DevKeys.hpp"
+#include "Audio/AudioEngine.hpp"
 #include "PublishedCanvases.hpp"
 #include "Distribution/SideInstances.hpp"
 #include <optional>
@@ -187,6 +188,12 @@ class MainProgram {
         void create_new_tab(const CustomEvents::OpenInfiniPaintFileEvent& openFile);
         void set_tab_to_close(World* world);
         void switch_to_tab(size_t wIndex);
+
+        // AUDIO.md §6 — one engine for the whole MainProgram, survives
+        // world switches; switching worlds explicitly stop_current()s
+        // before swapping so the previous canvas's audio doesn't bleed
+        // into the next.
+        AudioEngine audioEngine;
 
         ~MainProgram();
     private:

@@ -175,6 +175,8 @@ set(sources "src/main.cpp"
             "src/Waypoints/WaypointGraph.cpp"
             "src/Waypoints/TreeView.cpp"
             "src/ReaderMode/ReaderMode.cpp"
+            "src/Audio/AudioEngine.cpp"
+            "deps/miniaudio/miniaudio.c"
             "src/CanvasComponents/MyPaintLayerCanvasComponent.cpp"
             "src/CanvasComponents/WaypointCanvasComponent.cpp"
             "src/DrawingProgram/Tools/MyPaintBrushTool.cpp"
@@ -415,6 +417,7 @@ if(MSVC)
 endif()
 
 target_include_directories(main PRIVATE "include")
+target_include_directories(main PRIVATE "deps/miniaudio")
 if(ANDROID)
     target_include_directories(main PRIVATE "android-project/SDL/include")
 endif()

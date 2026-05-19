@@ -136,6 +136,37 @@ class Waypoint {
         void  set_stop_time(float t)                { stopTime = std::clamp(t, TRANSITION_STOP_TIME_MIN, TRANSITION_STOP_TIME_MAX); }
         float& mutable_stop_time()                  { return stopTime; }
 
+        // AUDIO.md §3 — per-waypoint audio cue. `audioId` references a
+        // ResourceData (mp3 bytes) registered via ResourceManager;
+        // {0,0} means "no audio attached." `audioLoops` is meaningful
+        // only when audioId is set. `stopAudio` is independent of
+        // audioId — when both are set on the same waypoint, audioId
+        // wins (the artist explicitly attached a clip, that's the
+        // stronger signal). Cumulative budget across all referenced
+        // mp3s is capped at TOTAL_AUDIO_BUDGET_BYTES; enforcement
+        // happens at attach time in WaypointTool, not here.
+        static constexpr size_t TOTAL_AUDIO_BUDGET_BYTES = 30u * 1024u * 1024u;  // 30 MB
+        NetworkingObjects::NetObjID get_audio_id()         const { return audioId; }
+        void set_audio_id(NetworkingObjects::NetObjID id)        { audioId = id; }
+        bool has_audio()                                   const { return audioId != NetworkingObjects::NetObjID{}; }
+        bool get_audio_loops()                             const { return audioLoops; }
+        void set_audio_loops(bool v)                             { audioLoops = v; }
+        bool& mutable_audio_loops()                              { return audioLoops; }
+        bool get_stop_audio()                              const { return stopAudio; }
+        void set_stop_audio(bool v)                              { stopAudio = v; }
+        bool& mutable_stop_audio()                               { return stopAudio; }
+        static void publish_audio_id_update(const NetworkingObjects::NetObjTemporaryPtr<Waypoint>& o);
+        static void publish_audio_loops_update(const NetworkingObjects::NetObjTemporaryPtr<Waypoint>& o);
+        static void publish_stop_audio_update(const NetworkingObjects::NetObjTemporaryPtr<Waypoint>& o);
+        // AUDIO.md §3 — sum of mp3 bytes across DISTINCT audio resources
+        // referenced by some waypoint's audioId. Walks wpGraph.nodes
+        // (collecting unique audioIds), looks each one up in the world's
+        // ResourceManager, sums data->size(). Linear in (nodes +
+        // distinct audio resources); fine to call every frame on the
+        // settings panel because waypoint counts in practical canvases
+        // top out in the dozens.
+        static size_t compute_canvas_audio_total_bytes(World& w);
+
         void scale_up(const WorldScalar& scaleUpAmount);
 
         void save_file(cereal::PortableBinaryOutputArchive& a) const;
@@ -156,6 +187,10 @@ class Waypoint {
         // future migration can rearrange one without touching the
         // other.
         void load_transition_point_data_from_archive(cereal::PortableBinaryInputArchive& a, VersionNumber version);
+        // AUDIO.md §8 — reads audioId / audioLoops / stopAudio.
+        // Caller is the WaypointGraph load path; unconditionally
+        // invoked since we don't migrate older saves.
+        void load_audio_data_from_archive(cereal::PortableBinaryInputArchive& a, VersionNumber version);
 
         static void register_class(World& w);
 
@@ -170,4 +205,8 @@ class Waypoint {
         TransitionEasing transitionEasing = TransitionEasing::EASE;
         bool  isTransition = false;
         float stopTime     = TRANSITION_STOP_TIME_DEFAULT;
+        // AUDIO.md §3 — see getters/setters above.
+        NetworkingObjects::NetObjID audioId{};
+        bool                        audioLoops = false;
+        bool                        stopAudio  = false;
 };

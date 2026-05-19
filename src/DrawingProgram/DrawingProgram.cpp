@@ -33,6 +33,11 @@
 #include "Layers/DrawingProgramLayer.hpp"
 #include "Layers/DrawingProgramLayerListItem.hpp"
 #include <Helpers/Parallel.hpp>
+#include "../Waypoints/Waypoint.hpp"
+#include "../Waypoints/WaypointGraph.hpp"
+#include <algorithm>
+#include <cctype>
+#include <format>
 #include "../ScaleUpCanvas.hpp"
 
 #include "Tools/EraserTool.hpp"
@@ -754,6 +759,16 @@ void DrawingProgram::input_add_file_to_canvas_callback(const CustomEvents::AddFi
 }
 
 void DrawingProgram::add_file_to_canvas_by_path(const std::filesystem::path& filePath, Vector2f dropPos) {
+    // AUDIO.md §4 — drop an mp3 onto the canvas while the Waypoint
+    // tool is active and a waypoint is selected, and the file gets
+    // attached to that waypoint as audio rather than embedded as an
+    // image. Routes through a budget-aware path; on success the file
+    // is consumed (no image fallthrough). On failure (budget exceeded
+    // / no selection / wrong tool) we fall through to the regular
+    // image-drop path so the user still gets something visible.
+    if (try_attach_audio_to_selected_waypoint(filePath))
+        return;
+
     if(layerMan.is_a_layer_being_edited()) {
         NetworkingObjects::NetObjTemporaryPtr<ResourceData> imageTempPtr = world.rMan.add_resource_file(filePath);
         if(imageTempPtr) {
@@ -773,6 +788,78 @@ void DrawingProgram::add_file_to_canvas_by_path(const std::filesystem::path& fil
             layerMan.add_undo_place_component(newObjInfo);
         }
     }
+}
+
+bool DrawingProgram::try_attach_audio_to_selected_waypoint(const std::filesystem::path& filePath) {
+    // Gate: only fire when the Waypoint tool is active AND a waypoint
+    // is selected. Otherwise return false so the caller falls through
+    // to the regular image-drop path.
+    if (!drawTool || drawTool->get_type() != DrawingProgramToolType::WAYPOINT)
+        return false;
+    if (!world.wpGraph.has_selection())
+        return false;
+
+    // Case-insensitive .mp3 extension check. Drops of .wav / .ogg
+    // etc. fall through to the image path for now (miniaudio could
+    // decode them, but the design pins on mp3 for v1 to keep the
+    // attach UX explicit).
+    std::string ext = filePath.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext != ".mp3")
+        return false;
+
+    // Budget check: file size on disk + current cumulative audio
+    // bytes must stay under 30 MB. file_size can throw on weird
+    // filesystem states (broken symlink, permission denied); catch
+    // and bail to the image path which will surface its own error.
+    std::error_code ec;
+    const auto fileSize = std::filesystem::file_size(filePath, ec);
+    if (ec) {
+        Logger::get().log("WORLDFATAL",
+            "[audio attach] file_size failed for " + filePath.string() +
+            ": " + ec.message());
+        return false;
+    }
+    const size_t current = Waypoint::compute_canvas_audio_total_bytes(world);
+    if (current + static_cast<size_t>(fileSize) > Waypoint::TOTAL_AUDIO_BUDGET_BYTES) {
+        const double cap_mb     = Waypoint::TOTAL_AUDIO_BUDGET_BYTES / (1024.0 * 1024.0);
+        const double current_mb = current / (1024.0 * 1024.0);
+        const double file_mb    = fileSize / (1024.0 * 1024.0);
+        Logger::get().log("WORLDFATAL",
+            std::format("Audio budget exceeded — canvas total is {:.1f} MB / {:.1f} MB, "
+                        "file would add {:.1f} MB.",
+                        current_mb, cap_mb, file_mb));
+        // Return true so the caller does NOT fall through to image-
+        // drop: the user clearly meant to attach audio, surfacing an
+        // image of a refused mp3 would be weirder than just refusing.
+        return true;
+    }
+
+    // Register the mp3 bytes as a ResourceData. add_resource_file
+    // reads the file from disk and stores its bytes; returns a temp
+    // pointer we can grab the NetObjID off.
+    auto resourceTempPtr = world.rMan.add_resource_file(filePath);
+    if (!resourceTempPtr) {
+        Logger::get().log("WORLDFATAL",
+            "[audio attach] add_resource_file failed for " + filePath.string());
+        return true;  // user-intent was audio; don't fall through
+    }
+    const NetworkingObjects::NetObjID audioResourceId = resourceTempPtr.get_net_id();
+
+    // Set the audio id on the currently-selected waypoint and
+    // broadcast the change. Doesn't touch audioLoops / stopAudio —
+    // artist toggles those separately on the panel.
+    const auto selId = world.wpGraph.get_selected();
+    auto wpRef = world.netObjMan.get_obj_temporary_ref_from_id<Waypoint>(selId);
+    if (!wpRef) {
+        Logger::get().log("WORLDFATAL",
+            "[audio attach] selected waypoint went stale during attach");
+        return true;
+    }
+    wpRef->set_audio_id(audioResourceId);
+    Waypoint::publish_audio_id_update(wpRef);
+    return true;
 }
 
 CanvasComponentContainer::ObjInfo* DrawingProgram::add_file_to_canvas_by_data(const std::string& fileName, std::string_view fileBuffer, Vector2f dropPos) {

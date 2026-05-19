@@ -65,11 +65,15 @@ void WaypointCanvasComponent::draw(SkCanvas* canvas, const DrawData& drawData, c
 
     bool hasSkin = false;
     bool isTransition = false;
+    bool hasAudio = false;
+    bool stopAudio = false;
     if (drawData.main && drawData.main->world) {
         auto wpRef = drawData.main->world->netObjMan.get_obj_temporary_ref_from_id<Waypoint>(d.waypointId);
         if (wpRef) {
             hasSkin = wpRef->has_skin();
             isTransition = wpRef->is_transition();
+            hasAudio = wpRef->has_audio();
+            stopAudio = wpRef->get_stop_audio();
         }
     }
 
@@ -104,6 +108,28 @@ void WaypointCanvasComponent::draw(SkCanvas* canvas, const DrawData& drawData, c
     } else {
         canvas->drawCircle(cx, cy, r, fill);
         canvas->drawCircle(cx, cy, r, outline);
+    }
+
+    // AUDIO.md §4 — tiny indicator overlay so the artist can see at a
+    // glance which waypoints carry audio. A small filled dot at the
+    // marker's upper-right means "has audio attached"; a tinted dot
+    // means "stop-audio anchor." Both glyphs are subordinate to the
+    // base shape (≈30% of the marker radius) so they don't compete
+    // visually with the skin / transition signal.
+    if (hasAudio || stopAudio) {
+        const SkScalar dotR = r * 0.32f;
+        // Position relative to upper-right of the marker; works for
+        // both disc and diamond bases.
+        const SkScalar dotCx = cx + r * 0.72f;
+        const SkScalar dotCy = cy - r * 0.72f;
+        SkPaint dotFill;
+        dotFill.setAntiAlias(drawData.skiaAA);
+        if (hasAudio)
+            dotFill.setColor4f({0.20f, 0.55f, 0.90f, 1.0f});  // bright blue: "audio attached"
+        else
+            dotFill.setColor4f({0.65f, 0.65f, 0.65f, 1.0f});  // muted grey: "silence anchor"
+        canvas->drawCircle(dotCx, dotCy, dotR, dotFill);
+        canvas->drawCircle(dotCx, dotCy, dotR, outline);
     }
 }
 

@@ -3,7 +3,10 @@
 #include <cereal/types/vector.hpp>
 #include "../World.hpp"
 #include "../CommandList.hpp"
+#include "../ResourceManager.hpp"
 #include "../ScaleUpCanvas.hpp"
+#include "WaypointGraph.hpp"
+#include <unordered_set>
 
 #include <include/codec/SkCodec.h>
 #include <include/codec/SkPngDecoder.h>
@@ -96,6 +99,14 @@ void Waypoint::save_file(cereal::PortableBinaryOutputArchive& a) const {
     // v0.10 onward; load path gates on >= 0.10.
     a(isTransition);
     a(stopTime);
+    // AUDIO.md §8 — per-waypoint audio cue: resource id, loop flag,
+    // stopAudio flag. mp3 bytes themselves live in ResourceManager
+    // and are serialised by the existing resource path; this only
+    // writes the reference. Pure additive; no version gating because
+    // we don't carry forward older saves.
+    a(audioId);
+    a(audioLoops);
+    a(stopAudio);
 }
 
 void Waypoint::load_skin_from_archive(cereal::PortableBinaryInputArchive& a, VersionNumber) {
@@ -121,6 +132,16 @@ void Waypoint::load_transition_point_data_from_archive(cereal::PortableBinaryInp
     stopTime = std::clamp(stopTime, TRANSITION_STOP_TIME_MIN, TRANSITION_STOP_TIME_MAX);
 }
 
+// AUDIO.md §8 — reads the three audio fields (id + loop + stopAudio).
+// Always called unconditionally; we don't preserve older save
+// formats (the working assumption is no migration, per the May 2026
+// "start clean" decision).
+void Waypoint::load_audio_data_from_archive(cereal::PortableBinaryInputArchive& a, VersionNumber) {
+    a(audioId);
+    a(audioLoops);
+    a(stopAudio);
+}
+
 // P0.5-LIVE-SYNC: command set for Waypoint NetObj update messages.
 // One enum value per editable field. Wire format: `<command_byte> <field_value>`.
 enum class WaypointCommand : uint8_t {
@@ -129,7 +150,13 @@ enum class WaypointCommand : uint8_t {
     SET_TRANSITION_EASING  = 2,
     SET_IS_TRANSITION      = 3,
     SET_STOP_TIME          = 4,
-    SET_SKIN               = 5
+    SET_SKIN               = 5,
+    // AUDIO.md §9 — three new tags for the per-waypoint audio cue.
+    // Scalar payloads in every case; mp3 bytes ride the existing
+    // ResourceData sync, not these messages.
+    SET_AUDIO_ID           = 6,
+    SET_AUDIO_LOOPS        = 7,
+    SET_STOP_AUDIO         = 8
 };
 
 void Waypoint::publish_label_update(const NetObjTemporaryPtr<Waypoint>& o) {
@@ -178,6 +205,46 @@ void Waypoint::publish_skin_update(const NetObjTemporaryPtr<Waypoint>& o) {
         });
 }
 
+// AUDIO.md §9 — small scalar broadcasts for the three audio fields.
+// Fire on artist actions (attach / clear / toggle), never on
+// continuous interaction; no rate-limiting needed.
+void Waypoint::publish_audio_id_update(const NetObjTemporaryPtr<Waypoint>& o) {
+    o.send_update_to_all(RELIABLE_COMMAND_CHANNEL,
+        [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
+            a(WaypointCommand::SET_AUDIO_ID, o->audioId);
+        });
+}
+
+void Waypoint::publish_audio_loops_update(const NetObjTemporaryPtr<Waypoint>& o) {
+    o.send_update_to_all(RELIABLE_COMMAND_CHANNEL,
+        [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
+            a(WaypointCommand::SET_AUDIO_LOOPS, o->audioLoops);
+        });
+}
+
+void Waypoint::publish_stop_audio_update(const NetObjTemporaryPtr<Waypoint>& o) {
+    o.send_update_to_all(RELIABLE_COMMAND_CHANNEL,
+        [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
+            a(WaypointCommand::SET_STOP_AUDIO, o->stopAudio);
+        });
+}
+
+size_t Waypoint::compute_canvas_audio_total_bytes(World& w) {
+    auto& nodes = w.wpGraph.get_nodes();
+    if (!nodes) return 0;
+    std::unordered_set<NetObjID> seen;
+    size_t total = 0;
+    for (auto& info : *nodes) {
+        const NetObjID id = info.obj->audioId;
+        if (id == NetObjID{}) continue;
+        if (!seen.insert(id).second) continue;   // already counted
+        auto resourceRef = w.netObjMan.get_obj_temporary_ref_from_id<ResourceData>(id);
+        if (resourceRef && resourceRef->data)
+            total += resourceRef->data->size();
+    }
+    return total;
+}
+
 void Waypoint::write_constructor_data(const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
     // P0.5-SKINS / P0.5-LIVE-SYNC partial fix: include every
     // post-construction-editable field in the constructor payload so
@@ -193,6 +260,11 @@ void Waypoint::write_constructor_data(const NetObjTemporaryPtr<Waypoint>& o, cer
     a(o->stopTime);
     std::vector<uint8_t> skinBytes = encode_skin_png(o->skin);
     a(skinBytes);
+    // AUDIO.md §9 — extend the snapshot payload so subscribers see
+    // existing audio cues on join, not just future edits.
+    a(o->audioId);
+    a(o->audioLoops);
+    a(o->stopAudio);
 }
 
 void Waypoint::register_class(World& w) {
@@ -212,6 +284,12 @@ void Waypoint::register_class(World& w) {
         std::vector<uint8_t> skinBytes;
         a(skinBytes);
         o->skin = decode_skin_png(skinBytes);
+        // AUDIO.md §9 — mirror of write_constructor_data: read the
+        // three audio fields off the wire so newly-joined subscribers
+        // see existing cues on the snapshot.
+        a(o->audioId);
+        a(o->audioLoops);
+        a(o->stopAudio);
         canvas_scale_up_check(*o, w, c);
     };
     // P0.5-LIVE-SYNC: update handlers for every editable Waypoint
@@ -251,6 +329,19 @@ void Waypoint::register_class(World& w) {
                 o->skin = decode_skin_png(skinBytes);
                 break;
             }
+            // AUDIO.md §9 — client-side mutation handlers for the
+            // three audio fields. No clamping; the values are either
+            // a NetObjID (validated by the resource pipeline at
+            // dereference time) or plain booleans.
+            case WaypointCommand::SET_AUDIO_ID:
+                a(o->audioId);
+                break;
+            case WaypointCommand::SET_AUDIO_LOOPS:
+                a(o->audioLoops);
+                break;
+            case WaypointCommand::SET_STOP_AUDIO:
+                a(o->stopAudio);
+                break;
         }
     };
     auto readUpdateServer = [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryInputArchive& a, const std::shared_ptr<NetServer::ClientData>& c) {
@@ -310,6 +401,30 @@ void Waypoint::register_class(World& w) {
                     });
                 break;
             }
+            // AUDIO.md §9 — server-side: mutate local state, fan out
+            // to every connected client except the originator. Same
+            // shape as the existing transition-field handlers.
+            case WaypointCommand::SET_AUDIO_ID:
+                a(o->audioId);
+                o.send_server_update_to_all_clients_except(c, RELIABLE_COMMAND_CHANNEL,
+                    [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
+                        a(WaypointCommand::SET_AUDIO_ID, o->audioId);
+                    });
+                break;
+            case WaypointCommand::SET_AUDIO_LOOPS:
+                a(o->audioLoops);
+                o.send_server_update_to_all_clients_except(c, RELIABLE_COMMAND_CHANNEL,
+                    [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
+                        a(WaypointCommand::SET_AUDIO_LOOPS, o->audioLoops);
+                    });
+                break;
+            case WaypointCommand::SET_STOP_AUDIO:
+                a(o->stopAudio);
+                o.send_server_update_to_all_clients_except(c, RELIABLE_COMMAND_CHANNEL,
+                    [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
+                        a(WaypointCommand::SET_STOP_AUDIO, o->stopAudio);
+                    });
+                break;
         }
     };
 

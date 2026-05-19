@@ -290,6 +290,10 @@ void MainProgram::set_tab_to_close(World* world) {
 }
 
 void MainProgram::switch_to_tab(size_t wIndex) {
+    // AUDIO.md §6 — audio is per-`World` reader state; stop the old
+    // clip before swapping so the previous canvas's track doesn't
+    // bleed into the next tab.
+    audioEngine.stop_current();
     world = worlds[wIndex];
     worldIndex = wIndex;
 }

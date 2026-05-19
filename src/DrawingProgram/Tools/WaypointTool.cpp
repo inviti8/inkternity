@@ -36,6 +36,8 @@
 
 #include <SDL3/SDL_keyboard.h>
 
+#include <format>
+
 WaypointTool::WaypointTool(DrawingProgram& initDrawP)
     : DrawingProgramToolBase(initDrawP) {}
 
@@ -128,6 +130,65 @@ void gui_frame_step_block(GUIStuff::GUIManager& gui,
         {"-Y", FrameStepAxis::NEG_Y}
     });
 }
+
+// AUDIO.md §4 — settings-panel block for the per-waypoint audio cue.
+// Renders:
+//   - drop-instructions when no clip is attached
+//   - resource name + Clear + Loop checkbox when a clip is attached
+//   - Stop-audio checkbox always
+//   - cumulative-budget readout (current MB / 30 MB)
+// All operate on the currently-selected waypoint (passed in as wpRef).
+void gui_audio_block(GUIStuff::GUIManager& gui,
+                     World& world,
+                     const NetworkingObjects::NetObjTemporaryPtr<Waypoint>& wpRef) {
+    using namespace GUIStuff::ElementHelpers;
+    text_label(gui, "Audio");
+    const bool hasAudio = wpRef->has_audio();
+
+    if (!hasAudio) {
+        text_label(gui, "Drag an mp3 onto the canvas to attach.");
+    } else {
+        // Show the resource name when we can resolve it; otherwise
+        // a placeholder so the artist sees that something IS attached
+        // (handles "resource still syncing" or "stale id" cases).
+        std::string nameLine = "File: ?";
+        auto resourceRef = world.netObjMan
+            .get_obj_temporary_ref_from_id<ResourceData>(wpRef->get_audio_id());
+        if (resourceRef && !resourceRef->name.empty())
+            nameLine = "File: " + resourceRef->name;
+        text_label(gui, nameLine);
+
+        text_button(gui, "audio clear", "Clear audio", {
+            .onClick = [wpRef] {
+                // Drop the audio reference. Does NOT delete the
+                // underlying ResourceData — other waypoints may
+                // reference it; ResourceManager handles cleanup at
+                // save time via get_used_resources().
+                wpRef->set_audio_id(NetworkingObjects::NetObjID{});
+                Waypoint::publish_audio_id_update(wpRef);
+            }});
+
+        checkbox_boolean_field(gui, "audio loop", "Loop",
+            &wpRef->mutable_audio_loops(),
+            [wpRef] { Waypoint::publish_audio_loops_update(wpRef); });
+    }
+
+    // Stop-audio is independent of having a clip attached: the artist
+    // may want to mark a waypoint as a silence anchor without giving
+    // it any audio of its own.
+    checkbox_boolean_field(gui, "audio stop", "Stop audio here",
+        &wpRef->mutable_stop_audio(),
+        [wpRef] { Waypoint::publish_stop_audio_update(wpRef); });
+
+    // Cumulative-budget readout. Recomputed every frame from the
+    // current graph state; cheap because waypoint counts in practical
+    // canvases top out in the dozens, and ResourceData lookups are
+    // hash-map hits.
+    const size_t totalBytes = Waypoint::compute_canvas_audio_total_bytes(world);
+    const double totalMB = totalBytes / (1024.0 * 1024.0);
+    const double capMB   = Waypoint::TOTAL_AUDIO_BUDGET_BYTES / (1024.0 * 1024.0);
+    text_label(gui, std::format("Canvas audio: {:.1f} MB / {:.1f} MB", totalMB, capMB));
+}
 }  // namespace
 
 void WaypointTool::gui_toolbox(Toolbar&) {
@@ -204,6 +265,8 @@ void WaypointTool::gui_toolbox(Toolbar&) {
                             }});
                     }
                 }
+                // AUDIO.md §4 — per-waypoint audio cue block.
+                gui_audio_block(gui, drawP.world, wpRef);
             }
         }
         if (!renderedSelectedBlock)
@@ -281,6 +344,8 @@ void WaypointTool::gui_phone_toolbox(PhoneDrawingProgramScreen&) {
                             }});
                     }
                 }
+                // AUDIO.md §4 — identical block as the desktop panel.
+                gui_audio_block(gui, drawP.world, wpRef);
             }
         }
         // FRAME_ANIM.md §3 — same Next Frame + axis radio + onion-skin

@@ -59,12 +59,31 @@ void ReaderMode::set_active(bool a) {
         history.clear();
         if (currentId.has_value()) {
             snap_camera_to_current();
+            // AUDIO.md §5 — initial enter into reader mode fires the
+            // audio rule IMMEDIATELY, overriding the deferred-to-
+            // arrival path snap_camera_to_current uses for in-mode
+            // navigation. Rationale: there's no previous clip
+            // playing on enter, so deferring is pure delay (the
+            // artist sees the camera move with no sound for the
+            // full jumpTransitionTime). Subsequent navigations DO
+            // defer because the current clip should keep playing
+            // through the camera pan until the new clip arrives.
+            audioApplyPending = false;
+            audioApplyDelay   = 0.0f;
+            apply_audio_rule_for(currentId.value());
             // T7: entering reader mode directly onto a transition
             // point is allowed — auto-advance kicks in on the first
             // tick after this. The first node the reader actually
             // *stops* at is the first non-transition downstream.
             if (current_is_transition()) enter_transition_phase_for_current();
         }
+    } else {
+        // AUDIO.md §5 — author mode is unconditionally silent. Clear
+        // any pending deferred audio-rule application so toggling
+        // back on later starts clean from the new arrival.
+        world.main.audioEngine.stop_current();
+        audioApplyPending = false;
+        audioApplyDelay   = 0.0f;
     }
     world.set_to_layout_gui_if_focus();
 }
@@ -168,6 +187,21 @@ void ReaderMode::snap_camera_to_current() {
                                       /*instantJump=*/false,
                                       wpRef->get_transition_speed_multiplier(),
                                       transition_easing_to_bezier_curve(wpRef->get_transition_easing()));
+    // AUDIO.md §5 — every arrival eventually fires the audio rule,
+    // but defer the firing until the camera ACTUALLY arrives at the
+    // new waypoint. Otherwise pressing a navigation button would cut
+    // the current clip the instant the smooth-move starts, leaving
+    // the artist hearing silence for the duration of the pan. We
+    // tick our own arrival timer (same pattern as the transition
+    // state machine) and apply the rule when it expires. The current
+    // clip keeps playing through the interim. snap_camera_to_current
+    // is the single hook for set_current / navigate_to /
+    // auto_advance_to / set_active(true), so this covers every
+    // navigation entry point.
+    if (active) {
+        audioApplyDelay = compute_camera_duration_for(currentId.value());
+        audioApplyPending = true;
+    }
 }
 
 void ReaderMode::cancel_auto_advance() {
@@ -176,6 +210,52 @@ void ReaderMode::cancel_auto_advance() {
     pauseTimeRemaining  = 0.0f;
     autoAdvanceTarget.reset();
     chainHopCount = 0;
+}
+
+NetworkingObjects::NetObjID ReaderMode::resolve_audio_for(NetworkingObjects::NetObjID waypointId,
+                                                          int recursionGuard) const {
+    if (recursionGuard <= 0) return NetworkingObjects::NetObjID{};
+    auto wpRef = world.netObjMan.get_obj_temporary_ref_from_id<Waypoint>(waypointId);
+    if (!wpRef) return NetworkingObjects::NetObjID{};
+    // Either kind of explicit resolution stops the walk and returns
+    // THIS waypoint as the resolver. The caller decides whether that
+    // means "play" (has_audio) or "silence" (stopAudio); audio wins
+    // when both are set on the same waypoint per the §3 precedence.
+    if (wpRef->has_audio())      return waypointId;
+    if (wpRef->get_stop_audio()) return waypointId;
+    // No explicit resolution here — walk first incoming edge.
+    auto& edges = world.wpGraph.get_edges();
+    if (!edges) return NetworkingObjects::NetObjID{};
+    for (auto& info : *edges) {
+        if (info.obj->get_to() == waypointId)
+            return resolve_audio_for(info.obj->get_from(), recursionGuard - 1);
+    }
+    // No incoming edge: chain root with no audio attached.
+    return NetworkingObjects::NetObjID{};
+}
+
+void ReaderMode::apply_audio_rule_for(NetworkingObjects::NetObjID id) {
+    AudioEngine& engine = world.main.audioEngine;
+    const NetworkingObjects::NetObjID resolverId =
+        resolve_audio_for(id, MAX_TRANSITION_CHAIN);
+    if (resolverId == NetworkingObjects::NetObjID{}) {
+        engine.stop_current();
+        return;
+    }
+    auto resolverRef = world.netObjMan.get_obj_temporary_ref_from_id<Waypoint>(resolverId);
+    if (!resolverRef) {
+        engine.stop_current();
+        return;
+    }
+    if (resolverRef->has_audio()) {
+        // §3 precedence: audioId wins when both fields are set.
+        engine.play(resolverRef->get_audio_id(),
+                    resolverRef->get_audio_loops(),
+                    world);
+    } else {
+        // Resolver had stopAudio without audioId attached — silence.
+        engine.stop_current();
+    }
 }
 
 float ReaderMode::compute_camera_duration_for(NetworkingObjects::NetObjID id) const {
@@ -216,8 +296,27 @@ void ReaderMode::enter_transition_phase_for_current() {
 }
 
 void ReaderMode::update(float deltaTime) {
-    if (!active || phase == TransitionPhase::IDLE) return;
+    if (!active) return;
     if (deltaTime <= 0.0f) return;
+
+    // AUDIO.md §5 — fire the pending audio rule once the camera has
+    // arrived. Independent of the transition state machine: applies
+    // to every navigation (forward / back / branch / auto-advance /
+    // entry). Each new snap_camera_to_current resets audioApplyDelay,
+    // so rapid-fire navigations roll the timer forward to the latest
+    // target's arrival time; the current clip plays through the
+    // interim.
+    if (audioApplyPending) {
+        audioApplyDelay -= deltaTime;
+        if (audioApplyDelay <= 0.0f) {
+            audioApplyPending = false;
+            audioApplyDelay   = 0.0f;
+            if (currentId.has_value())
+                apply_audio_rule_for(currentId.value());
+        }
+    }
+
+    if (phase == TransitionPhase::IDLE) return;
 
     if (phase == TransitionPhase::CAMERA_MOVING) {
         cameraTimeRemaining -= deltaTime;

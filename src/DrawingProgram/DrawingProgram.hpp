@@ -38,6 +38,18 @@ class DrawingProgram {
         void init_client_callbacks();
         void add_file_to_canvas_by_path(const std::filesystem::path& filePath, Vector2f dropPos);
         CanvasComponentContainer::ObjInfo* add_file_to_canvas_by_data(const std::string& fileName, std::string_view fileBuffer, Vector2f dropPos);
+
+        // AUDIO.md §4 — drop-and-attach path. Called from
+        // add_file_to_canvas_by_path when an mp3 is dropped while the
+        // WaypointTool is active and a waypoint is selected; bypasses
+        // the ImageCanvasComponent creation, registers the mp3 bytes
+        // as a ResourceData, sets the selected waypoint's audioId,
+        // broadcasts the change. Enforces the 30 MB cumulative budget
+        // (returns false without registering if the file would exceed).
+        // Returns true if the audio was attached (drop should not fall
+        // through to image-creation); false if the caller should
+        // handle the file the normal way.
+        bool try_attach_audio_to_selected_waypoint(const std::filesystem::path& filePath);
         void get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet);
 
         void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version);

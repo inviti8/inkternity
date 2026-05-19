@@ -89,6 +89,24 @@ class ReaderMode {
         // so the auto-advance never fires after a user interaction.
         void cancel_auto_advance();
 
+        // AUDIO.md §5 — recursive walk that resolves "what audio rule
+        // applies at waypoint W." Returns the id of the resolving
+        // waypoint (the first one upstream that either has audio
+        // attached or stopAudio set); empty NetObjID if no resolver
+        // is found within MAX_TRANSITION_CHAIN hops. Walks the first
+        // incoming edge at each step (same tiebreaker as transitions
+        // — TRANSITIONS.md §5).
+        NetworkingObjects::NetObjID resolve_audio_for(NetworkingObjects::NetObjID waypointId,
+                                                     int recursionGuard) const;
+
+        // AUDIO.md §5 — applies the audio rule for `id` to the
+        // engine. Stops the in-flight clip first (per the "audio
+        // replays from the predecessor" design — every arrival
+        // restarts), then either starts the resolved clip with the
+        // resolver waypoint's loop flag, or stays silent if no
+        // resolver exists or the resolver is a stopAudio anchor.
+        void apply_audio_rule_for(NetworkingObjects::NetObjID id);
+
         // TRANSITIONS.md T7 — looks up the target Waypoint and returns
         // the duration its smooth_move_to will use. Mirrors the math
         // DrawCamera::smooth_move_to applies (jumpTransitionTime /
@@ -123,6 +141,20 @@ class ReaderMode {
         float pauseTimeRemaining  = 0.0f;
         std::optional<NetworkingObjects::NetObjID> autoAdvanceTarget;
         int   chainHopCount = 0;
+
+        // AUDIO.md §5 — audio rule fires when the camera ARRIVES at a
+        // new waypoint, not when it starts moving. Mirror of the
+        // transition state machine's camera-arrival timer (we tick
+        // our own duration rather than poll DrawCamera). snap_camera_
+        // to_current seeds these; update(deltaTime) ticks them down
+        // and fires apply_audio_rule_for once the timer expires.
+        // Pending flag handles the "navigation rapidly re-fires
+        // before arrival" case: each new snap resets the timer to
+        // the new target's arrival duration, the previous pending
+        // rule never lands. The current clip keeps playing through
+        // the interim (audible continuity across button-mash).
+        bool  audioApplyPending = false;
+        float audioApplyDelay   = 0.0f;
 };
 
 // Renders the branch-choice overlay when reader mode is active and
