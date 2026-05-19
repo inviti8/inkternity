@@ -287,6 +287,20 @@ class TreeViewGraphElement : public GUIStuff::Element {
                     }
                     if (auto nodeHit = hit_test_node(panelLocal)) {
                         world->wpGraph.select(nodeHit.value().id);
+                        // Selection change ripples to the WaypointTool
+                        // settings panel in the right-side toolbar, which
+                        // lives OUTSIDE this element's bb. Without a wider
+                        // invalidation Clay keeps the panel's cached pixels
+                        // until the next hover/cursor event in that area,
+                        // so the user sees stale label / transition fields
+                        // until they wave the mouse over the toolbar.
+                        // Invalidate the full window — the cost is one
+                        // extra repaint per node-click, which happens at
+                        // human speed.
+                        gui.invalidate_draw_in_area(SCollision::AABB<float>{
+                            Vector2f{0.0f, 0.0f},
+                            world->main.window.size.cast<float>()
+                        });
                         // Double-click → focus canvas on the waypoint's framing.
                         if (button.clicks >= 2) {
                             auto wpRef = world->netObjMan.get_obj_temporary_ref_from_id<Waypoint>(nodeHit.value().id);
@@ -299,7 +313,6 @@ class TreeViewGraphElement : public GUIStuff::Element {
                         dragMode = DragMode::REPOSITION;
                         dragSourceId = nodeHit.value().id;
                         dragOffset = panelLocal - nodeHit.value().topLeft;
-                        gui.invalidate_draw_element(this);
                         return;
                     }
                 } else {
