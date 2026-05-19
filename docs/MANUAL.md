@@ -83,6 +83,8 @@
     - Drops a waypoint at the current camera position. Waypoints capture both the camera's center and the framing rectangle that defines what the reader sees
     - Each waypoint has a name, an optional skin (see the **Button Select** tool below), per-waypoint transition speed multiplier, and per-waypoint easing curve. Edit these in the Edit tool by double-clicking a waypoint
     - A waypoint can be flagged as a **transition point** — the reader auto-advances through transitions rather than stopping at them. Useful for chained camera moves between story beats
+    - **Frame step** controls — a 4-axis radio (+X / −X / +Y / −Y) and a **Next frame** button below the transition controls. Clicking Next frame snap-pans the editor camera by exactly one viewport in the chosen direction, clears selection, and stashes the previous waypoint as the chain source so the next dropped waypoint auto-wires an edge from it. See the **Frame Animation** section below for the full workflow
+    - **Copy frame from selection** button — renders the previous frame's active-layer pixels and pastes them at the current view as a regular image component. A **Copy layer offset** slider (default 0) controls which layer the paste lands on, relative to the currently-edited layer (−1 = layer below, +1 = layer above; out-of-bounds falls back to the active layer)
 - Button Select Tool
     - Drag a rectangle over the canvas to capture that rectangle as the skin for the currently-selected waypoint. The skin is the artwork that renders for the waypoint's nav button in reader mode and as the node visual in the tree view
 - Stroke Vectorize Tool
@@ -104,6 +106,18 @@
 - Connect waypoints into a directed reading graph with **edges** (created via the Tree View — see below). Each edge has an optional label that the reader sees as the button label when there are multiple choices from one node
 - A waypoint with 2+ outgoing edges is a **branch point** in reader mode — the reader gets a button for each outgoing choice
 - A waypoint with no outgoing edges is a **dead end** in reader mode — the back-button is the only way out
+## Frame Animation
+- Frame animation is just a chain of normal waypoints positioned one viewport apart in a chosen direction, played back through reader-mode auto-advance. No separate data model, no new file format — every authoring tool you already know (the Edit tool, the tree view, transition flags, stop-time sliders) applies to anim frames the same way it does to any other waypoint
+- **Authoring a chain**
+    1. Drop the first waypoint with the Waypoint tool, draw frame 1
+    2. Pick a **Frame step axis** in the Waypoint tool panel (`+X` is screen-right — the default), then click **Next frame**. The camera snap-pans exactly one viewport over and the previous waypoint becomes the pending chain source
+    3. Click **Copy frame from selection** to paste the previous frame's content into the current view as a translucent reference (it's a regular image, you can erase/transform/hide it like any other embedded image)
+    4. Draw frame 2 on top of the reference, then drop a new waypoint. The edge from the previous waypoint auto-wires — no need to shift+click an offscreen previous waypoint to build the chain
+    5. Repeat: Next frame → Copy frame → draw → drop. Each click of Next frame uses the currently-selected waypoint's axis as the default
+- **Copy Frame** sources from the **first incoming edge** to the currently-selected waypoint — i.e. "the previous frame in the chain." If the selected waypoint has multiple incoming edges (rare, only in branched chains), the first wins. If it has no incoming edge yet, Copy frame is a no-op (drop and wire the predecessor first, or pan back and select it manually). Source is the **currently-edited layer only** so onion references don't pull in background art from other layers
+- **Copy layer offset** lets you paste the reference onto a different layer than you're editing — set to `-1` to paste below the active layer (the reference sits underneath your new strokes), `0` to paste in-place (default), `+1` to paste above. If the resulting index is out of bounds (e.g. `-1` when you're on the bottom-most layer) the paste falls back to the active layer
+- **Playing back as animation** — flag every waypoint in the chain as a **Transition point** with a small **Stop time** (e.g. `0.08s` ≈ 12 fps). Reader mode then auto-advances through the chain. To approximate hard cuts rather than smooth pans, crank the **Transition speed** multiplier up — at the new 100× upper bound, the per-frame pan compresses to a sub-frame slice and reads as a true cut even at the default `jumpTransitionTime`. The chain plays start-to-finish on a single `Forward` keypress from the first frame
+- **Revising a frame** — click the frame's node in the tree view (or click its marker on the canvas if visible). The settings panel updates, and Copy Frame from there sources from that frame's predecessor, so you can re-stamp the reference without losing the chain
 ## Reader Mode
 - Toggle reader mode with the book icon in the top toolbar (or on the phone UI, the book icon at the top right)
 - When active, the editor chrome hides: tools, color pickers, tool options, tree view, undo/redo/grid/layer buttons. The reader is left with the canvas + the book icon (so they can exit)
