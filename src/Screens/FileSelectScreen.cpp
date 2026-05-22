@@ -221,61 +221,67 @@ void FileSelectScreen::settings_view() {
             .layoutDirection = CLAY_TOP_TO_BOTTOM
         }
     }) {
-        text_label_centered(gui, "Inkternity App Key");
-        text_label(gui,
-            "This install's identity. Copy this pubkey into the Inkternity "
-            "card in your Heavymeta Portal settings.");
+        text_button(gui, "toggle app key section",
+            appKeyOpen ? "[-] Inkternity App Key" : "[+] Inkternity App Key", {
+            .wide = true,
+            .onClick = [this] { appKeyOpen = !appKeyOpen; }
+        });
+        if (appKeyOpen) {
+            text_label(gui,
+                "This install's identity. Copy this pubkey into the Inkternity "
+                "card in your Heavymeta Portal settings.");
 
-        if (main.devKeys.is_loaded()) {
-            // Display the pubkey in a read-only-ish text box so the user
-            // can see + select it. Copy button does the one-click path.
-            std::string pubkey = main.devKeys.app_pubkey();
-            input_text_field(gui, "app pubkey display", "App pubkey", &pubkey, {
-                .immutable = true
-            });
-            text_button(gui, "copy app pubkey", "Copy public key", {
-                .wide = true,
-                .onClick = [this] {
-                    main.input.set_clipboard_str(main.devKeys.app_pubkey());
-                }
-            });
-
-            // DISTRIBUTION-PHASE1.md §3.3 — on-demand crypto surface.
-            // Per [[feedback-crypto-averse-users]] these stay collapsed by
-            // default; toggling either button expands its inline section.
-            text_button(gui, "toggle export app key",
-                exportKeyOpen ? "Hide secret" : "Export App Key", {
-                .wide = true,
-                .onClick = [this] {
-                    exportKeyOpen = !exportKeyOpen;
-                    if (exportKeyOpen) {
-                        // Mutual exclusion — collapse the other section so
-                        // the artist isn't looking at both at once.
-                        restoreKeyOpen = false;
-                        restoreConfirmStage = false;
+            if (main.devKeys.is_loaded()) {
+                // Display the pubkey in a read-only-ish text box so the user
+                // can see + select it. Copy button does the one-click path.
+                std::string pubkey = main.devKeys.app_pubkey();
+                input_text_field(gui, "app pubkey display", "App pubkey", &pubkey, {
+                    .immutable = true
+                });
+                text_button(gui, "copy app pubkey", "Copy public key", {
+                    .wide = true,
+                    .onClick = [this] {
+                        main.input.set_clipboard_str(main.devKeys.app_pubkey());
                     }
-                }
-            });
-            if (exportKeyOpen) export_app_key_section();
+                });
 
-            text_button(gui, "toggle restore app key",
-                restoreKeyOpen ? "Cancel restore" : "Restore App Key", {
-                .wide = true,
-                .onClick = [this] {
-                    restoreKeyOpen = !restoreKeyOpen;
-                    if (restoreKeyOpen) {
-                        exportKeyOpen = false;
-                        restoreConfirmStage = false;
-                        restoreFeedback.clear();
-                    } else {
-                        restoreKeyInput.clear();
-                        restoreConfirmStage = false;
+                // DISTRIBUTION-PHASE1.md §3.3 — on-demand crypto surface.
+                // Per [[feedback-crypto-averse-users]] these stay collapsed by
+                // default; toggling either button expands its inline section.
+                text_button(gui, "toggle export app key",
+                    exportKeyOpen ? "Hide secret" : "Export App Key", {
+                    .wide = true,
+                    .onClick = [this] {
+                        exportKeyOpen = !exportKeyOpen;
+                        if (exportKeyOpen) {
+                            // Mutual exclusion — collapse the other section so
+                            // the artist isn't looking at both at once.
+                            restoreKeyOpen = false;
+                            restoreConfirmStage = false;
+                        }
                     }
-                }
-            });
-            if (restoreKeyOpen) restore_app_key_section();
-        } else {
-            text_label(gui, "Not configured. Set up via your Heavymeta Portal settings.");
+                });
+                if (exportKeyOpen) export_app_key_section();
+
+                text_button(gui, "toggle restore app key",
+                    restoreKeyOpen ? "Cancel restore" : "Restore App Key", {
+                    .wide = true,
+                    .onClick = [this] {
+                        restoreKeyOpen = !restoreKeyOpen;
+                        if (restoreKeyOpen) {
+                            exportKeyOpen = false;
+                            restoreConfirmStage = false;
+                            restoreFeedback.clear();
+                        } else {
+                            restoreKeyInput.clear();
+                            restoreConfirmStage = false;
+                        }
+                    }
+                });
+                if (restoreKeyOpen) restore_app_key_section();
+            } else {
+                text_label(gui, "Not configured. Set up via your Heavymeta Portal settings.");
+            }
         }
 
         // docs/design/C2PA.md §3.1 — gateway toggle. The section is
@@ -457,52 +463,62 @@ void FileSelectScreen::verifiable_publishing_section() {
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
     }) {
-        text_label_centered(gui, "Verifiable publishing");
-        checkbox_boolean_field(gui,
-            "verifiable publishing enable",
-            "Enable verifiable publishing",
-            &main.conf.verifiablePublishingEnabled);
-        text_label(gui,
-            "Adds a tamper-evident provenance signature to canvases and "
-            "exported images. Verifiable against the Heavymeta cooperative's "
-            "on-chain trust list. Free to read; requires a one-time on-chain "
-            "registration (about 5 XLM) to write.");
-
-        // Network selector. Mainnet is the production target; Testnet
-        // is for pre-release smoke against the testnet-deployed cert
-        // registry. Defaults to Mainnet (per GlobalConfig). Hidden
-        // when the gateway is OFF so the surface stays uncluttered.
-        if (main.conf.verifiablePublishingEnabled) {
-            text_label(gui, "Network:");
-            radio_button_selector<GlobalConfig::StellarNetwork>(
-                gui, "c2pa network select",
-                &main.conf.stellarNetwork,
-                {
-                    { "Mainnet (production)",        GlobalConfig::StellarNetwork::Mainnet },
-                    { "Testnet (pre-release test)", GlobalConfig::StellarNetwork::Testnet },
-                });
-        }
-
-        if (main.conf.verifiablePublishingEnabled) {
-            // First frame after the artist flips the toggle ON: kick off
-            // a Horizon balance probe so the wallet panel has data to
-            // show without waiting for an explicit Refresh click.
-            if (!c2paWalletPrevEnabled && main.devKeys.is_loaded()) {
-                c2paWalletPanel.refresh_balance(main, main.devKeys.app_pubkey());
+        text_button(gui, "toggle verifiable publishing section",
+            verifiablePublishingOpen
+                ? "[-] Verifiable publishing"
+                : "[+] Verifiable publishing", {
+            .wide = true,
+            .onClick = [this] {
+                verifiablePublishingOpen = !verifiablePublishingOpen;
             }
-            c2paWalletPanel.render(main);
+        });
+        if (verifiablePublishingOpen) {
+            checkbox_boolean_field(gui,
+                "verifiable publishing enable",
+                "Enable verifiable publishing",
+                &main.conf.verifiablePublishingEnabled);
+            text_label(gui,
+                "Adds a tamper-evident provenance signature to canvases and "
+                "exported images. Verifiable against the Heavymeta cooperative's "
+                "on-chain trust list. Free to read; requires a one-time on-chain "
+                "registration (about 5 XLM) to write.");
 
-            // Registration walkthrough (I10). Lazy-built — first
-            // toggle-ON pays the StellarCli PATH probe + KeyStore init;
-            // subsequent renders are cheap. ensure_ca_loaded inside
-            // render handles the CA gen-or-load on first call.
-            if (!c2paFlow) {
-                c2paFlow = std::make_unique<C2PA::RegistrationFlow>(
-                    main.conf.configPath);
+            // Network selector. Mainnet is the production target; Testnet
+            // is for pre-release smoke against the testnet-deployed cert
+            // registry. Defaults to Mainnet (per GlobalConfig). Hidden
+            // when the gateway is OFF so the surface stays uncluttered.
+            if (main.conf.verifiablePublishingEnabled) {
+                text_label(gui, "Network:");
+                radio_button_selector<GlobalConfig::StellarNetwork>(
+                    gui, "c2pa network select",
+                    &main.conf.stellarNetwork,
+                    {
+                        { "Mainnet (production)",        GlobalConfig::StellarNetwork::Mainnet },
+                        { "Testnet (pre-release test)", GlobalConfig::StellarNetwork::Testnet },
+                    });
             }
-            c2paFlow->render(main, c2paWalletPanel);
+
+            if (main.conf.verifiablePublishingEnabled) {
+                // First frame after the artist flips the toggle ON: kick off
+                // a Horizon balance probe so the wallet panel has data to
+                // show without waiting for an explicit Refresh click.
+                if (!c2paWalletPrevEnabled && main.devKeys.is_loaded()) {
+                    c2paWalletPanel.refresh_balance(main, main.devKeys.app_pubkey());
+                }
+                c2paWalletPanel.render(main);
+
+                // Registration walkthrough (I10). Lazy-built — first
+                // toggle-ON pays the StellarCli PATH probe + KeyStore init;
+                // subsequent renders are cheap. ensure_ca_loaded inside
+                // render handles the CA gen-or-load on first call.
+                if (!c2paFlow) {
+                    c2paFlow = std::make_unique<C2PA::RegistrationFlow>(
+                        main.conf.configPath);
+                }
+                c2paFlow->render(main, c2paWalletPanel);
+            }
+            c2paWalletPrevEnabled = main.conf.verifiablePublishingEnabled;
         }
-        c2paWalletPrevEnabled = main.conf.verifiablePublishingEnabled;
     }
 }
 

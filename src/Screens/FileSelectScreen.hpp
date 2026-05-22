@@ -107,6 +107,15 @@ class FileSelectScreen : public Screen {
         // "Horizon polling: on Settings-open only" decision from
         // DISTRIBUTION-PHASE1.md §8.6, generalized to "on first reveal").
         bool c2paWalletPrevEnabled = false;
+        // Section-fold state for the Settings sidebar. Both sections
+        // grew large enough (App Key reveals + Verifiable Publishing
+        // walkthrough cards) to overflow the visible sidebar; folding
+        // restores access to everything by letting the artist collapse
+        // what they aren't using. App Key defaults open (small, often
+        // glanced at — pubkey for funding / sharing); Verifiable
+        // Publishing defaults closed (multi-card opt-in flow).
+        bool appKeyOpen = true;
+        bool verifiablePublishingOpen = false;
         bool exportKeyOpen = false;
         bool restoreKeyOpen = false;
         std::string restoreKeyInput;
