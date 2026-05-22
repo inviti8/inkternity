@@ -77,6 +77,10 @@ private:
     // pattern from the registration submit path.
     void render_active_card(MainProgram& main);
     void render_revoke_confirm_card(MainProgram& main);
+    // I11b: begin a rotation. Generates a staging CA + a
+    // HVYM-CA-ROT-v1 bundle text, flips flowMode_ to Rotate so the
+    // four walkthrough cards re-render against ROT semantics.
+    void begin_rotation(MainProgram& main);
 
     // Backend modules (long-lived per session).
     StellarCli cli_;
@@ -86,6 +90,19 @@ private:
     // CA + derived bundle. Lazy-initialized in ensure_ca_loaded.
     AppCa       ca_;
     std::string bundleText_;
+
+    // I11b rotation mode. begin_rotation populates stagingCa_ + the
+    // HVYM-CA-ROT-v1 bundle text; the walkthrough cards branch on
+    // flowMode_ to render against the staging CA / RotateParams /
+    // submit_rotate. On successful rotate, KeyStore::rotate_current_to_old
+    // moves the old CA out of the way, stagingCa_ moves into ca_, and
+    // flowMode_ resets to Register (which is a no-op once status is
+    // back to Active and the user closes the panel).
+    enum class FlowMode { Register, Rotate };
+    FlowMode    flowMode_ = FlowMode::Register;
+    AppCa       stagingCa_;
+    std::string stagingBundleText_;
+    WireToken::RotateParams tokenRotateParams_;
 
     // Paste-token state (Step 2). pastedToken_ is the artist's
     // input buffer; tokenStatusMsg_ is the line shown below the

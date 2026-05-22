@@ -100,6 +100,17 @@ void RegistrationFlow::render_bundle_card(MainProgram& main) {
     auto& gui = main.g.gui;
     auto& io  = gui.io;
 
+    // Branch on flowMode_ — same UI shape, different bundle text.
+    const std::string& text = (flowMode_ == FlowMode::Rotate)
+        ? stagingBundleText_ : bundleText_;
+    const char* explainer = (flowMode_ == FlowMode::Rotate)
+        ? "Step 1 (rotate): Copy this rotation bundle, then open the "
+          "Heavymeta portal to authorize it. The portal will return a "
+          "one-line token you paste back in Step 2."
+        : "Step 1: Copy this provenance bundle, then open the "
+          "Heavymeta portal to authorize it. The portal will return "
+          "a one-line token you paste back in Step 2.";
+
     CLAY_AUTO_ID({
         .layout = {
             .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
@@ -110,32 +121,27 @@ void RegistrationFlow::render_bundle_card(MainProgram& main) {
         },
         .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
     }) {
-        text_label(gui,
-            "Step 1: Copy this provenance bundle, then open the "
-            "Heavymeta portal to authorize it. The portal will return "
-            "a one-line token you paste back in Step 2.");
+        text_label(gui, explainer);
 
-        if (bundleText_.empty()) {
+        if (text.empty()) {
             text_label_light(gui, "(bundle not yet generated)");
             return;
         }
 
-        // Multi-line read-only display. text_label handles \n breaks.
-        text_label(gui, bundleText_.c_str());
+        text_label(gui, text.c_str());
 
         text_button(gui, "c2pa flow copy bundle", "Copy bundle", {
             .wide = true,
             .onClick = [this, &main] {
-                main.input.set_clipboard_str(bundleText_);
+                const std::string& t = (flowMode_ == FlowMode::Rotate)
+                    ? stagingBundleText_ : bundleText_;
+                main.input.set_clipboard_str(t);
             },
         });
         text_button(gui, "c2pa flow open portal",
             "Open Heavymeta portal", {
             .wide = true,
             .onClick = [] {
-                // Plain URL via SDL_OpenURL — plan §10/Q4 resolution.
-                // No custom protocol handler; the artist's default
-                // browser handles the redirect to the provenance card.
                 if (!SDL_OpenURL("https://heavymeta.art/launch")) {
                     Logger::get().log("WORLDFATAL",
                         std::string("[C2PA::Flow] SDL_OpenURL failed: ")
@@ -180,7 +186,40 @@ void RegistrationFlow::render_paste_card(MainProgram& main) {
                     tokenStatusMsg_ = "Paste a token first.";
                     return;
                 }
-                // Parse the wire format + extract fields.
+
+                // Branch on flowMode_ — Register vs Rotate parse +
+                // expected-values shape differ even though the UI
+                // surface is identical.
+                if (flowMode_ == FlowMode::Rotate) {
+                    auto rc = WireToken::parse_rotate(pastedToken_, tokenRotateParams_);
+                    if (rc != WireToken::ParseStatus::OK) {
+                        tokenStatusMsg_ = WireToken::parse_status_str(rc);
+                        Logger::get().log("INFO",
+                            std::string("[C2PA::Flow] rotate-token parse failed: ")
+                            + tokenStatusMsg_);
+                        return;
+                    }
+                    WireToken::ExpectedRotateValues expected{};
+                    expected.app_address          = main.devKeys.app_pubkey();
+                    expected.new_fingerprint      = stagingCa_.fingerprint_sha256();
+                    expected.new_expires_at_unix  = stagingCa_.expires_at_unix();
+                    std::string mismatch =
+                        WireToken::check_rotate(tokenRotateParams_, expected);
+                    if (!mismatch.empty()) {
+                        tokenStatusMsg_ = mismatch;
+                        Logger::get().log("INFO",
+                            "[C2PA::Flow] rotate-token cross-check failed: " + mismatch);
+                        return;
+                    }
+                    tokenValid_ = true;
+                    tokenStatusMsg_ = "Rotation token validated.";
+                    Logger::get().log("INFO",
+                        "[C2PA::Flow] rotate-token validated; nonce="
+                        + std::to_string(tokenRotateParams_.nonce));
+                    return;
+                }
+
+                // Register-mode path.
                 auto rc = WireToken::parse_register(pastedToken_, tokenParams_);
                 if (rc != WireToken::ParseStatus::OK) {
                     tokenStatusMsg_ = WireToken::parse_status_str(rc);
@@ -189,9 +228,6 @@ void RegistrationFlow::render_paste_card(MainProgram& main) {
                         + tokenStatusMsg_);
                     return;
                 }
-                // Cross-check against the locally-generated CA + the
-                // identity DevKeys knows. Mismatch returns a one-line
-                // human-readable string naming the first failing field.
                 WireToken::ExpectedRegisterValues expected{};
                 expected.app_address     = main.devKeys.app_pubkey();
                 expected.app_kind        = "Inkternity";
@@ -252,6 +288,67 @@ void RegistrationFlow::render_funding_card(MainProgram& main, WalletPanel& walle
 }
 
 namespace {
+
+// Worker for rotate_app_ca. On success the new (staging) CA replaces
+// the existing on-disk CA via KeyStore::rotate_current_to_old +
+// KeyStore::save. The Active row's expires_at is refreshed; status
+// stays Active.
+void run_rotate(
+        std::shared_ptr<RegistrationFlow::SubmitResult> result,
+        StellarCli* cli,
+        std::string  contract_id,
+        std::string  source_account,
+        std::string  app_address,
+        std::array<uint8_t, 32> new_fingerprint,
+        uint64_t     new_expires_at,
+        uint64_t     nonce,
+        std::vector<uint8_t> auth_payload,
+        std::vector<uint8_t> auth_signature,
+        Soroban::RpcConfig rpc,
+        std::filesystem::path c2paDir,
+        // Caller-owned PEM blobs that the worker should persist on
+        // success (the new CA's private key + cert). Captured by
+        // value so the worker survives RegistrationFlow tear-down.
+        std::vector<uint8_t> new_ca_key_pem,
+        std::vector<uint8_t> new_ca_cert_pem) {
+    Logger::get().log("INFO",
+        "[C2PA::Flow] rotate worker started; rpc=" + rpc.rpc_url);
+    auto r = Soroban::submit_rotate(*cli, rpc, contract_id, source_account,
+        app_address, new_fingerprint, new_expires_at, nonce,
+        auth_payload, auth_signature);
+    if (r.success) {
+        result->tx_hash = r.tx_hash;
+        result->phase.store(RegistrationFlow::SubmitPhase::Success);
+
+        // Move the existing CA into c2pa/old_ca/ (30-day local-verify
+        // grace per plan §3.4), then write the new CA in its place.
+        // The PEM blobs were generated in the GUI thread before the
+        // worker was dispatched — re-parsing here avoids race risk on
+        // the AppCa object the artist could still see / re-render.
+        KeyStore tmpStore(c2paDir.parent_path());
+        tmpStore.rotate_current_to_old();
+        AppCa rotated = AppCa::load_from_pem(
+            std::string_view(reinterpret_cast<const char*>(new_ca_key_pem.data()),
+                              new_ca_key_pem.size()),
+            std::string_view(reinterpret_cast<const char*>(new_ca_cert_pem.data()),
+                              new_ca_cert_pem.size()));
+        if (rotated.valid()) {
+            tmpStore.save(rotated);
+        } else {
+            Logger::get().log("WORLDFATAL",
+                "[C2PA::Flow] rotate: staging CA failed to re-parse for save");
+        }
+        // Refresh the expires_at in the status JSON; status stays Active.
+        auto state = tmpStore.load_state();
+        state.expires_at_unix = static_cast<int64_t>(new_expires_at);
+        tmpStore.save_state(state);
+    } else {
+        result->error = r.error.empty()
+            ? std::string("rotate failed; see log.txt for raw CLI output")
+            : r.error;
+        result->phase.store(RegistrationFlow::SubmitPhase::Failed);
+    }
+}
 
 // Worker thread entry: runs the Soroban submit and writes results
 // back via the shared SubmitResult pointer. Captured arguments are
@@ -338,19 +435,20 @@ void RegistrationFlow::render_submit_card(MainProgram& main, WalletPanel& wallet
 
         switch (phase) {
         case SubmitPhase::Idle: {
-            text_button(gui, "c2pa flow submit",
-                ready ? "Register on chain"
-                      : "Register on chain (disabled)", {
+            const bool isRotate = (flowMode_ == FlowMode::Rotate);
+            const char* idleLabel = ready
+                ? (isRotate ? "Rotate on chain" : "Register on chain")
+                : (isRotate ? "Rotate on chain (disabled)"
+                            : "Register on chain (disabled)");
+            text_button(gui, "c2pa flow submit", idleLabel, {
                 .wide = true,
-                .onClick = [this, &main] {
-                    if (!tokenValid_ || !ca_.valid()) return;
+                .onClick = [this, &main, isRotate] {
+                    if (!tokenValid_) return;
+                    if (!isRotate && !ca_.valid()) return;
+                    if (isRotate && !stagingCa_.valid()) return;
                     if (submit_ &&
                         submit_->phase.load() == SubmitPhase::InFlight) return;
 
-                    // Resolve the cert-registry contract ID for the
-                    // currently-selected network. The Registry caches
-                    // per session; falls back to the §0 hardcoded ID
-                    // if the live hvym_registry lookup misfires.
                     const auto net = main.conf.stellarNetwork;
                     const std::string contract_id =
                         reg_.cert_registry_id(net);
@@ -360,21 +458,44 @@ void RegistrationFlow::render_submit_card(MainProgram& main, WalletPanel& wallet
                     submit_->phase.store(SubmitPhase::InFlight);
 
                     if (submitThread_.joinable()) submitThread_.detach();
-                    submitThread_ = std::thread(run_submit,
-                        submit_,
-                        &cli_,
-                        contract_id,
-                        main.devKeys.app_pubkey(),
-                        main.devKeys.app_pubkey(),  // app_address == source
-                        tokenParams_.member_pubkey,
-                        std::string("Inkternity"),
-                        tokenParams_.fingerprint,
-                        static_cast<uint64_t>(tokenParams_.expires_at_unix),
-                        static_cast<uint64_t>(tokenParams_.nonce),
-                        tokenParams_.auth_payload,
-                        tokenParams_.auth_signature,
-                        rpc,
-                        store_.c2pa_dir());
+
+                    if (isRotate) {
+                        // Capture the staging CA's PEMs by value so the
+                        // worker can persist them after the on-chain
+                        // rotate succeeds, even if the artist closes
+                        // settings during the call.
+                        submitThread_ = std::thread(run_rotate,
+                            submit_,
+                            &cli_,
+                            contract_id,
+                            main.devKeys.app_pubkey(),
+                            main.devKeys.app_pubkey(),
+                            tokenRotateParams_.new_fingerprint,
+                            static_cast<uint64_t>(tokenRotateParams_.new_expires_at_unix),
+                            static_cast<uint64_t>(tokenRotateParams_.nonce),
+                            tokenRotateParams_.auth_payload,
+                            tokenRotateParams_.auth_signature,
+                            rpc,
+                            store_.c2pa_dir(),
+                            stagingCa_.private_key_pem(),
+                            stagingCa_.pem_bytes());
+                    } else {
+                        submitThread_ = std::thread(run_submit,
+                            submit_,
+                            &cli_,
+                            contract_id,
+                            main.devKeys.app_pubkey(),
+                            main.devKeys.app_pubkey(),  // app_address == source
+                            tokenParams_.member_pubkey,
+                            std::string("Inkternity"),
+                            tokenParams_.fingerprint,
+                            static_cast<uint64_t>(tokenParams_.expires_at_unix),
+                            static_cast<uint64_t>(tokenParams_.nonce),
+                            tokenParams_.auth_payload,
+                            tokenParams_.auth_signature,
+                            rpc,
+                            store_.c2pa_dir());
+                    }
                 },
             });
             break;
@@ -405,6 +526,45 @@ void RegistrationFlow::render_submit_card(MainProgram& main, WalletPanel& wallet
             break;
         }
     }
+}
+
+// ---- I11b: begin rotation -----------------------------------------------
+
+void RegistrationFlow::begin_rotation(MainProgram& main) {
+    if (!main.devKeys.is_loaded()) {
+        Logger::get().log("WORLDFATAL",
+            "[C2PA::Flow] rotate: DevKeys not loaded");
+        return;
+    }
+    // Generate a fresh CA into the staging slot. Same params as the
+    // initial CA — app_name="Inkternity", same Stellar app address,
+    // 10-year valid_days default.
+    stagingCa_ = AppCa::generate("Inkternity", main.devKeys.app_pubkey());
+    if (!stagingCa_.valid()) {
+        Logger::get().log("WORLDFATAL",
+            "[C2PA::Flow] rotate: AppCa::generate returned invalid CA");
+        return;
+    }
+    // Build the HVYM-CA-ROT-v1 bundle text from the new CA's
+    // fingerprint + expires_at.
+    RotateBundle rb{};
+    rb.app_address          = main.devKeys.app_pubkey();
+    rb.new_fingerprint      = stagingCa_.fingerprint_sha256();
+    rb.new_expires_at_unix  = stagingCa_.expires_at_unix();
+    stagingBundleText_      = Bundle::render_rotate(rb);
+    if (stagingBundleText_.empty()) {
+        Logger::get().log("WORLDFATAL",
+            "[C2PA::Flow] rotate: Bundle::render_rotate returned empty");
+        return;
+    }
+    // Reset walkthrough state for the new flow.
+    pastedToken_.clear();
+    tokenValid_      = false;
+    tokenStatusMsg_.clear();
+    submit_.reset();
+    flowMode_ = FlowMode::Rotate;
+    Logger::get().log("USERINFO", "Rotation prepared. Paste the rotation "
+        "token from the portal to continue.");
 }
 
 // ---- I11a: Active branch (rotate + revoke) -------------------------------
@@ -465,17 +625,9 @@ void RegistrationFlow::render_active_card(MainProgram& main) {
         text_label(gui,
             "This install is registered for verifiable publishing.");
 
-        // Rotate placeholder — full rotation walkthrough lands in
-        // I11b. For now, the button just opens a "coming soon" note
-        // so the artist sees the affordance.
-        text_button(gui, "c2pa flow rotate stub", "Rotate keys", {
+        text_button(gui, "c2pa flow rotate start", "Rotate keys", {
             .wide = true,
-            .onClick = [] {
-                Logger::get().log("USERINFO",
-                    "Rotate keys: full rotation flow lands in I11b. "
-                    "Reinstall + restore from the existing app secret "
-                    "is the current workaround.");
-            },
+            .onClick = [this, &main] { begin_rotation(main); },
         });
 
         text_button(gui, "c2pa flow revoke open",
@@ -589,6 +741,35 @@ void RegistrationFlow::render(MainProgram& main, WalletPanel& wallet) {
     // Once Active, swap the walkthrough for the rotate/revoke surface.
     auto state = store_.load_state();
     if (state.status == RegistrationStatus::Active) {
+        // If a rotation is in progress, re-render the walkthrough
+        // cards against the staging CA + ROT semantics.
+        if (flowMode_ == FlowMode::Rotate) {
+            render_bundle_card(main);
+            render_paste_card(main);
+            render_funding_card(main, wallet);
+            render_submit_card(main, wallet);
+            // After a successful rotate, the worker has already
+            // persisted the new CA + refreshed expires_at; flip
+            // back to Register mode so subsequent renders show the
+            // active card again. (The "Success" view above stays
+            // visible for one frame.)
+            if (submit_ && submit_->phase.load() == SubmitPhase::Success) {
+                // Reset flow state next render — leave the success
+                // line in place this frame so the artist can read it.
+                // The next gui.set_to_layout() (from any later edit)
+                // will revert.
+                if (stagingCa_.valid()) {
+                    ca_         = std::move(stagingCa_);
+                    bundleText_ = std::move(stagingBundleText_);
+                    pastedToken_.clear();
+                    tokenValid_ = false;
+                    tokenStatusMsg_.clear();
+                    flowMode_ = FlowMode::Register;
+                    submit_.reset();
+                }
+            }
+            return;
+        }
         render_active_card(main);
         if (revokeConfirmOpen_) {
             render_revoke_confirm_card(main);
