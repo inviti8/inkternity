@@ -5,6 +5,7 @@
 #include "Screens/FileSelectScreen.hpp"
 #include "Screens/DesktopDrawingProgramScreen.hpp"
 #include "Screens/PhoneDrawingProgramScreen.hpp"
+#include "C2PA/StellarCli.hpp"
 #include "VersionConstants.hpp"
 #include "include/gpu/GpuTypes.h"
 #include <SDL3/SDL_filesystem.h>
@@ -401,6 +402,50 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         }
     }
 #endif // HVYM_HAS_LIBMYPAINT
+
+    // C2PA bridge: probe the stellar CLI (PATH + cache) and print the
+    // resolved state. Used to smoke-test the auto-install path without
+    // running the full GUI. Same bypass-before-init pattern as the
+    // mypaint flags. Pass a config-path dir via argv[i+1].
+    //   --c2pa-stellar-probe <output-file>   writes a small report
+    //
+    // inkternity.exe is /SUBSYSTEM:WINDOWS on Windows so std::cout doesn't
+    // reach the parent shell. We write the report to a file the caller
+    // can read.
+    {
+        for (int i = 1; i + 1 < argc; ++i) {
+            const std::string_view flag(argv[i]);
+            if (flag == "--c2pa-stellar-probe") {
+                // SDL_CreateProcess needs SDL infrastructure even though
+                // no subsystem is required.
+                if (!SDL_Init(0)) return SDL_APP_FAILURE;
+                std::filesystem::path outFile(argv[i + 1]);
+                C2PA::StellarCli cli(outFile.parent_path());
+                auto av = cli.probe();
+                const char* avs = "?";
+                switch (av) {
+                    case C2PA::StellarCli::Availability::Unknown:           avs = "unknown"; break;
+                    case C2PA::StellarCli::Availability::SystemPath:        avs = "system-path"; break;
+                    case C2PA::StellarCli::Availability::Cached:            avs = "cached"; break;
+                    case C2PA::StellarCli::Availability::NotAvailable:      avs = "not-available"; break;
+                    case C2PA::StellarCli::Availability::InstallInProgress: avs = "installing"; break;
+                    case C2PA::StellarCli::Availability::InstallFailed:     avs = "install-failed"; break;
+                }
+                std::ofstream f(outFile, std::ios::binary | std::ios::trunc);
+                f << "asset_triple: " << C2PA::StellarCli::asset_triple() << "\n";
+                f << "release_url:  " << C2PA::StellarCli::release_url() << "\n";
+                f << "availability: " << avs << "\n";
+                f << "binary_path:  " << cli.binary_path().string() << "\n";
+                if (!cli.binary_path().empty()) {
+                    auto r = cli.invoke({"--version"});
+                    f << "version_ok:   " << (r.ok() ? "yes" : "no") << "\n";
+                    f << "version_out:  " << r.out << "\n";
+                }
+                f.close();
+                return SDL_APP_SUCCESS;
+            }
+        }
+    }
 
     // DP1-B test harness (DISTRIBUTION-PHASE1.md §4): cross-platform
     // spawn / kill / stdin-stop / parent-death / lock-handoff exercises
