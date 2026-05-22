@@ -92,6 +92,13 @@ private:
     // funded before the popup opened.
     bool   baselineSet_     = false;
     double baselineXlm_     = 0.0;
+    // Last "you got paid" banner string, surfaced inside the popup
+    // itself. We can't lean on USERINFO toasts here because the
+    // Toolbar-overlay toast renderer (Toolbar.cpp:1447) only runs in
+    // canvas mode — settings sits on FileSelectScreen, so toasts
+    // queue silently into MainProgram::logMessages without ever
+    // rendering. Cleared when the popup closes.
+    std::string fundReceivedMsg_;
 
     // QR image cache. Lazily generated on first popup-open; reused
     // across re-opens unless the underlying pubkey changes

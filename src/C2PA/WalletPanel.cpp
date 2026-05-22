@@ -133,8 +133,14 @@ void WalletPanel::render(MainProgram& main) {
                     msg.setf(std::ios::fixed);
                     msg.precision(delta < 1.0 ? 4 : 2);
                     msg << "Received " << delta << " XLM";
+                    // USERINFO is rendered as a Toolbar-overlay toast,
+                    // which only exists in canvas mode. Also stash the
+                    // line into fundReceivedMsg_ so the popup itself
+                    // (visible on FileSelectScreen / settings) shows
+                    // the receipt prominently.
                     Logger::get().log("USERINFO", msg.str());
-                    baselineXlm_ = observedXlm_;
+                    fundReceivedMsg_ = msg.str();
+                    baselineXlm_     = observedXlm_;
                 }
             }
 
@@ -303,9 +309,15 @@ void WalletPanel::render(MainProgram& main) {
                     }
                 }
 
-                // Status line — keep it short, no toast spam in the
-                // panel itself; the actual delta-arrival USERINFO
-                // toast surfaces in the global log overlay.
+                // Receipt banner. When the delta-detect branch above
+                // fires, fundReceivedMsg_ holds e.g. "Received 10.00
+                // XLM" — surface it inside the popup since the global
+                // USERINFO toast only renders in canvas mode and
+                // settings testers wouldn't otherwise see it.
+                if (!fundReceivedMsg_.empty()) {
+                    text_label_centered(gui, fundReceivedMsg_.c_str());
+                }
+
                 const std::string status = state_ == FetchState::InFlight
                     ? "Polling for funds..."
                     : (lastBalanceText_.empty()
@@ -319,6 +331,7 @@ void WalletPanel::render(MainProgram& main) {
                     .onClick = [this] {
                         fundPopupOpen_ = false;
                         baselineSet_   = false;
+                        fundReceivedMsg_.clear();
                     },
                 });
             }
