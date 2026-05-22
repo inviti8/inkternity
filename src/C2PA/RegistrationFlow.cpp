@@ -121,34 +121,45 @@ void RegistrationFlow::render_bundle_card(MainProgram& main) {
         },
         .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
     }) {
-        text_label(gui, explainer);
+        const char* header = (flowMode_ == FlowMode::Rotate)
+            ? (bundleOpen_ ? "[-] Step 1: Rotation bundle"
+                           : "[+] Step 1: Rotation bundle")
+            : (bundleOpen_ ? "[-] Step 1: Provenance bundle"
+                           : "[+] Step 1: Provenance bundle");
+        text_button(gui, "c2pa flow toggle bundle", header, {
+            .wide = true,
+            .onClick = [this] { bundleOpen_ = !bundleOpen_; },
+        });
 
-        if (text.empty()) {
-            text_label_light(gui, "(bundle not yet generated)");
-            return;
+        if (bundleOpen_) {
+            text_label(gui, explainer);
+
+            if (text.empty()) {
+                text_label_light(gui, "(bundle not yet generated)");
+            } else {
+                text_label(gui, text.c_str());
+
+                text_button(gui, "c2pa flow copy bundle", "Copy bundle", {
+                    .wide = true,
+                    .onClick = [this, &main] {
+                        const std::string& t = (flowMode_ == FlowMode::Rotate)
+                            ? stagingBundleText_ : bundleText_;
+                        main.input.set_clipboard_str(t);
+                    },
+                });
+                text_button(gui, "c2pa flow open portal",
+                    "Open Heavymeta portal", {
+                    .wide = true,
+                    .onClick = [] {
+                        if (!SDL_OpenURL("https://heavymeta.art/launch")) {
+                            Logger::get().log("WORLDFATAL",
+                                std::string("[C2PA::Flow] SDL_OpenURL failed: ")
+                                + (SDL_GetError() ? SDL_GetError() : ""));
+                        }
+                    },
+                });
+            }
         }
-
-        text_label(gui, text.c_str());
-
-        text_button(gui, "c2pa flow copy bundle", "Copy bundle", {
-            .wide = true,
-            .onClick = [this, &main] {
-                const std::string& t = (flowMode_ == FlowMode::Rotate)
-                    ? stagingBundleText_ : bundleText_;
-                main.input.set_clipboard_str(t);
-            },
-        });
-        text_button(gui, "c2pa flow open portal",
-            "Open Heavymeta portal", {
-            .wide = true,
-            .onClick = [] {
-                if (!SDL_OpenURL("https://heavymeta.art/launch")) {
-                    Logger::get().log("WORLDFATAL",
-                        std::string("[C2PA::Flow] SDL_OpenURL failed: ")
-                        + (SDL_GetError() ? SDL_GetError() : ""));
-                }
-            },
-        });
     }
 }
 

@@ -91,6 +91,11 @@ private:
     AppCa       ca_;
     std::string bundleText_;
 
+    // Step-1 fold state. Defaults open (the artist usually arrives at
+    // this card to grab the bundle text); collapses to free vertical
+    // space while they work on Step 2+ down the page.
+    bool bundleOpen_ = true;
+
     // I11b rotation mode. begin_rotation populates stagingCa_ + the
     // HVYM-CA-ROT-v1 bundle text; the walkthrough cards branch on
     // flowMode_ to render against the staging CA / RotateParams /
