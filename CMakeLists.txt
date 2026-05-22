@@ -590,7 +590,12 @@ if(EMSCRIPTEN)
     target_compile_options(datachannel-wasm PRIVATE -pthread)
     target_link_libraries(main datachannel-wasm)
 else()
-    target_link_libraries(main LibDataChannel::LibDataChannel CURL::libcurl openssl::openssl)
+    # OpenSSL::SSL + OpenSSL::Crypto are the standard CMake target names
+    # exported by both system find_package(OpenSSL) (Linux Flatpak / macOS
+    # system) AND Conan's generated FindOpenSSL.cmake (Windows). The
+    # lowercase `openssl::openssl` meta-target is Conan-only and breaks
+    # the no-Conan branch with "target was not found."
+    target_link_libraries(main LibDataChannel::LibDataChannel CURL::libcurl OpenSSL::SSL OpenSSL::Crypto)
 endif()
 
 if(ANDROID)
