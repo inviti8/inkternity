@@ -4,6 +4,8 @@
 #include "../../DrawData.hpp"
 #include "DrawingProgramToolBase.hpp"
 #include "Helpers/SCollision.hpp"
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <include/core/SkPathBuilder.h>
 
@@ -289,12 +291,41 @@ void ScreenshotTool::erase_component(CanvasComponentContainer::ObjInfo* erasedCo
 
 void ScreenshotTool::take_screenshot(const std::filesystem::path& filePath, WorldScreenshotInfo::ScreenshotType screenshotType) {
     if(controls.imageSize.x() <= 0 || controls.imageSize.y() <= 0) {
-        std::cout << "[ScreenshotTool::take_screenshot] Image size is 0 or negative" << std::endl;
+        Logger::get().log("WORLDFATAL", "[Screenshot] Image size is 0 or negative — drag a selection rectangle first.");
         return;
     }
 
+    // SDL_ShowSaveFileDialog on Windows doesn't auto-append the filter
+    // extension when the artist types a bare name. SDL_SaveFile then
+    // writes the bytes to an extensionless file the user can't find
+    // (filtered file browsers and image viewers won't show it).
+    // Normalize per the chosen type — same fix shape as save_to_file
+    // (`src/World.cpp:664-676`, commit b1fb8c3).
+    std::filesystem::path savePath = filePath;
+    auto ext_lower = [](const std::filesystem::path& p) {
+        std::string e = p.extension().string();
+        std::transform(e.begin(), e.end(), e.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return e;
+    };
+    const std::string ext = ext_lower(savePath);
+    switch(screenshotType) {
+        case WorldScreenshotInfo::ScreenshotType::JPG:
+            if(ext != ".jpg" && ext != ".jpeg") savePath += ".jpg";
+            break;
+        case WorldScreenshotInfo::ScreenshotType::PNG:
+            if(ext != ".png") savePath += ".png";
+            break;
+        case WorldScreenshotInfo::ScreenshotType::WEBP:
+            if(ext != ".webp") savePath += ".webp";
+            break;
+        case WorldScreenshotInfo::ScreenshotType::SVG:
+            if(ext != ".svg") savePath += ".svg";
+            break;
+    }
+
     world_take_screenshot(drawP.world.main.world, {
-        .filePath = filePath,
+        .filePath = savePath,
         .type = screenshotType,
         .imageSizePixels = controls.imageSize,
         .cameraCoords = controls.coords,
