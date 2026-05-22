@@ -95,6 +95,7 @@ set(sources "src/main.cpp"
             "src/Distribution/HostOnly.cpp"
             "src/Distribution/SideInstances.cpp"
             "src/Subscription/TokenVerifier.cpp"
+            "src/C2PA/AppCa.cpp"
             "deps/tweetnacl/tweetnacl.c"
             "deps/tweetnacl/randombytes.cpp"
             "src/crypto/stellar/StellarStrkey.cpp"
@@ -291,6 +292,20 @@ if(NOT EMSCRIPTEN)
     find_package(LibDataChannel REQUIRED)
     find_package(CURL REQUIRED)
     find_package(harfbuzz REQUIRED)
+    # C2PA app-CA + leaf-cert X.509 build/sign (docs/design/C2PA.md §8.1).
+    # OpenSSL is also pulled transitively by libcurl on every native target;
+    # the explicit find_package gives us OpenSSL::Crypto for the new TU.
+    find_package(OpenSSL REQUIRED)
+    # Conan's openssl/3.6.2 recipe ships headers at
+    # <package_folder>/include but leaves cpp_info.components[*].includedirs
+    # empty, so OpenSSL::Crypto's INTERFACE_INCLUDE_DIRECTORIES is empty
+    # too and #include <openssl/*.h> fails to resolve. Attach the package
+    # include dir manually — surgical workaround, applies only on the
+    # native-target branch where find_package(OpenSSL) ran.
+    if(TARGET OpenSSL::Crypto AND DEFINED openssl_PACKAGE_FOLDER_RELEASE)
+        set_property(TARGET OpenSSL::Crypto APPEND PROPERTY
+            INTERFACE_INCLUDE_DIRECTORIES "${openssl_PACKAGE_FOLDER_RELEASE}/include")
+    endif()
 else()
     find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3-static)
 endif()
@@ -491,7 +506,7 @@ if(EMSCRIPTEN)
     target_compile_options(datachannel-wasm PRIVATE -pthread)
     target_link_libraries(main datachannel-wasm)
 else()
-    target_link_libraries(main LibDataChannel::LibDataChannel CURL::libcurl)
+    target_link_libraries(main LibDataChannel::LibDataChannel CURL::libcurl openssl::openssl)
 endif()
 
 if(ANDROID)
