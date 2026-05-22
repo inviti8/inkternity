@@ -220,6 +220,11 @@ AppCa AppCa::generate(std::string_view app_name,
     if (!add_text_ext_nid(&v3ctx, cert.get(), NID_key_usage,
                           "critical,digitalSignature,keyCertSign")) return {};
     if (!add_c2pa_eku(&v3ctx, cert.get())) return {};
+    // SubjectKeyIdentifier: 160-bit SHA-1 of the pubkey by default.
+    // c2pa-rs requires it on the CA so leaves can declare their AKI
+    // via "keyid:always" and the chain validator can match them.
+    if (!add_text_ext_nid(&v3ctx, cert.get(), NID_subject_key_identifier,
+                          "hash")) return {};
 
     // SAN URIs: stellar:G... + heavymeta:app/<name>. X509V3_EXT_conf
     // takes a comma-separated value list. The strings can't contain '\n'

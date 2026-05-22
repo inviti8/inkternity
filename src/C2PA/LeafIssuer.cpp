@@ -251,8 +251,26 @@ MemberLeaf issue_leaf(const AppCa& ca,
     if (ekuNid == NID_undef) {
         OPENSSL_cleanse(seed.data(), seed.size()); return out;
     }
+    // Include id-kp-documentSigning (1.3.6.1.5.5.7.3.36) alongside the
+    // Adobe-prefix c2paClaimSigning OID. c2pa-rs's trust policy
+    // delegates EKU validation to a configurable allow-list; document
+    // signing is the standardized one most policies recognize.
     if (!add_text_ext_nid(&v3ctx, cert.get(), NID_ext_key_usage,
-                          "critical,c2paClaimSigning")) {
+                          "critical,c2paClaimSigning,1.3.6.1.5.5.7.3.36")) {
+        OPENSSL_cleanse(seed.data(), seed.size()); return out;
+    }
+    // SubjectKeyIdentifier + AuthorityKeyIdentifier — required by
+    // c2pa-rs's certificate_profile check (looks for both extensions
+    // to build the chain). "hash" computes SHA-1 of the leaf pubkey;
+    // "keyid:always" pulls the CA's SKI into the leaf's AKI. The
+    // X509V3_CTX was set up with both certs above so OpenSSL has the
+    // pubkeys it needs.
+    if (!add_text_ext_nid(&v3ctx, cert.get(), NID_subject_key_identifier,
+                          "hash")) {
+        OPENSSL_cleanse(seed.data(), seed.size()); return out;
+    }
+    if (!add_text_ext_nid(&v3ctx, cert.get(), NID_authority_key_identifier,
+                          "keyid:always")) {
         OPENSSL_cleanse(seed.data(), seed.size()); return out;
     }
 

@@ -7,6 +7,7 @@
 #include "Screens/PhoneDrawingProgramScreen.hpp"
 #include "C2PA/AppCa.hpp"
 #include "C2PA/LeafIssuer.hpp"
+#include "C2PA/Manifest.hpp"
 #include "C2PA/Registry.hpp"
 #include "C2PA/StellarCli.hpp"
 #include "VersionConstants.hpp"
@@ -409,6 +410,56 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         }
     }
 #endif // HVYM_HAS_LIBMYPAINT
+
+    // C2PA bridge: smoke-test the full embed + read pipeline. Takes
+    // an unsigned source image, embeds a manifest signed by a fresh
+    // CA + leaf, writes the dest image, then reads it back and
+    // dumps the JSON to a report file.
+    //   --c2pa-embed-test <src.png> <dest.png> <report.txt>
+    {
+        for (int i = 1; i + 3 < argc; ++i) {
+            const std::string_view flag(argv[i]);
+            if (flag == "--c2pa-embed-test") {
+                const std::filesystem::path src(argv[i + 1]);
+                const std::filesystem::path dst(argv[i + 2]);
+                const std::filesystem::path rpt(argv[i + 3]);
+                Logger::get().add_log("INFO",       [](const std::string&) {});
+                Logger::get().add_log("WORLDFATAL", [](const std::string&) {});
+                Logger::get().add_log("USERINFO",   [](const std::string&) {});
+
+                C2PA::AppCa ca = C2PA::AppCa::generate("Inkternity",
+                    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+                C2PA::MemberLeaf leaf = C2PA::issue_leaf(ca,
+                    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+                    "Inkternity Smoke");
+                if (!ca.valid() || !leaf.valid()) return SDL_APP_FAILURE;
+
+                const std::string manifest = R"({
+                    "claim_generator": "inkternity/0.12.0",
+                    "title": "Inkternity Embed Smoke Test",
+                    "assertions": [
+                        { "label": "c2pa.actions",
+                          "data": { "actions": [{"action":"c2pa.created"}] } }
+                    ]
+                })";
+                auto er = C2PA::embed_into_image_file(src, dst, manifest, ca, leaf);
+                std::ofstream f(rpt, std::ios::binary | std::ios::trunc);
+                f << "embed_ok=" << (er.success ? "yes" : "no") << "\n";
+                if (!er.success) f << "embed_error=" << er.error << "\n";
+                if (er.success) {
+                    auto rr = C2PA::read_and_verify(dst);
+                    f << "read_has_manifest=" << (rr.has_manifest ? "yes" : "no") << "\n";
+                    if (!rr.error.empty()) f << "read_error=" << rr.error << "\n";
+                    if (rr.has_manifest) {
+                        f << "manifest_len=" << rr.manifest_json.size() << "\n";
+                        f << "manifest_preview="
+                          << rr.manifest_json.substr(0, 500) << "\n";
+                    }
+                }
+                return SDL_APP_SUCCESS;
+            }
+        }
+    }
 
     // C2PA bridge: smoke-test the c2pa-rs prebuilt linkage by calling
     // c2pa_version(). Writes the version string to the named file.
