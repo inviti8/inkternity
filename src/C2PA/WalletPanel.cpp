@@ -150,8 +150,11 @@ void WalletPanel::render(MainProgram& main) {
             // MemoryImageDisplay uses CLAY_SIZING_GROW(0); needs a
             // parent with an explicit fixed size or it renders at 0x0
             // (same pattern as the top-toolbar avatar tile in
-            // src/Toolbar.cpp:1074).
-            constexpr float kQrSide = 256.0f;
+            // src/Toolbar.cpp:1074). 128px display is comfortable for
+            // a phone camera at typical desktop reading distance; the
+            // underlying SkImage is oversampled at 256px so Skia's
+            // linear downscale keeps the modules crisp.
+            constexpr float kQrSide = 128.0f;
             CLAY_AUTO_ID({
                 .layout = {
                     .sizing = {
