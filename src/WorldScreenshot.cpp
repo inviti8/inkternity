@@ -18,6 +18,8 @@
 #include <include/encode/SkJpegEncoder.h>
 #include <include/gpu/GpuTypes.h>
 
+#include "C2PA/PublishHook.hpp"
+
 #ifdef __EMSCRIPTEN__
     #include <EmscriptenHelpers/emscripten_browser_file.h>
 #endif
@@ -82,8 +84,29 @@ void world_take_screenshot(const std::shared_ptr<World>& w, const WorldScreensho
     #ifndef __EMSCRIPTEN__
         try {
             auto skData = out.detachAsData();
-            if(!SDL_SaveFile(info.filePath.string().c_str(), skData->bytes(), skData->size()))
-                throw std::runtime_error("SDL_SaveFile failed with error: " + std::string(SDL_GetError()));
+
+            // C2PA publish hook (docs/design/C2PA.md §I14). When the
+            // verifiable-publishing gateway is ON and registration is
+            // Active, route the bytes through PublishHook which
+            // embeds a signed C2PA manifest before writing dest. Off
+            // / unregistered / unsupported-format → returns false
+            // and we fall through to the plain SDL_SaveFile.
+            const char* mimeForHook = nullptr;
+            switch (info.type) {
+                case WorldScreenshotInfo::ScreenshotType::JPG:  mimeForHook = "image/jpeg"; break;
+                case WorldScreenshotInfo::ScreenshotType::PNG:  mimeForHook = "image/png";  break;
+                case WorldScreenshotInfo::ScreenshotType::WEBP: mimeForHook = "image/webp"; break;
+                case WorldScreenshotInfo::ScreenshotType::SVG:  break;  // SVG sidecar in I15
+            }
+            const bool handled = mimeForHook
+                && C2PA::PublishHook::try_save_signed_image(
+                    w->main, info.filePath,
+                    skData->bytes(), skData->size(),
+                    mimeForHook);
+            if (!handled) {
+                if(!SDL_SaveFile(info.filePath.string().c_str(), skData->bytes(), skData->size()))
+                    throw std::runtime_error("SDL_SaveFile failed with error: " + std::string(SDL_GetError()));
+            }
         }
         catch(const std::exception& e) {
             Logger::get().log("WORLDFATAL", std::string("[ScreenshotTool::take_screenshot] Save screenshot error: ") + e.what());
