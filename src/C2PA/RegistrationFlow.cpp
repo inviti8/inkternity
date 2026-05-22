@@ -407,6 +407,172 @@ void RegistrationFlow::render_submit_card(MainProgram& main, WalletPanel& wallet
     }
 }
 
+// ---- I11a: Active branch (rotate + revoke) -------------------------------
+
+namespace {
+
+// Worker for revoke_by_app. No Portal token needed — the artist's
+// own app keypair authorizes via require_auth on the contract side.
+void run_revoke(
+        std::shared_ptr<RegistrationFlow::SubmitResult> result,
+        StellarCli* cli,
+        std::string contract_id,
+        std::string source_account,
+        std::string app_address,
+        Soroban::RpcConfig rpc,
+        std::filesystem::path c2paDir,
+        int64_t expires_at_unix) {
+    Logger::get().log("INFO",
+        "[C2PA::Flow] revoke worker started; rpc=" + rpc.rpc_url);
+    auto r = Soroban::submit_revoke_by_app(*cli, rpc, contract_id,
+        source_account, app_address);
+    if (r.success) {
+        result->tx_hash = r.tx_hash;
+        result->phase.store(RegistrationFlow::SubmitPhase::Success);
+        // Persist Revoked status so the panel self-locks on next render
+        // and survives a restart.
+        KeyStore tmpStore(c2paDir.parent_path());
+        auto state = tmpStore.load_state();
+        state.status = RegistrationStatus::Revoked;
+        state.expires_at_unix = expires_at_unix;
+        tmpStore.save_state(state);
+    } else {
+        result->error = r.error.empty()
+            ? std::string("revoke failed; see log.txt for raw CLI output")
+            : r.error;
+        result->phase.store(RegistrationFlow::SubmitPhase::Failed);
+    }
+}
+
+}  // namespace
+
+void RegistrationFlow::render_active_card(MainProgram& main) {
+    using namespace GUIStuff;
+    using namespace ElementHelpers;
+    auto& gui = main.g.gui;
+    auto& io  = gui.io;
+
+    CLAY_AUTO_ID({
+        .layout = {
+            .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+            .padding = CLAY_PADDING_ALL(io.theme->padding1),
+            .childGap = io.theme->childGap1,
+            .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+    }) {
+        text_label(gui,
+            "This install is registered for verifiable publishing.");
+
+        // Rotate placeholder — full rotation walkthrough lands in
+        // I11b. For now, the button just opens a "coming soon" note
+        // so the artist sees the affordance.
+        text_button(gui, "c2pa flow rotate stub", "Rotate keys", {
+            .wide = true,
+            .onClick = [] {
+                Logger::get().log("USERINFO",
+                    "Rotate keys: full rotation flow lands in I11b. "
+                    "Reinstall + restore from the existing app secret "
+                    "is the current workaround.");
+            },
+        });
+
+        text_button(gui, "c2pa flow revoke open",
+            "Revoke this install's signing keypair", {
+            .wide = true,
+            .onClick = [this] { revokeConfirmOpen_ = true; },
+        });
+    }
+}
+
+void RegistrationFlow::render_revoke_confirm_card(MainProgram& main) {
+    using namespace GUIStuff;
+    using namespace ElementHelpers;
+    auto& gui = main.g.gui;
+    auto& io  = gui.io;
+
+    const auto phase = submit_ ? submit_->phase.load() : SubmitPhase::Idle;
+
+    CLAY_AUTO_ID({
+        .layout = {
+            .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+            .padding = CLAY_PADDING_ALL(io.theme->padding1),
+            .childGap = io.theme->childGap1,
+            .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+    }) {
+        text_label(gui,
+            "Revoking marks this install's signing keypair as untrusted "
+            "on chain. Future canvases + exports won't carry verifiable "
+            "provenance until you re-register. Files you've already "
+            "exported continue to verify, but viewers will see them as "
+            "'Revoked'.");
+        text_label(gui,
+            "This action cannot be undone — revoking and re-registering "
+            "requires a fresh on-chain submission.");
+
+        switch (phase) {
+        case SubmitPhase::Idle: {
+            text_button(gui, "c2pa flow revoke confirm",
+                "Yes, revoke on chain", {
+                .wide = true,
+                .onClick = [this, &main] {
+                    if (submit_ &&
+                        submit_->phase.load() == SubmitPhase::InFlight) return;
+                    const auto net = main.conf.stellarNetwork;
+                    const std::string contract_id =
+                        reg_.cert_registry_id(net);
+                    const auto rpc =
+                        Soroban::config_for_env_or_global(main.conf);
+
+                    submit_ = std::make_shared<SubmitResult>();
+                    submit_->phase.store(SubmitPhase::InFlight);
+
+                    if (submitThread_.joinable()) submitThread_.detach();
+                    submitThread_ = std::thread(run_revoke,
+                        submit_,
+                        &cli_,
+                        contract_id,
+                        main.devKeys.app_pubkey(),
+                        main.devKeys.app_pubkey(),
+                        rpc,
+                        store_.c2pa_dir(),
+                        ca_.expires_at_unix());
+                },
+            });
+            text_button(gui, "c2pa flow revoke cancel", "Cancel", {
+                .wide = true,
+                .onClick = [this] { revokeConfirmOpen_ = false; },
+            });
+            break;
+        }
+        case SubmitPhase::InFlight:
+            text_label(gui,
+                "Revoking on chain... (network round-trip)");
+            break;
+        case SubmitPhase::Success:
+            // Next render() pass will see status=Revoked and switch
+            // to the revoked-acknowledgement message. Surface the
+            // tx_hash here for forensic clarity.
+            text_label(gui,
+                ("Revoked. tx_hash=" + (submit_->tx_hash.empty()
+                    ? std::string("<none-parsed>") : submit_->tx_hash)).c_str());
+            break;
+        case SubmitPhase::Failed:
+            text_label(gui,
+                ("Revocation failed: " + submit_->error).c_str());
+            text_button(gui, "c2pa flow revoke retry", "Try again", {
+                .wide = true,
+                .onClick = [this] { submit_.reset(); },
+            });
+            break;
+        }
+    }
+}
+
 // ---- Top-level render ----------------------------------------------------
 
 void RegistrationFlow::render(MainProgram& main, WalletPanel& wallet) {
@@ -420,15 +586,25 @@ void RegistrationFlow::render(MainProgram& main, WalletPanel& wallet) {
         return;
     }
 
-    // Skip the walkthrough entirely once registration is Active.
+    // Once Active, swap the walkthrough for the rotate/revoke surface.
     auto state = store_.load_state();
     if (state.status == RegistrationStatus::Active) {
+        render_active_card(main);
+        if (revokeConfirmOpen_) {
+            render_revoke_confirm_card(main);
+        }
+        return;
+    }
+
+    // Status flipped to Revoked (by a successful submit_revoke_by_app
+    // in this session, or persisted from a prior one). Walkthrough
+    // hidden; one-line acknowledgement.
+    if (state.status == RegistrationStatus::Revoked) {
         using namespace GUIStuff;
         using namespace ElementHelpers;
         text_label(main.g.gui,
-            "Your install is registered for verifiable publishing. "
-            "Manage rotation or revocation below.");
-        // I11 attaches the rotate/revoke UI here.
+            "This install's signing keypair has been revoked. Prior "
+            "exports remain verifiable as 'Revoked' until they expire.");
         return;
     }
 

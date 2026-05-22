@@ -73,7 +73,42 @@ std::optional<bool> is_trusted(
     std::string_view app_address,
     const std::array<uint8_t, 32>& fingerprint);
 
-// rotate / revoke / get_app_ca wrappers follow the same shape — added
-// when I11 (rotate/revoke UI) and I16 (verifier on import) need them.
+// rotate_app_ca — replace the app's currently-registered fingerprint +
+// expiry with a fresh one. Member-signed auth (same shape as register).
+// `auth_payload` + `auth_signature` are pass-through bytes from a
+// HVYM-CA-ROT-v1 wire token; the contract reconstructs canonical
+// payload from typed params and byte-compares (§G3).
+InvokeResult submit_rotate(
+    const StellarCli& cli,
+    const RpcConfig& rpc,
+    std::string_view contract_id,
+    std::string_view source_account,
+    std::string_view app_address,
+    const std::array<uint8_t, 32>& new_fingerprint,
+    uint64_t new_expires_at,
+    uint64_t nonce,
+    const std::vector<uint8_t>& auth_payload,
+    const std::vector<uint8_t>& auth_signature);
+
+// revoke_by_app — the app self-revokes via require_auth. No Portal
+// token required (the app's own Stellar key signs the tx, contract
+// checks the source matches the stored app_address). Simplest of the
+// three state-changing entry points.
+InvokeResult submit_revoke_by_app(
+    const StellarCli& cli,
+    const RpcConfig& rpc,
+    std::string_view contract_id,
+    std::string_view source_account,
+    std::string_view app_address);
+
+// get_app_ca view — fetch the full on-chain record for an app
+// address. Returned as raw CLI output for now; the typed struct
+// extractor lands when I16's verifier needs it.
+std::optional<std::string> get_app_ca_raw(
+    const StellarCli& cli,
+    const RpcConfig& rpc,
+    std::string_view contract_id,
+    std::string_view source_account,
+    std::string_view app_address);
 
 }  // namespace C2PA::Soroban

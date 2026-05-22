@@ -242,4 +242,127 @@ std::optional<bool> is_trusted(
     return result;
 }
 
+InvokeResult submit_rotate(
+        const StellarCli& cli,
+        const RpcConfig& rpc,
+        std::string_view contract_id,
+        std::string_view source_account,
+        std::string_view app_address,
+        const std::array<uint8_t, 32>& new_fingerprint,
+        uint64_t new_expires_at,
+        uint64_t nonce,
+        const std::vector<uint8_t>& auth_payload,
+        const std::vector<uint8_t>& auth_signature) {
+    InvokeResult r;
+    Logger::get().log("INFO",
+        "[C2PA::Soroban] submit_rotate: contract=" + std::string(contract_id)
+        + " app=" + std::string(app_address)
+        + " nonce=" + std::to_string(nonce)
+        + " rpc=" + rpc.rpc_url);
+
+    if (auth_signature.size() != 64) {
+        r.error = "auth_signature must be 64 bytes";
+        Logger::get().log("INFO", "[C2PA::Soroban] " + r.error);
+        return r;
+    }
+    if (cli.binary_path().empty()) {
+        r.error = "stellar CLI not available";
+        Logger::get().log("INFO", "[C2PA::Soroban] " + r.error);
+        return r;
+    }
+
+    auto argv = base_invoke_args(rpc, contract_id, source_account, /*send_no=*/false);
+    argv.emplace_back("rotate_app_ca");
+    argv.emplace_back("--app_address");     argv.emplace_back(std::string(app_address));
+    argv.emplace_back("--new_fingerprint"); argv.emplace_back(hex_lower_of_array32(new_fingerprint));
+    argv.emplace_back("--new_expires_at");  argv.emplace_back(std::to_string(new_expires_at));
+    argv.emplace_back("--nonce");           argv.emplace_back(std::to_string(nonce));
+    argv.emplace_back("--auth_payload");    argv.emplace_back(hex_lower_of_vec(auth_payload));
+    argv.emplace_back("--auth_signature");  argv.emplace_back(hex_lower_of_vec(auth_signature));
+
+    auto out = cli.invoke(argv);
+    r.raw_out = std::move(out.out);
+    r.tx_hash = find_tx_hash(r.raw_out);
+    if (out.ok()) {
+        r.success = true;
+        Logger::get().log("INFO",
+            "[C2PA::Soroban] submit_rotate OK tx_hash="
+            + (r.tx_hash.empty() ? "<none-parsed>" : r.tx_hash));
+    } else {
+        r.error = "stellar contract invoke exited " + std::to_string(out.exit_code);
+        if (out.spawn_failed) r.error = "subprocess spawn failed";
+        Logger::get().log("WORLDFATAL",
+            "[C2PA::Soroban] submit_rotate FAILED: " + r.error
+            + "\n--- raw output ---\n" + r.raw_out);
+    }
+    return r;
+}
+
+InvokeResult submit_revoke_by_app(
+        const StellarCli& cli,
+        const RpcConfig& rpc,
+        std::string_view contract_id,
+        std::string_view source_account,
+        std::string_view app_address) {
+    InvokeResult r;
+    Logger::get().log("INFO",
+        "[C2PA::Soroban] submit_revoke_by_app: contract=" + std::string(contract_id)
+        + " app=" + std::string(app_address)
+        + " rpc=" + rpc.rpc_url);
+
+    if (cli.binary_path().empty()) {
+        r.error = "stellar CLI not available";
+        Logger::get().log("INFO", "[C2PA::Soroban] " + r.error);
+        return r;
+    }
+
+    // No Portal token needed: revoke_by_app uses require_auth on the
+    // app's own keypair (matches mock_c2pa/register.py:219-235).
+    auto argv = base_invoke_args(rpc, contract_id, source_account, /*send_no=*/false);
+    argv.emplace_back("revoke_by_app");
+    argv.emplace_back("--app_address"); argv.emplace_back(std::string(app_address));
+
+    auto out = cli.invoke(argv);
+    r.raw_out = std::move(out.out);
+    r.tx_hash = find_tx_hash(r.raw_out);
+    if (out.ok()) {
+        r.success = true;
+        Logger::get().log("INFO",
+            "[C2PA::Soroban] submit_revoke_by_app OK tx_hash="
+            + (r.tx_hash.empty() ? "<none-parsed>" : r.tx_hash));
+    } else {
+        r.error = "stellar contract invoke exited " + std::to_string(out.exit_code);
+        if (out.spawn_failed) r.error = "subprocess spawn failed";
+        Logger::get().log("WORLDFATAL",
+            "[C2PA::Soroban] submit_revoke_by_app FAILED: " + r.error
+            + "\n--- raw output ---\n" + r.raw_out);
+    }
+    return r;
+}
+
+std::optional<std::string> get_app_ca_raw(
+        const StellarCli& cli,
+        const RpcConfig& rpc,
+        std::string_view contract_id,
+        std::string_view source_account,
+        std::string_view app_address) {
+    Logger::get().log("INFO",
+        "[C2PA::Soroban] get_app_ca: app=" + std::string(app_address)
+        + " rpc=" + rpc.rpc_url);
+    if (cli.binary_path().empty()) return std::nullopt;
+
+    auto argv = base_invoke_args(rpc, contract_id, source_account, /*send_no=*/true);
+    argv.emplace_back("get_app_ca");
+    argv.emplace_back("--app_address"); argv.emplace_back(std::string(app_address));
+
+    auto out = cli.invoke(argv);
+    if (!out.ok()) {
+        Logger::get().log("INFO",
+            "[C2PA::Soroban] get_app_ca exit=" + std::to_string(out.exit_code)
+            + " out=" + out.out);
+        return std::nullopt;
+    }
+    return out.out;
+}
+
 }  // namespace C2PA::Soroban

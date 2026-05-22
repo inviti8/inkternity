@@ -69,11 +69,14 @@ public:
 
 private:
     void render_bundle_card(MainProgram& main);
-    // Stubs added by I10b / I10c — declared here so the unique IDs
-    // for the Clay layout stay stable across the upcoming commits.
     void render_paste_card(MainProgram& main);
     void render_funding_card(MainProgram& main, WalletPanel& wallet);
     void render_submit_card(MainProgram& main, WalletPanel& wallet);
+    // I11a: rotate + revoke surface, shown only when state.status
+    // is Active. Reuses the submit_ shared_ptr / worker-thread
+    // pattern from the registration submit path.
+    void render_active_card(MainProgram& main);
+    void render_revoke_confirm_card(MainProgram& main);
 
     // Backend modules (long-lived per session).
     StellarCli cli_;
@@ -106,6 +109,12 @@ private:
     // declared above (publicly).
     std::shared_ptr<SubmitResult> submit_;
     std::thread                   submitThread_;
+
+    // I11a revoke-confirm latch. Two-click guard: first click on the
+    // "Revoke registration" button flips this on and shows a hard
+    // confirmation; second click on the confirm button fires
+    // submit_revoke_by_app via the worker. Cancel button resets.
+    bool                          revokeConfirmOpen_ = false;
 };
 
 }  // namespace C2PA
