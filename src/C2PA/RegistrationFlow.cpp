@@ -281,7 +281,7 @@ void RegistrationFlow::render_funding_card(MainProgram& main, WalletPanel& walle
             "Refresh balance", {
             .wide = true,
             .onClick = [&main, &wallet] {
-                wallet.refresh_balance(main.devKeys.app_pubkey());
+                wallet.refresh_balance(main, main.devKeys.app_pubkey());
             },
         });
     }

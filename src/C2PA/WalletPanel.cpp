@@ -23,11 +23,33 @@ std::string WalletPanel::horizon_base_url() {
     return "https://horizon.stellar.org";
 }
 
+std::string WalletPanel::horizon_base_url(MainProgram& main) {
+    // Env override wins for dev / smoke testing.
+    if (const char* env = std::getenv("STELLAR_NETWORK")) {
+        if (std::strcmp(env, "testnet") == 0)
+            return "https://horizon-testnet.stellar.org";
+        if (std::strcmp(env, "mainnet") == 0)
+            return "https://horizon.stellar.org";
+    }
+    return main.conf.stellarNetwork == GlobalConfig::StellarNetwork::Testnet
+        ? "https://horizon-testnet.stellar.org"
+        : "https://horizon.stellar.org";
+}
+
 void WalletPanel::refresh_balance(const std::string& app_pubkey) {
     if (state_ == FetchState::InFlight) return;
     if (app_pubkey.empty()) return;
 
     const std::string url = horizon_base_url() + "/accounts/" + app_pubkey;
+    pendingFetch_ = FileDownloader::download_data_from_url(url);
+    state_ = FetchState::InFlight;
+}
+
+void WalletPanel::refresh_balance(MainProgram& main, const std::string& app_pubkey) {
+    if (state_ == FetchState::InFlight) return;
+    if (app_pubkey.empty()) return;
+
+    const std::string url = horizon_base_url(main) + "/accounts/" + app_pubkey;
     pendingFetch_ = FileDownloader::download_data_from_url(url);
     state_ = FetchState::InFlight;
 }

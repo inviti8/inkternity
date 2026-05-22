@@ -488,7 +488,7 @@ void FileSelectScreen::verifiable_publishing_section() {
             // a Horizon balance probe so the wallet panel has data to
             // show without waiting for an explicit Refresh click.
             if (!c2paWalletPrevEnabled && main.devKeys.is_loaded()) {
-                c2paWalletPanel.refresh_balance(main.devKeys.app_pubkey());
+                c2paWalletPanel.refresh_balance(main, main.devKeys.app_pubkey());
             }
             c2paWalletPanel.render(main);
 

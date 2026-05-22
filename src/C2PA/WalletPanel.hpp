@@ -39,11 +39,18 @@ public:
     // Kick off an async Horizon GET for the given G-address. No-op if a
     // request is already in flight. Internal state cleared on success
     // or failure; render() reflects the result on the next frame.
+    // The MainProgram& overload picks the network from
+    // GlobalConfig::stellarNetwork (with STELLAR_NETWORK env override
+    // for dev); the legacy single-arg form is kept for callers that
+    // don't have a MainProgram in scope (env-var-only path).
+    void refresh_balance(MainProgram& main, const std::string& app_pubkey);
     void refresh_balance(const std::string& app_pubkey);
 
-    // Test-only hook — the network selector. Honors STELLAR_NETWORK env
-    // var; "testnet" → horizon-testnet.stellar.org, else mainnet.
+    // Network selector. Honors STELLAR_NETWORK env var ("testnet" →
+    // horizon-testnet.stellar.org), else the persisted
+    // GlobalConfig::stellarNetwork knob, else mainnet.
     static std::string horizon_base_url();
+    static std::string horizon_base_url(MainProgram& main);
 
     // True iff the last successful Horizon read found a native XLM
     // balance on the account. Consumed by RegistrationFlow's Step 3
