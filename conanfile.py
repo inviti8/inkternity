@@ -117,6 +117,13 @@ class CompressorRecipe(ConanFile):
         if self.settings.os != "Emscripten":
             self.requires("libdatachannel/0.23.2")
             self.requires("libcurl/8.17.0")
+            # C2PA app-CA + per-publish leaf cert generation (docs/design/C2PA.md §8.1).
+            # libcrypto only — used for X.509 build/sign/parse + DER encode. Wire-token
+            # ed25519 stays on tweetnacl. Already pulled transitively by libcurl on
+            # native platforms; making it explicit so find_package(OpenSSL) resolves
+            # cleanly for the new src/C2PA/ TU. Pinned to match libcurl's current
+            # transitive choice (avoid double-version conflicts).
+            self.requires("openssl/3.6.2")
 
         # libmypaint (vendored under deps/libmypaint) needs json-c for brush
         # serialization. Disabled on Emscripten (no web target for brushes yet).

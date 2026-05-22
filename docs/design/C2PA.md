@@ -359,7 +359,9 @@ to the drawing screen.
 
 ### 8.1 X.509 — OpenSSL libcrypto
 
-Add `openssl/3.3.2` to `conanfile.py`. Rationale: X.509 extension
+Add `openssl/3.6.2` to `conanfile.py` (matches libcurl/8.17.0's
+current transitive choice — avoids a double-version conflict).
+Rationale: X.509 extension
 build is stock libcrypto one-liners (the Python reference
 `mock_c2pa/andromica/ca_generation.py` maps line-for-line);
 libcurl on Windows/Linux is already built against OpenSSL —
@@ -533,7 +535,7 @@ All §10 questions resolved. Ready for implementation per §12.
 | # | Task | Est. | Deps |
 |---|---|---|---|
 | **I0** | **P0 — fix broken screenshot save** in `world_take_screenshot` (`src/WorldScreenshot.cpp:35`). UI runs end-to-end but no file is written. Root-cause (likely empty `info.filePath`, silent Skia encode failure, or `SDL_SaveFile` swallow), fix the underlying issue, surface user-visible error on the failure path that today just logs `WORLDFATAL`. **Blocker for I14 + export half of I17** — no point wiring a signing hook into a save path that doesn't save. Strictly bug fix, no signing logic. | ½–1 day | — |
-| I1 | Add `openssl/3.3.2` to `conanfile.py`. Verify cross-platform build (Windows MSVC + macOS clang + Linux gcc). | ½ day | — |
+| I1 | Add `openssl/3.6.2` to `conanfile.py` (matches the libcurl/8.17.0 transitive choice). Verify cross-platform build (Windows MSVC + macOS clang + Linux gcc). | ½ day | — |
 | I2 | `src/C2PA/AppCa.{hpp,cpp}` — generate Ed25519 X.509 with the four extensions. Unit-test by parsing the output with `mock_c2pa/andromica/ca_generation.py::verify_chain` (Python smoke harness against the C++-emitted DER). | 1 day | I1 |
 | I3 | `src/C2PA/KeyStore.{hpp,cpp}` — disk persistence, file modes, status JSON. | ½ day | I2 |
 | I4 | `src/C2PA/Bundle.{hpp,cpp}` + cross-repo fixtures with `cert_registry_bundle.py`. **Gate G1.** | ½ day | I2 |
