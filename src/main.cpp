@@ -10,6 +10,7 @@
 #include "C2PA/Manifest.hpp"
 #include "C2PA/Registry.hpp"
 #include "C2PA/StellarCli.hpp"
+#include "C2PA/Verifier.hpp"
 #include "VersionConstants.hpp"
 
 extern "C" {
@@ -410,6 +411,29 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         }
     }
 #endif // HVYM_HAS_LIBMYPAINT
+
+    // C2PA bridge: smoke-test the Verifier on a path. Writes
+    // {status, title, generator, detail} to a report file.
+    //   --c2pa-verify-test <src> <report>
+    {
+        for (int i = 1; i + 2 < argc; ++i) {
+            const std::string_view flag(argv[i]);
+            if (flag == "--c2pa-verify-test") {
+                const std::filesystem::path src(argv[i + 1]);
+                const std::filesystem::path rpt(argv[i + 2]);
+                Logger::get().add_log("INFO",       [](const std::string&) {});
+                Logger::get().add_log("WORLDFATAL", [](const std::string&) {});
+                Logger::get().add_log("USERINFO",   [](const std::string&) {});
+                auto vr = C2PA::verify_file(src);
+                std::ofstream f(rpt, std::ios::binary | std::ios::trunc);
+                f << "status="    << C2PA::verify_status_str(vr.status) << "\n";
+                f << "title="     << vr.title     << "\n";
+                f << "generator=" << vr.generator << "\n";
+                f << "detail="    << vr.detail    << "\n";
+                return SDL_APP_SUCCESS;
+            }
+        }
+    }
 
     // C2PA bridge: smoke-test the sidecar path. Takes an arbitrary
     // source file + format hint, writes <src>.c2pa next to it.

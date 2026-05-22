@@ -1,4 +1,5 @@
 #include "MainProgram.hpp"
+#include "C2PA/Verifier.hpp"
 #include "CustomEvents.hpp"
 #include "VersionConstants.hpp"
 #include <SDL3/SDL_render.h>
@@ -272,6 +273,27 @@ void MainProgram::create_new_tab(const CustomEvents::OpenInfiniPaintFileEvent& o
     worlds.emplace_back(newWorld);
     switch_to_tab(worlds.size() - 1);
     g.gui.set_to_layout();
+
+    // C2PA verifier-on-open (docs/design/C2PA.md §I16). Inspects the
+    // file for an embedded C2PA manifest. NoManifest is the common
+    // case (unsigned files) and intentionally silent. Sidecar checks
+    // for .inkternity / SVG are deferred — see I15 known gap.
+    if (openFile.filePathSource.has_value()) {
+        const auto vr = C2PA::verify_file(openFile.filePathSource.value());
+        switch (vr.status) {
+            case C2PA::VerifyStatus::NoManifest:
+                break;  // silent — most files are unsigned
+            case C2PA::VerifyStatus::ManifestMalformed:
+            case C2PA::VerifyStatus::SignatureInvalid:
+                Logger::get().log("WORLDFATAL",
+                    std::string("Provenance: ") + vr.detail);
+                break;
+            case C2PA::VerifyStatus::TrustedLocal:
+                Logger::get().log("USERINFO",
+                    std::string("Provenance: ") + vr.detail);
+                break;
+        }
+    }
 
     // §4.4 step 6: auto-resume hosting in foreground for continuity.
     // The side-instance was serving on the canvas-seed-derived globalID;
