@@ -678,6 +678,23 @@ if(APPLE OR WIN32)
 
     install(TARGETS main DESTINATION .)
 
+    # Stage the c2pa-rs shared lib alongside the binary so CPack
+    # (NSIS / DragNDrop) bundles it into the installer. The
+    # add_custom_command(POST_BUILD copy_if_different) above only
+    # helps local dev runs out of the build tree — without an
+    # install rule the shipped installer has no c2pa_c.dll /
+    # libc2pa_c.dylib and the loader bails at first launch
+    # ("code execution cannot proceed because c2pa_c.dll was not
+    # found" — rc2 Windows postmortem). Must be declared BEFORE
+    # the macOS codesign install(CODE) below so the dylib is on
+    # disk when codesign --deep walks the bundle.
+    if(APPLE)
+        install(FILES "${C2PA_RS_SHLIB_PATH}"
+                DESTINATION "inkternity.app/Contents/MacOS")
+    else()
+        install(FILES "${C2PA_RS_SHLIB_PATH}" DESTINATION .)
+    endif()
+
     # Apple: codesign the *staged* .app from inside the install step so
     # signing is the last thing that touches the binary before CPack
     # wraps it in a DMG. Workflow passes the Developer ID Application
@@ -761,6 +778,12 @@ elseif(WIN32)
 else()
     install(DIRECTORY assets/data DESTINATION bin)
     install(TARGETS main DESTINATION bin)
+    # Bundle libc2pa_c.so next to the binary inside the Flatpak's
+    # /app/bin. $ORIGIN on main's runpath lets the ELF loader resolve
+    # the sibling .so without depending on /app/lib being on the
+    # runtime's default library search path.
+    install(FILES "${C2PA_RS_SHLIB_PATH}" DESTINATION bin)
+    set_property(TARGET main APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
     install(FILES linuxinstall/com.inkternity.inkternity.desktop DESTINATION share/applications)
     install(FILES logo.svg DESTINATION share/icons/hicolor/scalable/apps RENAME com.inkternity.inkternity.svg)
     install(FILES logo.svg DESTINATION share/icons/hicolor/scalable/mimetypes RENAME com.inkternity.inkternity-application-inkternity.svg)
