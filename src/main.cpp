@@ -5,6 +5,8 @@
 #include "Screens/FileSelectScreen.hpp"
 #include "Screens/DesktopDrawingProgramScreen.hpp"
 #include "Screens/PhoneDrawingProgramScreen.hpp"
+#include "C2PA/AppCa.hpp"
+#include "C2PA/LeafIssuer.hpp"
 #include "C2PA/Registry.hpp"
 #include "C2PA/StellarCli.hpp"
 #include "VersionConstants.hpp"
@@ -403,6 +405,42 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         }
     }
 #endif // HVYM_HAS_LIBMYPAINT
+
+    // C2PA bridge: smoke-test the LeafIssuer path. Generates a fresh
+    // CA + a fresh leaf signed by that CA, writes both DER blobs to
+    // the named output paths. Lets us round-trip through
+    // mock_c2pa/andromica/ca_generation.py::verify_chain externally.
+    //   --c2pa-leaf-test <ca.der> <leaf.der>
+    {
+        for (int i = 1; i + 2 < argc; ++i) {
+            const std::string_view flag(argv[i]);
+            if (flag == "--c2pa-leaf-test") {
+                const std::filesystem::path caPath(argv[i + 1]);
+                const std::filesystem::path leafPath(argv[i + 2]);
+                C2PA::AppCa ca = C2PA::AppCa::generate(
+                    "Inkternity",
+                    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+                if (!ca.valid()) return SDL_APP_FAILURE;
+                C2PA::MemberLeaf leaf = C2PA::issue_leaf(ca,
+                    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+                    "Smoke Test Member");
+                if (!leaf.valid()) return SDL_APP_FAILURE;
+                {
+                    std::ofstream f(caPath, std::ios::binary | std::ios::trunc);
+                    auto der = ca.der_bytes();
+                    f.write(reinterpret_cast<const char*>(der.data()),
+                            static_cast<std::streamsize>(der.size()));
+                }
+                {
+                    std::ofstream f(leafPath, std::ios::binary | std::ios::trunc);
+                    const auto& der = leaf.cert_der();
+                    f.write(reinterpret_cast<const char*>(der.data()),
+                            static_cast<std::streamsize>(der.size()));
+                }
+                return SDL_APP_SUCCESS;
+            }
+        }
+    }
 
     // C2PA bridge: probe the stellar CLI (PATH + cache) and print the
     // resolved state. Used to smoke-test the auto-install path without
