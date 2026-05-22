@@ -380,39 +380,75 @@ Emscripten: C2PA features gated off in the web build — file IO
 already branches at `src/World.cpp:719-723` and
 `src/WorldScreenshot.cpp:91-99`.
 
-### 8.2 Soroban RPC — hand-rolled libcurl + scval encoder
+### 8.2 Soroban RPC — shell-out to `stellar` CLI with auto-install
 
-No mature C++ Stellar SDK on Conan. Shelling out to the
-`stellar` CLI adds a binary dependency we'd have to ship + a
-cross-platform PATH surface to own. The scval surface is tiny:
-seven kinds across four entry points + two views (Address,
-BytesN<32>, BytesN<64>, String, U64, Bytes, enum AppKind). XDR is
-fixed-shape big-endian; ~250 LoC encode/decode, referenced
-against `mock_c2pa/register.py:167-263`.
+**Revised 2026-05-21.** §10/Q11's original resolution to hand-roll
+libcurl + scval underestimated the real porting surface — building
+a `TransactionEnvelope` from scratch (signed, simulation-applied,
+auth-validated) is closer to 10K LOC of stellar-sdk-equivalent
+work than the ~250 LOC the plan claimed. Founder decision: pivot
+to shelling out to the official `stellar` CLI as a subprocess.
+
+Auto-install handles the "binary dependency to ship" concern:
+
+1. **PATH probe first.** If the artist has a system `stellar` (e.g.
+   from `cargo install --locked stellar-cli`), use it as-is.
+2. **Cache check.** `<configPath>/c2pa/bin/stellar[.exe]` survives
+   reinstalls of Inkternity and is per-config-path (per OS user).
+3. **GitHub Releases auto-install.** Download
+   `stellar-cli-<PINNED_VERSION>-<rust-triple>.<ext>` from
+   `github.com/stellar/stellar-cli/releases`, extract via `tar` (on
+   Win10 1803+ this ships as `System32\tar.exe`), move the
+   resulting `stellar[.exe]` to the cache dir, set the executable
+   bit on POSIX, verify with `stellar --version`. State machine:
+   `Idle → Downloading → Extracting → Verifying → Done|Failed`.
+
+`src/C2PA/StellarCli.{hpp,cpp}` is the binary manager (I8a).
+`src/C2PA/SorobanSubmit.{hpp,cpp}` (I8b) is a thin wrapper around
+`stellar contract invoke ... -- <fn> --arg1 v1 --arg2 v2 ...` for
+each contract entry point.
 
 ```cpp
 namespace C2PA::Soroban {
-struct RpcConfig { std::string rpc_url, network_passphrase; };
 struct InvokeResult {
     enum class Status { Pending, Success, Failed } status;
-    std::string tx_hash, error_xdr;
-    std::vector<uint8_t> return_value_xdr;  // views only
+    std::string tx_hash, error;
+    std::string raw_out;     // captured stellar CLI stdout for forensics
 };
-std::future<InvokeResult> submit_register(const RpcConfig&,
-    const Stellar::Seed& app_secret, BytesN<32> member_pubkey,
-    AppKind kind, BytesN<32> fingerprint, uint64_t expires_at,
-    uint64_t nonce, std::vector<uint8_t> auth_payload,
-    BytesN<64> auth_signature);
-std::optional<AppCaRecord> get_app_ca(const RpcConfig&, std::string_view app_addr);
-bool is_trusted(const RpcConfig&, std::string_view app_addr, BytesN<32> fp);
+InvokeResult submit_register(const StellarCli&, std::string_view rpc_url,
+    std::string_view network_passphrase, std::string_view contract_id,
+    std::string_view app_secret_s_strkey,    // funded source account
+    BytesN<32> member_pubkey, AppKind, BytesN<32> fingerprint,
+    uint64_t expires_at, uint64_t nonce,
+    const std::vector<uint8_t>& auth_payload,
+    const std::vector<uint8_t>& auth_signature);
+std::optional<AppCaRecord> get_app_ca(const StellarCli&, ...);
+bool is_trusted(const StellarCli&, ...);
 }
 ```
 
-Async via `std::future` on a single worker thread queue (matches
-`FileDownloader`). Transaction signing uses
-`crypto_sign_detached` over the seed in
-`DevKeys::app_seed_bytes()` (`src/DevKeys.hpp:111`). Network
-selection: §10/Q3.
+Network selection (`STELLAR_NETWORK=testnet` or
+`GlobalConfig::stellarNetwork` per §10/Q3) feeds the `--rpc-url`
++ `--network-passphrase` flags directly. Source signing is
+delegated to the CLI: we pass `--source-account S...` and the CLI
+handles tx assembly, simulation, signing, and submission. No
+in-process XDR encoding survives.
+
+Trade-offs explicitly accepted:
+- **+30-50 MB per platform** when auto-install runs (the `stellar`
+  binary). Acceptable for the feature it unlocks; the artist with
+  a Rust toolchain installed pays zero (PATH path).
+- **Subprocess overhead per call** (~200 ms cold start). Each
+  Soroban round-trip on testnet is multiple seconds anyway, so
+  amortized cost is invisible.
+- **CLI-version drift** if Stellar ships a breaking flag change.
+  `PINNED_VERSION` in `StellarCli.hpp` is the recovery knob —
+  bump + ship a release.
+
+Long-term migration path: the §10/Q11 follow-up (C-FFI to Rust
+`soroban-client`) becomes attractive once we're already pulling
+Rust in for `c2pa-rs`. Revisit between I13 and the next release
+cycle.
 
 ### 8.3 C2PA manifest embed — `c2pa-rs` FFI (preferred) or `c2patool` shell (fallback)
 
@@ -478,21 +514,21 @@ Resolved 2026-05-21 by founder:
     pattern is a separate structural change, not blocked on this
     plan.
 
-11. **Soroban surface in C++ — hand-rolled scval vs C-FFI to Rust SDK
-    vs port/transpile Python.** **Resolved: hand-rolled libcurl +
-    scval (§8.2 default) for v1.** ~250 LoC, mirrors
-    `mock_c2pa/register.py` line-for-line, no external runtime
-    deps. Transpilation rejected (no production-grade Python→C++
-    transpiler exists; `stellar-sdk` is ~10k+ LoC of Python
-    tightly coupled to CPython). The Python reference doesn't use
-    generated contract bindings either — it hand-rolls scval
-    directly over `stellar-sdk`'s XDR primitives, which is the
-    pattern we mirror. **C-FFI to Rust `soroban-client` deferred
-    as a possible fast follow-up** once `c2pa-rs` lands Rust in
-    the build (revisit between I8 and I13). Registry discovery
-    rides the same hand-rolled scval encoder: one extra view call
-    (lazy, cached per session, with the §0 hardcoded fallback if
-    the registry view fails).
+11. **Soroban surface in C++.** **Re-resolved 2026-05-21: shell out
+    to the `stellar` CLI with auto-install on first need** (§8.2
+    revised). Initial resolution was hand-rolled libcurl + scval
+    on a "~250 LoC, mirrors register.py" assumption. Implementation
+    pass surfaced the actual scope: full TransactionEnvelope XDR,
+    transaction simulation + footprint apply, network-passphrase
+    signing, sendTransaction polling — closer to 10K LOC of work
+    rather than 250. Pivot keeps the desktop submitter realistic for
+    v1 while leaving the door open to the C-FFI-to-Rust follow-up
+    once `c2pa-rs` lands Rust in the build (revisit between I13 and
+    the next release). Auto-install handles the cross-platform
+    binary-shipping concern: PATH probe first, then per-OS-user
+    cache, then GitHub Releases download. Registry discovery (§9)
+    rides the same CLI: one `stellar contract invoke -- get_record`
+    view per session, cached.
 
 All §10 questions resolved. Ready for implementation per §12.
 
@@ -542,7 +578,8 @@ All §10 questions resolved. Ready for implementation per §12.
 | I5 | `src/C2PA/WireToken.{hpp,cpp}` — parse Portal token, cross-check fields, expose opaque auth_payload bytes. **Gate G3 setup.** | ½ day | — |
 | I6 | Gateway toggle: add `GlobalConfig::verifiablePublishingEnabled` field + JSON serialize. Wire to `FileSelectScreen::settings_view`. Add toggle UI; everything below it stays hidden when off. | ½ day | — |
 | I7 | Wallet panel: balance polling via `FileDownloader` against Horizon `/accounts/{G…}`. Funding-address Copy + QR (reuse `CanvasShareId` Skia QR primitive). | 1 day | I6 |
-| I8 | `src/C2PA/SorobanSubmit.{hpp,cpp}` — RPC client, scval encoder, async future. Test against testnet RPC with a fixture transaction. **Gate G4.** | 3 days | I1 |
+| I8a | `src/C2PA/StellarCli.{hpp,cpp}` — pinned-version GitHub-Releases auto-install + subprocess invoker. Smoke flag `--c2pa-stellar-probe`. (Pivot from hand-rolled libcurl + scval per §8.2 revised + §10/Q11 re-resolved.) | 1 day | — |
+| I8b | `src/C2PA/SorobanSubmit.{hpp,cpp}` — thin wrappers around `stellar contract invoke` for register/rotate/revoke + get_app_ca/is_trusted views. **Gate G4.** | 1 day | I8a |
 | I9 | `src/C2PA/Registry.{hpp,cpp}` — `hvym_registry` resolve + fallback. | ½ day | I8 |
 | I10 | First-run registration walkthrough UI (steps 1–4 of §3.4) wired through I2 + I4 + I5 + I7 + I8. End-to-end smoke against testnet via `heavymeta_collective/scripts/c2pa_smoke.py`. **Gate G5.** | 2 days | I2, I4, I5, I7, I8 |
 | I11 | Rotation + revocation UI + submit paths (§3.5, §3.6). | 1 day | I10 |
