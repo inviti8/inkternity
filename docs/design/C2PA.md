@@ -64,8 +64,9 @@ already exists in this tree:
 What's actually new: a C++ port of
 `mock_c2pa/andromica/ca_generation.py` (OpenSSL libcrypto, §8.1); a
 bundle emitter; a Soroban RPC submit path over libcurl with
-hand-rolled scval (§8.2); per-publish leaf issuance + `c2pa-rs`
-manifest embed (§8.3); an import-side verifier; the gateway toggle
+hand-rolled scval (§8.2); per-publish leaf issuance + prebuilt
+c2pa-rs C ABI for manifest embed (§8.3); an import-side verifier;
+the gateway toggle
 (§3.2 / §B).
 
 ### 1.1 P0 prerequisite — screenshot save is broken
@@ -101,7 +102,7 @@ is independent and not affected by this bug.
 | `src/C2PA/SorobanSubmit.{hpp,cpp}` | ~600 | Minimal Soroban RPC client over `libcurl` POST. JSON-RPC `simulateTransaction` + `sendTransaction` + `getTransaction`. Hand-rolled scval XDR encoding for `Address` / `BytesN<32>` / `BytesN<64>` / `String` / `U64` / `Bytes` (the only types needed across all four entry points). Read views `get_app_ca` + `is_trusted` decode the response scval to a typed struct. Authoritative shape reference: `mock_c2pa/register.py:145-310`. |
 | `src/C2PA/Registry.{hpp,cpp}` | ~120 | Resolve the cert-registry contract ID via `hvym_registry` (per the user-instruction discovery requirement). Reads testnet vs mainnet from existing config knob (TBD — see §10/Q3). Caches across a session. Falls back to the hardcoded testnet/mainnet IDs from §0 if the registry lookup fails (matches Portal behavior in `heavymeta_collective/config.py`). |
 | `src/C2PA/LeafIssuer.{hpp,cpp}` | ~200 | Per-publish ephemeral leaf: generate Ed25519 keypair → build minimal CSR (CN/O/OU + SAN `URI:stellar:G…` + EKU `1.3.6.1.4.1.42038.1.5.0`) → sign with the app CA key → return chain `[leaf_der, ca_der]` + ephemeral leaf private key. Key never touches disk; `crypto_sign_detached` happens inline in the publish pipeline and the key goes out of scope. Mirrors `mock_c2pa/andromica/ca_generation.py::issue_member_leaf`. |
-| `src/C2PA/ManifestEmbed.{hpp,cpp}` | ~400 | Wrapper around `c2pa-rs` (FFI or shell — §8.3). Two entry points: `embed_into_image_file(path, chain, leaf_key, assertions)` and `embed_into_inkternity_file(path, chain, leaf_key, assertions)`. The former is standard library use; the latter writes a sidecar `<file>.c2pa` (§C / §10/Q5). |
+| `src/C2PA/Manifest.{hpp,cpp}` | ~300 | RAII wrapper over the c2pa-rs C ABI (prebuilt, §8.3 revised). Two entry points: `embed_into_image_file(path, chain, leaf_key, assertions)` and `embed_into_inkternity_file(path, chain, leaf_key, assertions)`. The former is standard library use; the latter writes a sidecar `<file>.c2pa` (§C / §10/Q5). Ed25519 signing delegates to in-tree tweetnacl via `SignerCallback`; the leaf private key never crosses the FFI boundary. |
 | `src/C2PA/Verifier.{hpp,cpp}` | ~300 | Chain walk: `c2pa-rs verify` → extract leaf + CA → confirm CA self-signed + EKU correct → extract SAN `stellar:G…` from CA → resolve on-chain `get_app_ca(app_address)` → `is_trusted(app_address, sha256(ca_der))` → compare on-chain `member_pubkey` to leaf SAN strkey. Result enum mirrors `mock_c2pa/register.py::is_trusted` semantics. |
 | `src/C2PA/KeyStore.{hpp,cpp}` | ~150 | Read / write `<configPath>/c2pa/app_ca.key` (PKCS#8 PEM, file mode `0600` on POSIX, NTFS DACL restricting to the user on Windows). Also persists `app_ca.crt`, `registration_status.json` (one of `unregistered` / `pending_funding` / `pending_token` / `active` / `revoked`), and the last-known on-chain `serial`. Sits next to `inkternity_dev_keys.json` in the same `configPath` dir. No backup, no recovery — by design (§5). |
 | `src/Screens/SettingsC2PASection.{hpp,cpp}` | ~500 | Wallet panel + gateway toggle + registration walkthrough + rotate/revoke buttons. Lives inside `FileSelectScreen::settings_view` (`src/Screens/FileSelectScreen.cpp:209`), below the existing "Inkternity App Key" block, gated entirely on the gateway toggle. Naming and copy per §B + §3. |
@@ -309,7 +310,7 @@ invisible at human export rates; per-session reuse complicates
 measurements push back.
 
 `MemberLeaf`'s dtor `OPENSSL_cleanse`s `private_seed` + `public_key`.
-Move-only, copies deleted. Used inside `ManifestEmbed::embed_*` for
+Move-only, copies deleted. Used inside `Manifest::embed_*` for
 the one `c2pa-rs` signing call, then out of scope. Never touches disk.
 
 ---
@@ -450,18 +451,67 @@ Long-term migration path: the §10/Q11 follow-up (C-FFI to Rust
 Rust in for `c2pa-rs`. Revisit between I13 and the next release
 cycle.
 
-### 8.3 C2PA manifest embed — `c2pa-rs` FFI (preferred) or `c2patool` shell (fallback)
+### 8.3 C2PA manifest embed — prebuilt c2pa-rs C ABI + thin wrapper
 
-`c2pa-rs` (Apache-2.0, Adobe/CAI) is the reference impl with full
-PNG/JPG/WEBP support and a custom-trust-root callback (the seam
-§7 needs). No current Conan recipe — build a local recipe under
-`conan/c2pa-rs/`, same pattern as `conan/sdl/`, `conan/icu/`,
-`conan/conan-skia/`. Fallback if the FFI proves painful under
-Conan: shell to a bundled `c2patool` binary. Decision in §10/Q2.
+**Revised 2026-05-21.** The original plan called for building
+c2pa-rs from source via a custom Conan recipe (§10/Q2 resolved to
+"`c2pa-rs` FFI"). Implementation pass surfaced that ContentAuth
+publishes **prebuilt C-ABI binaries** for every platform we care
+about via `github.com/contentauth/c2pa-rs` releases — same model
+StellarCli already uses (§8.2 / I8a). Per-release artifacts:
+
+```
+c2pa-v<version>-x86_64-pc-windows-msvc.zip   (Win x64)
+c2pa-v<version>-aarch64-pc-windows-msvc.zip  (Win arm64)
+c2pa-v<version>-universal-apple-darwin.zip   (macOS Intel + Apple Silicon)
+c2pa-v<version>-x86_64-unknown-linux-gnu.zip (Linux x64)
+c2pa-v<version>-aarch64-unknown-linux-gnu.zip (Linux arm64)
+```
+
+Each zip is ~90 MB and expands to:
+
+```
+include/c2pa.h          ~72 KB cbindgen-generated C ABI header
+lib/c2pa_c.dll          ~23 MB shared library (Windows; .dylib/.so elsewhere)
+lib/c2pa_c.dll.lib       ~21 KB import library (Windows-only)
+lib/c2pa_c.lib          ~243 MB static library (massive — DLL is preferred)
+```
+
+We ship the shared library (~23 MB per platform) next to
+`inkternity.exe`. The static lib stays out of the install — it
+bundles the entire Rust runtime + every crate transitively pulled,
+and the DLL gives us identical functionality at 10× smaller.
+
+The C ABI is plenty for our needs — no separate C++ wrapper layer
+required:
+
+- `C2paSigningAlg::Ed25519` is a first-class enum variant
+- `SignerCallback` typedef lets us plug in our own Ed25519 signer
+  (delegate to in-tree tweetnacl, keys never cross FFI boundary)
+- `c2pa_signer_from_info(C2paSignerInfo*)` for cert chain + alg
+- `c2pa_builder_*` for manifest assembly + embed
+- `c2pa_reader_*` for read + verify
+
+We considered using `contentauth/c2pa-cpp` as the wrapper layer —
+it's a thin C++ idioms layer over the same C ABI — but its
+distribution is CMake-source-only (no prebuilt binaries), so
+adopting it adds a build-from-source step without changing the
+underlying C lib we'd link anyway. For ~6 C functions a custom
+RAII wrapper at `src/C2PA/Manifest.{hpp,cpp}` (~300 LOC) is
+simpler than another upstream version to track. Revisit c2pa-cpp
+if our wrapper grows past ~500 LOC.
+
+Auto-install pattern: same as `StellarCli` — pin a `C2PA_RS_VERSION`
+constant, fetch from GitHub Releases on first need to
+`<configPath>/c2pa/lib/`, extract via `tar` (Windows ships
+`System32\tar.exe` since Win10 1803), verify checksum, fall back
+gracefully if offline. Vendoring `c2pa.h` under `deps/c2pa/` keeps
+the build configurable-from-source without requiring the download.
 
 EKU OID `1.3.6.1.4.1.42038.1.5.0` must be **critical** in the CA
 cert. Reference shape: `mock_c2pa/andromica/ca_generation.py:160-164`.
-Replicated via `X509_add_ext(... critical=1, "1.3.6.1.4.1.42038.1.5.0")`.
+Replicated via `X509_add_ext(... critical=1, "1.3.6.1.4.1.42038.1.5.0")`
+in `AppCa::generate` (already shipping in I2).
 
 ---
 
@@ -484,10 +534,21 @@ Resolved 2026-05-21 by founder:
 1. **CA rotation trigger.** **Resolved: manual button only in v1.**
    10-year cert lifetime defaults from `valid_days` in the Python
    reference; auto-rotate is a future enhancement.
-2. **C2PA manifest embed library — FFI vs shell.** **Resolved:
-   `c2pa-rs` FFI** statically linked via a new Conan recipe under
-   `conan/c2pa-rs/`. Same pattern as `conan/sdl/`, `conan/icu/`,
-   `conan/conan-skia/`.
+2. **C2PA manifest embed library — FFI vs shell.** **Re-resolved
+   2026-05-21: prebuilt c2pa-rs C ABI + our own thin wrapper.**
+   Initially resolved as "c2pa-rs FFI via new Conan recipe under
+   `conan/c2pa-rs/`"; the implementation pass surfaced that
+   ContentAuth publishes prebuilt C-ABI binaries per platform on
+   `github.com/contentauth/c2pa-rs/releases` (asset pattern
+   `c2pa-v<version>-<rust-triple>.zip`). That sidesteps the Rust +
+   Cargo + Conan-recipe slog entirely — same auto-install pattern
+   as StellarCli. `contentauth/c2pa-cpp` (a thin C++ wrapper) was
+   considered but is CMake-source-only with no prebuilt binaries,
+   so adopting it adds a build step without changing the underlying
+   C lib. We'll write our own ~300-LOC RAII wrapper at
+   `src/C2PA/Manifest.{hpp,cpp}` over the ~6 C ABI functions we
+   need (`c2pa_signer_from_info`, `c2pa_builder_*`, `c2pa_reader_*`).
+   See §8.3 for the full revised design.
 3. **Network selection — env var vs config knob.** **Resolved:
    `GlobalConfig::stellarNetwork` config knob with env-var override
    for dev** (`STELLAR_NETWORK` env wins if set).
@@ -589,7 +650,7 @@ All §10 questions resolved. Ready for implementation per §12.
 - **Auto-rotation.** §10/Q1 — manual button only in v1.
 - **Per-leaf assertion authoring UI.** `c2pa.created`,
   `c2pa.ai-disclosure: none`, `c2pa.creative_work` are hardcoded
-  at the embed call (`ManifestEmbed`) per
+  at the embed call (`Manifest`) per
   `heavymeta_collective/C2PA.md §4.3`. UI to author additional
   assertions per export is deferred.
 
@@ -613,7 +674,7 @@ All §10 questions resolved. Ready for implementation per §12.
 | I10 | First-run registration walkthrough UI (steps 1–4 of §3.4) wired through I2 + I4 + I5 + I7 + I8. End-to-end smoke against testnet via `heavymeta_collective/scripts/c2pa_smoke.py`. **Gate G5.** | 2 days | I2, I4, I5, I7, I8 |
 | I11 | Rotation + revocation UI + submit paths (§3.5, §3.6). | 1 day | I10 |
 | I12 | `src/C2PA/LeafIssuer.{hpp,cpp}` — per-publish leaf with OpenSSL X509_sign. | 1 day | I2 |
-| I13 | `c2pa-rs` integration — Conan recipe under `conan/c2pa-rs/`, FFI bindings, `ManifestEmbed::embed_into_image_file` for PNG/JPG/WEBP. Resolve §10/Q2. | 3–5 days | I1 |
+| I13 | c2pa-rs C ABI integration — auto-install prebuilt `c2pa_c.{dll,lib,dylib,so}` from `github.com/contentauth/c2pa-rs/releases` (same shape as StellarCli I8a), vendor `c2pa.h` under `deps/c2pa/`, ~300-LoC RAII wrapper at `src/C2PA/Manifest.{hpp,cpp}` with `embed_into_image_file` for PNG/JPG/WEBP + `read_and_verify`. Resolved per §10/Q2 + §8.3. Original estimate was 3–5 days assuming source build; prebuilt path drops it to ~1.5 days. | 1.5 days | I12 |
 | I14 | Publish hook on `world_take_screenshot` (`src/WorldScreenshot.cpp:84`) for PNG/JPG/WEBP. Sidecar `.c2pa` for SVG per §10/Q7. | 1 day | **I0**, I12, I13 |
 | I15 | Publish hook on `World::save_to_file` (`src/World.cpp:735`). Sidecar `<file>.c2pa` per §10/Q5. | 1 day | I12, I13 |
 | I16 | Verifier wrapper (`src/C2PA/Verifier.{hpp,cpp}`) + import-side badges on `.inkternity` open + dropped-image add + file-select preview thumbnails. Threading per §7. | 2 days | I8, I13 |
@@ -621,7 +682,7 @@ All §10 questions resolved. Ready for implementation per §12.
 
 **Total: ~19.5–22 days focused** (I0 included). Tasks I0–I11 are testable against
 the deployed testnet contract + `c2pa_smoke.py` and require no new
-test infra. I12–I17 need the new `c2pa-rs` Conan recipe (I13) before
+test infra. I14–I17 need the c2pa-rs C ABI integration (I13) before
 they're independently runnable; until then, I12 is unit-testable
 against `mock_c2pa/andromica/ca_generation.py::verify_chain` as a
 Python cross-checker.
