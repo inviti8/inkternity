@@ -420,6 +420,14 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                 // SDL_CreateProcess needs SDL infrastructure even though
                 // no subsystem is required.
                 if (!SDL_Init(0)) return SDL_APP_FAILURE;
+                // Production C2PA modules call Logger::log("INFO"/"WORLDFATAL", ...);
+                // the normal init_logs registration runs later in
+                // SDL_AppInit, so register minimal sinks here for the
+                // probe path. Without these, Logger::log() throws on a
+                // missing channel and the stack-canary kills the process.
+                Logger::get().add_log("INFO",      [](const std::string&) {});
+                Logger::get().add_log("WORLDFATAL",[](const std::string&) {});
+                Logger::get().add_log("USERINFO",  [](const std::string&) {});
                 std::filesystem::path outFile(argv[i + 1]);
                 C2PA::StellarCli cli(outFile.parent_path());
                 auto av = cli.probe();
@@ -441,23 +449,25 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                     auto r = cli.invoke({"--version"});
                     f << "version_ok:   " << (r.ok() ? "yes" : "no") << "\n";
                     f << "version_out:  " << r.out << "\n";
+                    f.flush();
 
-                    // I9 fallback-path check (no network). The live
-                    // hvym_registry lookup exercises a long argv list
-                    // through SDL_CreateProcess on Windows and trips
-                    // a STATUS_STACK_BUFFER_OVERRUN that needs a
-                    // dedicated workaround. For now, just verify the
-                    // §0 fallback IDs resolve correctly when the live
-                    // call isn't available — invalidate_cache then
-                    // exercise both networks. (When run with no
-                    // network the lookup_via_cli returns nullopt and
-                    // cert_registry_id falls back deterministically.)
+                    // Live hvym_registry lookup against mainnet for both
+                    // networks. Now that the Windows subprocess path
+                    // uses _popen (MSVCRT) instead of SDL_CreateProcess,
+                    // network-bound CLI calls no longer trip
+                    // STATUS_STACK_BUFFER_OVERRUN. live=yes means we
+                    // hit hvym_registry; live=no means we fell back to
+                    // the §0 hardcoded ID (offline / RPC failure).
                     C2PA::Registry reg(cli);
-                    reg.invalidate_cache();
-                    f << "cert_reg_mainnet_fallback: "
-                      << C2PA::Registry::CERT_REGISTRY_MAINNET_FALLBACK << "\n";
-                    f << "cert_reg_testnet_fallback: "
-                      << C2PA::Registry::CERT_REGISTRY_TESTNET_FALLBACK << "\n";
+                    auto mainId = reg.cert_registry_id(
+                        GlobalConfig::StellarNetwork::Mainnet);
+                    f << "cert_reg_mainnet: " << mainId
+                      << " (live=" << (reg.last_was_from_registry() ? "yes" : "no") << ")\n";
+                    f.flush();
+                    auto testId = reg.cert_registry_id(
+                        GlobalConfig::StellarNetwork::Testnet);
+                    f << "cert_reg_testnet: " << testId
+                      << " (live=" << (reg.last_was_from_registry() ? "yes" : "no") << ")\n";
                 }
                 f.close();
                 return SDL_APP_SUCCESS;

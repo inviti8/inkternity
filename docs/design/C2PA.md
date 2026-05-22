@@ -534,19 +534,32 @@ All §10 questions resolved. Ready for implementation per §12.
 
 ### Implementation notes — discovered during build
 
-- **SDL_CreateProcess + Windows + JSON-quoted args + network-bound
-  child**: tripped a STATUS_STACK_BUFFER_OVERRUN (-1073740791) when
-  running `Registry::cert_registry_id` via `stellar contract invoke
-  ... -- get_contract_id --name '"hvym_cert_registry"' --network
-  '"Mainnet"'` through SDL's argv-to-cmdline encoder on Windows. The
-  same CLI call works from PowerShell directly. Workaround paths (any
-  of, when I10 needs the live registry view): (a) pass JSON args via
-  the CLI's `--<arg>-file-path` flag pointing at a temp file (sidesteps
-  embedded-quote encoding entirely); (b) bypass SDL_CreateProcess and
-  call CreateProcessW directly with explicit quoting we control;
-  (c) use `SDL_PROP_PROCESS_CREATE_CMDLINE_STRING` with hand-built
-  cmdline. The §0 hardcoded fallback IDs work today, so this is a
-  refinement, not a blocker.
+- **Logger::log throws on missing channels**: `Helpers/Logger.cpp::log`
+  throws `std::runtime_error` when called against a log name that
+  wasn't added with `add_log()` first. The early-dispatch flags
+  (`--mypaint-*`, `--c2pa-stellar-probe`, `--test-spawn-*`) run BEFORE
+  `init_logs` in `SDL_AppInit`, so any C2PA module called from those
+  paths trips the throw — which on Windows /GS-instrumented builds
+  surfaces as STATUS_STACK_BUFFER_OVERRUN (-1073740791) rather than
+  a clean stack trace. Resolution: smoke probes that exercise the
+  C2PA modules register no-op sinks for `INFO`/`WORLDFATAL`/`USERINFO`
+  at the top of the dispatch. Production-mode code (called after
+  init_logs runs) is unaffected — the real sinks are in place.
+- **StellarCli subprocess invocation**: `run_subprocess` uses
+  `_popen` from MSVCRT on Windows and `SDL_CreateProcessWithProperties`
+  on POSIX. The Windows cmdline is hand-built via `win_quote_arg`
+  (CommandLineToArgvW reverse) and stderr is merged into stdout via
+  the shell `2>&1` suffix. POSIX uses the SDL argv-pointer property.
+  Verified end-to-end against the live `hvym_registry` on mainnet:
+  both networks resolve to the expected §0 contract IDs with
+  `live=yes`.
+- **CLI scval arg format** (confirmed empirically): Address → bare
+  strkey (no quotes); String / enum variant → JSON-quoted ('"..."');
+  Bytes/BytesN → bare lowercase hex; integers → bare numbers. The
+  CLI's `--<arg>-file-path` shorthand accepts the same JSON value
+  written to a temp file — useful for cleaner argv when the value
+  contains special characters. `StellarCli::make_json_arg_file`
+  returns an RAII `ScopedJsonFile` that cleans up on dtor.
 
 ---
 

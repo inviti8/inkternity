@@ -1,6 +1,7 @@
 #include "StellarCli.hpp"
 
 #include <Helpers/Logger.hpp>
+#include <Helpers/Random.hpp>
 
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_process.h>
@@ -114,28 +115,106 @@ std::vector<const char*> make_argv(const std::vector<std::string>& args) {
     return out;
 }
 
-// Spawn `argv`, block until exit, return (exit_code, captured stdout+stderr).
-// On spawn failure populates result.spawn_failed.
+#if defined(_WIN32)
+// Quote a single argv element using the Windows command-line rules
+// (CommandLineToArgvW reverse). Wraps in " if the arg contains
+// whitespace or other shell-affecting characters; escapes embedded "
+// as \" and runs of \\ before a " as 2N+1 backslashes. Empty arg
+// becomes "".
+std::string win_quote_arg(std::string_view a) {
+    bool needsQuoting = a.empty();
+    for (char c : a) {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '"') {
+            needsQuoting = true;
+            break;
+        }
+    }
+    if (!needsQuoting) return std::string(a);
+
+    std::string out;
+    out.reserve(a.size() + 4);
+    out.push_back('"');
+    size_t i = 0;
+    while (i < a.size()) {
+        size_t bs = 0;
+        while (i < a.size() && a[i] == '\\') { ++bs; ++i; }
+        if (i == a.size()) {
+            // Trailing backslashes are doubled because the closing "
+            // would otherwise consume them.
+            out.append(bs * 2, '\\');
+            break;
+        }
+        if (a[i] == '"') {
+            // Backslashes before a literal " are doubled, then the "
+            // is escaped with one extra \.
+            out.append(bs * 2 + 1, '\\');
+            out.push_back('"');
+        } else {
+            out.append(bs, '\\');
+            out.push_back(a[i]);
+        }
+        ++i;
+    }
+    out.push_back('"');
+    return out;
+}
+#endif
+
+// Spawn `argv`, block until exit, return (exit_code, captured
+// stdout+stderr).
+//
+// Windows: bypass SDL_CreateProcess entirely and use _popen from
+// MSVCRT. SDL's process layer trips STATUS_STACK_BUFFER_OVERRUN on
+// network-bound subprocesses with long argv (root cause unclear after
+// trying both the argv property and the cmdline-string property +
+// our own Windows-rule quoting). _popen is well-tested for command
+// pipes and the C runtime owns the cmd-line shell-quoting. Stderr is
+// merged into stdout via the trailing "2>&1".
+//
+// POSIX: SDL_CreateProcess works fine; keep the original path.
 StellarCli::InvocationResult run_subprocess(const std::vector<std::string>& args) {
     StellarCli::InvocationResult r;
     if (args.empty()) { r.spawn_failed = true; return r; }
-    auto argv = make_argv(args);
 
+#if defined(_WIN32)
+    std::string cmdline;
+    cmdline.reserve(256);
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i) cmdline.push_back(' ');
+        cmdline += win_quote_arg(args[i]);
+    }
+    cmdline += " 2>&1";
+
+    FILE* pipe = _popen(cmdline.c_str(), "rb");
+    if (!pipe) {
+        r.spawn_failed = true;
+        Logger::get().log("INFO",
+            "[StellarCli] _popen failed for cmdline: " + cmdline);
+        return r;
+    }
+    char buf[4096];
+    while (true) {
+        size_t n = std::fread(buf, 1, sizeof(buf), pipe);
+        if (n == 0) break;
+        r.out.append(buf, n);
+    }
+    int rc = _pclose(pipe);
+    // _pclose returns the subprocess exit code on success, -1 on
+    // wait/spawn failure. We mirror the SDL contract: exit_code = -1
+    // when something went sideways at the C-runtime layer.
+    r.exit_code = rc;
+    return r;
+#else
+    auto argv = make_argv(args);
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER,
                             (void*)argv.data());
-    // STDIO_APP for stdout so we can SDL_ReadProcess it; merge stderr
-    // into stdout so failure diagnostics aren't lost.
     SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER,
                           SDL_PROCESS_STDIO_NULL);
     SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER,
                           SDL_PROCESS_STDIO_APP);
-    // Merge stderr into stdout so failure diagnostics aren't lost.
-    // Using STDIO_REDIRECT here would require a stderr_source pointer
-    // we don't have; the boolean shortcut is the right knob.
     SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_STDERR_TO_STDOUT_BOOLEAN,
                             true);
-
     SDL_Process* p = SDL_CreateProcessWithProperties(props);
     SDL_DestroyProperties(props);
     if (!p) {
@@ -145,9 +224,6 @@ StellarCli::InvocationResult run_subprocess(const std::vector<std::string>& args
             + std::string(SDL_GetError() ? SDL_GetError() : ""));
         return r;
     }
-
-    // Read everything from stdout. SDL_ReadProcess waits for exit and
-    // returns the full buffer; exit_code is filled in.
     size_t outSize = 0;
     void* buf = SDL_ReadProcess(p, &outSize, &r.exit_code);
     if (buf) {
@@ -156,6 +232,7 @@ StellarCli::InvocationResult run_subprocess(const std::vector<std::string>& args
     }
     SDL_DestroyProcess(p);
     return r;
+#endif
 }
 
 }  // namespace
@@ -376,6 +453,47 @@ bool StellarCli::extract_archive(const std::filesystem::path& archive,
         std::filesystem::perm_options::add, ec);
 #endif
     return true;
+}
+
+// ---- ScopedJsonFile + make_json_arg_file -----------------------------------
+
+StellarCli::ScopedJsonFile& StellarCli::ScopedJsonFile::operator=(
+        StellarCli::ScopedJsonFile&& o) noexcept {
+    if (this != &o) {
+        if (!path_.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(path_, ec);
+        }
+        path_ = std::move(o.path_);
+        o.path_.clear();
+    }
+    return *this;
+}
+
+StellarCli::ScopedJsonFile::~ScopedJsonFile() noexcept {
+    if (!path_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(path_, ec);
+    }
+}
+
+StellarCli::ScopedJsonFile StellarCli::make_json_arg_file(
+        std::string_view json_value) const {
+    std::filesystem::path tmpDir = cacheDir_ / "tmp";
+    std::error_code ec;
+    std::filesystem::create_directories(tmpDir, ec);
+    if (ec) return ScopedJsonFile{};
+
+    // Use random alphanumeric for uniqueness across concurrent calls in
+    // the same process and across processes sharing the configPath.
+    std::filesystem::path tmpPath = tmpDir /
+        ("arg_" + Random::get().alphanumeric_str(12) + ".json");
+    std::ofstream f(tmpPath, std::ios::binary | std::ios::trunc);
+    if (!f) return ScopedJsonFile{};
+    f.write(json_value.data(), static_cast<std::streamsize>(json_value.size()));
+    f.close();
+    if (!std::filesystem::exists(tmpPath, ec)) return ScopedJsonFile{};
+    return ScopedJsonFile{tmpPath};
 }
 
 bool StellarCli::verify_binary(const std::filesystem::path& bin) {

@@ -59,7 +59,18 @@ std::optional<std::string> Registry::lookup_via_cli(
     // the deployed contract): String values are JSON-quoted, enum
     // variants are JSON-quoted, Address is bare, Bytes/BytesN are
     // bare hex, integers are bare.
-    std::string netArg = std::string("\"") + network_label(network) + "\"";
+    //
+    // We pass the JSON-quoted args via --<name>-file-path because
+    // SDL_CreateProcess on Windows mishandles long argv lists with
+    // embedded quotes (STATUS_STACK_BUFFER_OVERRUN observed against
+    // network-bound CLI calls). The file-path route sidesteps argv
+    // encoding entirely.
+    auto nameFile = cli_.make_json_arg_file("\"hvym_cert_registry\"");
+    auto netFile  = cli_.make_json_arg_file(
+        std::string("\"") + network_label(network) + "\"");
+    if (!nameFile.valid() || !netFile.valid()) {
+        return std::nullopt;
+    }
 
     auto r = cli_.invoke({
         "contract", "invoke",
@@ -70,8 +81,8 @@ std::optional<std::string> Registry::lookup_via_cli(
         "--send",               "no",
         "--",
         "get_contract_id",
-        "--name",    "\"hvym_cert_registry\"",
-        "--network", netArg,
+        "--name-file-path",    nameFile.path().string(),
+        "--network-file-path", netFile.path().string(),
     });
     if (!r.ok()) {
         Logger::get().log("INFO",

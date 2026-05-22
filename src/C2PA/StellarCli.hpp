@@ -94,6 +94,40 @@ public:
     };
     InvocationResult invoke(const std::vector<std::string>& args) const;
 
+    // RAII wrapper around a temporary JSON-arg file used with
+    // `stellar contract invoke ... -- <fn> --<name>-file-path <path>`.
+    // SDL_CreateProcess on Windows mishandles long argv lists with
+    // embedded JSON-quoted strings (STATUS_STACK_BUFFER_OVERRUN
+    // observed empirically against the live registry); routing JSON
+    // values through a file sidesteps the argv encoder entirely. The
+    // CLI accepts this for any scval type — String, enum variants,
+    // even Bytes (raw bytes for the latter).
+    //
+    // Path is constructed under <configPath>/c2pa/tmp/ with a random
+    // suffix so concurrent calls don't collide. Destructor removes
+    // the file. Move-only; copies are deleted.
+    class ScopedJsonFile {
+    public:
+        ScopedJsonFile() = default;
+        explicit ScopedJsonFile(std::filesystem::path p) noexcept
+            : path_(std::move(p)) {}
+        ScopedJsonFile(const ScopedJsonFile&) = delete;
+        ScopedJsonFile& operator=(const ScopedJsonFile&) = delete;
+        ScopedJsonFile(ScopedJsonFile&& o) noexcept : path_(std::move(o.path_)) { o.path_.clear(); }
+        ScopedJsonFile& operator=(ScopedJsonFile&& o) noexcept;
+        ~ScopedJsonFile() noexcept;
+        const std::filesystem::path& path() const noexcept { return path_; }
+        bool valid() const noexcept { return !path_.empty(); }
+    private:
+        std::filesystem::path path_;
+    };
+
+    // Write `json_value` to a unique temp file and return a
+    // ScopedJsonFile pointing at it. Returns an invalid wrapper on
+    // failure (caller's --<arg>-file-path then resolves to "" → CLI
+    // error, which is what we want). Thread-safe per-instance.
+    ScopedJsonFile make_json_arg_file(std::string_view json_value) const;
+
     // Platform/arch helpers — exposed for diagnostics and the
     // download URL builder. Compile-time constants.
     static const char* asset_triple()   noexcept;

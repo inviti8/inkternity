@@ -135,24 +135,34 @@ InvokeResult submit_register(
     auto argv = base_invoke_args(rpc, contract_id, source_account, /*send_no=*/false);
     // CLI scval arg format (confirmed against deployed contract):
     //   Address      → bare strkey ("GABC..."), no quotes
-    //   String       → JSON-quoted ('"ed25519"')
-    //   enum variant → JSON-quoted ('"Inkternity"')
+    //   String       → JSON-quoted ('"ed25519"')      \  routed through
+    //   enum variant → JSON-quoted ('"Inkternity"')   /  --<name>-file-path
     //   Bytes/BytesN → bare hex
     //   integers     → bare numbers
+    //
+    // JSON-quoted args go via temp file (StellarCli::make_json_arg_file)
+    // to dodge the SDL_CreateProcess Windows quoting bug on long
+    // network-bound argv. See docs/design/C2PA.md §10 notes.
     auto jstr = [](std::string_view s) {
         return std::string("\"") + std::string(s) + "\"";
     };
+    auto kindFile = cli.make_json_arg_file(jstr(app_kind));
+    auto algFile  = cli.make_json_arg_file(jstr("ed25519"));
+    if (!kindFile.valid() || !algFile.valid()) {
+        r.error = "Could not stage scval JSON arg files";
+        return r;
+    }
 
     argv.emplace_back("register_app_ca");
-    argv.emplace_back("--app_address");     argv.emplace_back(std::string(app_address));
-    argv.emplace_back("--member_pubkey");   argv.emplace_back(hex_lower_of_array32(member_pubkey));
-    argv.emplace_back("--app_kind");        argv.emplace_back(jstr(app_kind));
-    argv.emplace_back("--fingerprint");     argv.emplace_back(hex_lower_of_array32(fingerprint));
-    argv.emplace_back("--pubkey_alg");      argv.emplace_back(jstr("ed25519"));
-    argv.emplace_back("--expires_at");      argv.emplace_back(std::to_string(expires_at));
-    argv.emplace_back("--nonce");           argv.emplace_back(std::to_string(nonce));
-    argv.emplace_back("--auth_payload");    argv.emplace_back(hex_lower_of_vec(auth_payload));
-    argv.emplace_back("--auth_signature");  argv.emplace_back(hex_lower_of_vec(auth_signature));
+    argv.emplace_back("--app_address");          argv.emplace_back(std::string(app_address));
+    argv.emplace_back("--member_pubkey");        argv.emplace_back(hex_lower_of_array32(member_pubkey));
+    argv.emplace_back("--app_kind-file-path");   argv.emplace_back(kindFile.path().string());
+    argv.emplace_back("--fingerprint");          argv.emplace_back(hex_lower_of_array32(fingerprint));
+    argv.emplace_back("--pubkey_alg-file-path"); argv.emplace_back(algFile.path().string());
+    argv.emplace_back("--expires_at");           argv.emplace_back(std::to_string(expires_at));
+    argv.emplace_back("--nonce");                argv.emplace_back(std::to_string(nonce));
+    argv.emplace_back("--auth_payload");         argv.emplace_back(hex_lower_of_vec(auth_payload));
+    argv.emplace_back("--auth_signature");       argv.emplace_back(hex_lower_of_vec(auth_signature));
 
     auto out = cli.invoke(argv);
     r.raw_out = std::move(out.out);
