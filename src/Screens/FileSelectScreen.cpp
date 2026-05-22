@@ -475,8 +475,16 @@ void FileSelectScreen::verifiable_publishing_section() {
                 c2paWalletPanel.refresh_balance(main.devKeys.app_pubkey());
             }
             c2paWalletPanel.render(main);
-            // I10 (registration walkthrough) and I11 (rotate/revoke)
-            // attach below here in follow-up commits.
+
+            // Registration walkthrough (I10). Lazy-built — first
+            // toggle-ON pays the StellarCli PATH probe + KeyStore init;
+            // subsequent renders are cheap. ensure_ca_loaded inside
+            // render handles the CA gen-or-load on first call.
+            if (!c2paFlow) {
+                c2paFlow = std::make_unique<C2PA::RegistrationFlow>(
+                    main.conf.configPath);
+            }
+            c2paFlow->render(main, c2paWalletPanel);
         }
         c2paWalletPrevEnabled = main.conf.verifiablePublishingEnabled;
     }

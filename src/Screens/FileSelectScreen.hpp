@@ -3,6 +3,7 @@
 #include "nlohmann/json.hpp"
 #include "../GUIStuff/GUIFloatAnimation.hpp"
 #include "../GUIStuff/Elements/ScrollArea.hpp"
+#include "../C2PA/RegistrationFlow.hpp"
 #include "../C2PA/WalletPanel.hpp"
 
 class FileSelectScreen : public Screen {
@@ -98,6 +99,9 @@ class FileSelectScreen : public Screen {
         // when it's ON.
         void verifiable_publishing_section();
         C2PA::WalletPanel c2paWalletPanel;
+        // Lazy-constructed on first toggle-ON so the StellarCli PATH
+        // probe + KeyStore init are paid only when the artist opts in.
+        std::unique_ptr<C2PA::RegistrationFlow> c2paFlow;
         // Tracks the previous toggle state so the first frame after
         // OFF→ON kicks off an initial balance probe (matches the
         // "Horizon polling: on Settings-open only" decision from
