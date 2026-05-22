@@ -121,6 +121,12 @@ void WalletPanel::render(MainProgram& main) {
         },
         .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
     }) {
+        text_button(gui, "c2pa wallet toggle",
+            open_ ? "[-] Wallet" : "[+] Wallet", {
+            .wide = true,
+            .onClick = [this] { open_ = !open_; },
+        });
+        if (open_) {
         text_label(gui, "Funding address (same as your app identity):");
         input_text_field(gui, "c2pa wallet pubkey display", "App pubkey", &pubkey, {
             .immutable = true,
@@ -193,6 +199,7 @@ void WalletPanel::render(MainProgram& main) {
             "or maintain verifiable publishing. Fund it from any "
             "Stellar wallet (Lobstr, Solar, Freighter) — Inkternity "
             "never holds custody.");
+        }  // if (open_)
     }
 }
 

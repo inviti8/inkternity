@@ -67,6 +67,11 @@ private:
     std::string lastBalanceText_;   // display copy (set in render after a fetch resolves)
     bool isFunded_ = false;          // last successful read had a native balance
 
+    // Section-fold state. Defaults open so the artist sees the funding
+    // address + balance immediately on first reveal; click the header
+    // to collapse when focusing on the registration walkthrough below.
+    bool open_ = true;
+
     // QR display state. Lazily generated on first Show; cleared on Hide
     // or when the underlying pubkey changes (rotation / restore).
     bool qrVisible_ = false;
