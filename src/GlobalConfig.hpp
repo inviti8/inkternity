@@ -56,6 +56,15 @@ class GlobalConfig {
         bool checkForUpdates = false;
         bool useNativeFilePicker = true;
 
+        // docs/design/C2PA.md §3.1 + §B — the gateway toggle. Hidden
+        // by default per the [[feedback-crypto-averse-users]] UX
+        // constraint: until the artist flips this on, no Stellar /
+        // wallet / signed-publishing UI is visible. ON reveals the
+        // wallet panel (I7), registration walkthrough (I10), and the
+        // verifier badges on file import (I16); OFF restores silent
+        // behavior with no on-chain side effects.
+        bool verifiablePublishingEnabled = false;
+
         std::string themeCurrentlyLoaded = "Default";
 
         enum class AntiAliasing {

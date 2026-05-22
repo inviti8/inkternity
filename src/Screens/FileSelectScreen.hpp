@@ -90,6 +90,12 @@ class FileSelectScreen : public Screen {
         void settings_view();
         void export_app_key_section();
         void restore_app_key_section();
+        // docs/design/C2PA.md §3.1 — the "Verifiable publishing" gateway
+        // section. Visible only inside settings_view; toggle state lives
+        // on GlobalConfig::verifiablePublishingEnabled. Future tasks
+        // (I7 wallet panel, I10 walkthrough) attach below the toggle
+        // when it's ON.
+        void verifiable_publishing_section();
         bool exportKeyOpen = false;
         bool restoreKeyOpen = false;
         std::string restoreKeyInput;

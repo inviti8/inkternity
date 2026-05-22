@@ -12,6 +12,7 @@
 #include "../GUIStuff/Elements/TextParagraph.hpp"
 #include "../GUIStuff/ElementHelpers/LayoutHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/TextBoxHelpers.hpp"
+#include "../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 #include "../GUIStuff/Elements/PositionAdjustingPopupMenu.hpp"
 #include "../World.hpp"
 #include "Helpers/StringHelpers.hpp"
@@ -276,6 +277,13 @@ void FileSelectScreen::settings_view() {
             text_label(gui, "Not configured. Set up via your Heavymeta Portal settings.");
         }
 
+        // docs/design/C2PA.md §3.1 — gateway toggle. The section is
+        // always present in settings; what's revealed inside it depends
+        // on the toggle state + (in future tasks) the registration
+        // status. Per the crypto-averse UX constraint, the word
+        // "Stellar" deliberately doesn't appear in the toggle copy.
+        verifiable_publishing_section();
+
         // DISTRIBUTION-PHASE1.md §4.3 — auto-hosting status.
         //
         // Each marked canvas gets its own headless `--host-only`
@@ -431,6 +439,41 @@ void FileSelectScreen::restore_app_key_section() {
                     }
                 }
             });
+        }
+    }
+}
+
+void FileSelectScreen::verifiable_publishing_section() {
+    auto& gui = main.g.gui;
+    auto& io = gui.io;
+
+    CLAY_AUTO_ID({
+        .layout = {
+            .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+            .padding = CLAY_PADDING_ALL(io.theme->padding1),
+            .childGap = io.theme->childGap1,
+            .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+    }) {
+        text_label_centered(gui, "Verifiable publishing");
+        checkbox_boolean_field(gui,
+            "verifiable publishing enable",
+            "Enable verifiable publishing",
+            &main.conf.verifiablePublishingEnabled);
+        text_label(gui,
+            "Adds a tamper-evident provenance signature to canvases and "
+            "exported images. Verifiable against the Heavymeta cooperative's "
+            "on-chain trust list. Free to read; requires a one-time on-chain "
+            "registration (about 5 XLM) to write.");
+
+        if (main.conf.verifiablePublishingEnabled) {
+            // I7 (wallet panel), I10 (registration walkthrough), and
+            // I11 (rotate/revoke) attach here when ON. For now, just
+            // acknowledge the flip so the artist sees the gate moved.
+            text_label_light(gui,
+                "Wallet + first-run registration will appear here in a "
+                "follow-up build. Toggle saved.");
         }
     }
 }
