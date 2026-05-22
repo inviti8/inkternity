@@ -147,8 +147,23 @@ void WalletPanel::render(MainProgram& main) {
             },
         });
         if (qrVisible_ && qrImage_) {
-            gui.element<MemoryImageDisplay>("c2pa wallet qr",
-                MemoryImageDisplay::Data{ .img = qrImage_, .radius = 0.0f });
+            // MemoryImageDisplay uses CLAY_SIZING_GROW(0); needs a
+            // parent with an explicit fixed size or it renders at 0x0
+            // (same pattern as the top-toolbar avatar tile in
+            // src/Toolbar.cpp:1074).
+            constexpr float kQrSide = 256.0f;
+            CLAY_AUTO_ID({
+                .layout = {
+                    .sizing = {
+                        .width  = CLAY_SIZING_FIXED(kQrSide),
+                        .height = CLAY_SIZING_FIXED(kQrSide),
+                    },
+                },
+                .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor2),
+            }) {
+                gui.element<MemoryImageDisplay>("c2pa wallet qr",
+                    MemoryImageDisplay::Data{ .img = qrImage_, .radius = 0.0f });
+            }
         }
 
         const std::string balanceLabel = state_ == FetchState::InFlight
