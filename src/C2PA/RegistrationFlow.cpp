@@ -475,11 +475,14 @@ void RegistrationFlow::render_submit_card(MainProgram& main, WalletPanel& wallet
                         // worker can persist them after the on-chain
                         // rotate succeeds, even if the artist closes
                         // settings during the call.
+                        // S... strkey on source_account so the CLI can
+                        // sign without a pre-configured identity (see
+                        // matching note on the register branch below).
                         submitThread_ = std::thread(run_rotate,
                             submit_,
                             &cli_,
                             contract_id,
-                            main.devKeys.app_pubkey(),
+                            main.devKeys.app_secret(),
                             main.devKeys.app_pubkey(),
                             tokenRotateParams_.new_fingerprint,
                             static_cast<uint64_t>(tokenRotateParams_.new_expires_at_unix),
@@ -491,12 +494,21 @@ void RegistrationFlow::render_submit_card(MainProgram& main, WalletPanel& wallet
                             stagingCa_.private_key_pem(),
                             stagingCa_.pem_bytes());
                     } else {
+                        // source_account: pass the S... strkey so the
+                        // stellar CLI signs the tx directly (it would
+                        // otherwise need an `stellar keys import`-ed
+                        // identity matching this G-address; testers
+                        // hit "Address cannot be used to sign" on
+                        // every first-run without that prep step).
+                        // app_address: the on-chain registration key
+                        // is still the G-address; SorobanSubmit
+                        // serializes it as ScVal::Address.
                         submitThread_ = std::thread(run_submit,
                             submit_,
                             &cli_,
                             contract_id,
-                            main.devKeys.app_pubkey(),
-                            main.devKeys.app_pubkey(),  // app_address == source
+                            main.devKeys.app_secret(),
+                            main.devKeys.app_pubkey(),  // app_address
                             tokenParams_.member_pubkey,
                             std::string("Inkternity"),
                             tokenParams_.fingerprint,
@@ -695,11 +707,13 @@ void RegistrationFlow::render_revoke_confirm_card(MainProgram& main) {
                     submit_->phase.store(SubmitPhase::InFlight);
 
                     if (submitThread_.joinable()) submitThread_.detach();
+                    // S... strkey on source_account so the CLI signs
+                    // directly (same constraint as register / rotate).
                     submitThread_ = std::thread(run_revoke,
                         submit_,
                         &cli_,
                         contract_id,
-                        main.devKeys.app_pubkey(),
+                        main.devKeys.app_secret(),
                         main.devKeys.app_pubkey(),
                         rpc,
                         store_.c2pa_dir(),
