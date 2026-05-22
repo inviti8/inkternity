@@ -622,6 +622,63 @@ All §10 questions resolved. Ready for implementation per §12.
   contains special characters. `StellarCli::make_json_arg_file`
   returns an RAII `ScopedJsonFile` that cleans up on dtor.
 
+### On-chain TTL extension — keeping the AppCa entry alive
+
+The `hvym-cert-registry` contract stores every registration in
+`persistent()` storage (`hvym-cert-registry/src/lib.rs` — every
+state-changing entry point writes via `e.storage().persistent().set()`).
+Soroban's archival model gives persistent entries a finite TTL that
+ticks down ledger-by-ledger from each write; when the TTL hits zero
+the entry archives. View functions (`is_trusted`, `get_app_ca`,
+`apps_of_member`, `list_active_apps`) do **not** call
+`extend_ttl(...)`, so polling the contract as a verifier does nothing
+to keep the entry alive. Reads via Soroban RPC simulation can't see
+archived entries at all.
+
+**Without explicit extension, an Inkternity install's on-chain
+registration silently archives after roughly 30 days on mainnet.** The
+local cert chain keeps verifying signatures for files already exported
+(c2pa-rs walks the embedded cert chain offline), but any on-chain
+`is_trusted` lookup returns `false`, and `rotate_app_ca` would panic
+on the missing entry until someone submits a `RestoreFootprintOp`.
+
+The fix lives client-side because the contract is locked
+(`hvym-cert-registry/src/lib.rs:6` declares "No admin"; we can't
+deploy a new version with auto-extend in views). Inkternity submits a
+periodic `ExtendFootprintTTLOp` via `stellar contract extend
+--key-xdr ... --ledgers-to-extend 535679 --durability persistent`
+targeting our own `AppCa(app_address)` entry. The CLI hard-caps a
+single op at **535,679 ledgers (~30 days at the 5 s nominal mainnet
+close, ~34 days at the observed ~5.76 s)**; that's the practical
+ceiling for one call. `extendTo` is an absolute floor on
+`liveUntilLedger`, not additive, so re-running early is a cheap
+no-op for rent (only the ~10-stroop inclusion fee applies).
+
+Cadence: re-extend every **20 days** while `registration_status.json`
+status is `Active`. That keeps ~10 days of headroom against the
+30-day archival horizon and tolerates testers who only open settings
+occasionally. The 20-day clock is persisted in
+`KeyStore::RegistrationState::last_ttl_extend_at_unix`; zero on
+first launch / pre-rc10 upgrade triggers an immediate top-up so
+existing installs get a fresh TTL on the next settings open.
+
+Underfunded handling: the op naturally fails with a non-zero CLI
+exit code if the wallet doesn't have the rent fee + inclusion fee
+(sub-cent in XLM for the ~150-byte `AppCaRecord`). The drain branch
+in `RegistrationFlow::render_active_card` pattern-matches
+"underfunded" / "insufficient" / "tx_INSUFFICIENT_BALANCE" in the
+raw CLI output and raises a one-shot USERINFO toast asking the
+artist to top up. If they don't, the cert decays — explicitly
+accepted user behaviour.
+
+Key XDR construction: `DataKey::AppCa(Address)` is an enum variant,
+not a bare Symbol, so we can't use `stellar contract extend --key`
+(symbols-only). Instead we pipe the canonical JSON
+`{"vec":[{"symbol":"AppCa"},{"address":"G..."}]}` through `stellar
+xdr encode --type ScVal` to get the base64-XDR for `--key-xdr`.
+`Soroban::extend_app_ca_ttl` in `src/C2PA/SorobanSubmit.cpp` is the
+wrapper.
+
 ---
 
 ## 11. Deliberately not in this plan

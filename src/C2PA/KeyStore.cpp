@@ -215,6 +215,10 @@ RegistrationState KeyStore::load_state() const {
             state.last_known_member_pubkey =
                 j["last_known_member_pubkey"].get<std::string>();
         }
+        if (j.contains("last_ttl_extend_at")
+                && j["last_ttl_extend_at"].is_number_integer()) {
+            state.last_ttl_extend_at_unix = j["last_ttl_extend_at"].get<int64_t>();
+        }
     } catch (...) {
         return RegistrationState{};  // fall through to defaults on any parse error
     }
@@ -228,6 +232,7 @@ bool KeyStore::save_state(const RegistrationState& state) {
         {"serial",                   state.serial_hex},
         {"expires_at",               state.expires_at_unix},
         {"last_known_member_pubkey", state.last_known_member_pubkey},
+        {"last_ttl_extend_at",       state.last_ttl_extend_at_unix},
     };
     const std::string dump = j.dump(2);
     return write_file_atomic(statePath_, dump.data(), dump.size());

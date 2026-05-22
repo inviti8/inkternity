@@ -111,4 +111,30 @@ std::optional<std::string> get_app_ca_raw(
     std::string_view source_account,
     std::string_view app_address);
 
+// Maximum ExtendFootprintTTLOp `extendTo` accepted by the stellar
+// CLI in a single op: ~30 days at the 5s/ledger nominal mainnet
+// close, ~34 days at the ~5.76s observed. extendTo is an absolute
+// floor (not additive), so re-running early is a cheap no-op for
+// rent — only the inclusion fee applies.
+constexpr uint32_t kCertTtlExtendLedgers = 535'679;
+
+// Top up the TTL on the on-chain AppCa(app_address) entry so it
+// doesn't archive after ~30 days of inactivity. Builds the LedgerKey
+// for `DataKey::AppCa(Address)` by piping JSON through `stellar xdr
+// encode --type ScVal`, then submits via `stellar contract extend`.
+// Costs the inclusion fee plus per-byte rent for the added ledgers
+// (sub-cent in XLM for a ~150-byte AppCaRecord).
+//
+// Cadence (driven by RegistrationFlow):
+//   - new register → wait 20 days from register, then extend
+//   - re-extend every 20 days while status == Active
+// Keeps ~10 days of headroom against the 30-day archival horizon.
+InvokeResult extend_app_ca_ttl(
+    const StellarCli& cli,
+    const RpcConfig& rpc,
+    std::string_view contract_id,
+    std::string_view source_account,
+    std::string_view app_address,
+    uint32_t ledgers_to_extend = kCertTtlExtendLedgers);
+
 }  // namespace C2PA::Soroban

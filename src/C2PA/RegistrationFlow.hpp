@@ -67,6 +67,16 @@ public:
         std::string error;
     };
 
+    // Auto-extend TTL worker handle. ExtendFootprintTTLOp runs in the
+    // background while render_active_card is mounted; result drained on
+    // the next frame after `done` flips true.
+    struct TtlExtendResult {
+        std::atomic<bool> done{false};
+        bool        success = false;
+        int64_t     completed_at_unix = 0;
+        std::string error;
+    };
+
 private:
     void render_bundle_card(MainProgram& main);
     void render_paste_card(MainProgram& main);
@@ -137,6 +147,11 @@ private:
     // confirmation; second click on the confirm button fires
     // submit_revoke_by_app via the worker. Cancel button resets.
     bool                          revokeConfirmOpen_ = false;
+
+    // Periodic TTL-extend handle (background worker). One in-flight at
+    // a time; drained + cleared after render picks up the result.
+    std::shared_ptr<TtlExtendResult> ttlExtend_;
+    std::thread                      ttlExtendThread_;
 };
 
 }  // namespace C2PA

@@ -40,6 +40,16 @@ struct RegistrationState {
     // G... strkey of the member who authorized this app instance, as
     // returned by get_app_ca.member_pubkey. Empty if not active.
     std::string last_known_member_pubkey;
+    // Unix seconds of the last successful ExtendFootprintTTLOp against
+    // the on-chain AppCa(app_address) entry. Drives the 20-day re-extend
+    // cadence in RegistrationFlow's Active branch — stellar mainnet caps
+    // a single extend at ~30 days (535,679 ledgers), so we re-extend
+    // every 20 days to keep ~10 days of margin against archival. Zero
+    // on a fresh install OR on upgrade from a pre-rc10 install (which
+    // hadn't tracked this field); the trigger logic treats zero as
+    // "due now" so existing testers get a topped-up entry on first
+    // settings open after upgrade.
+    int64_t last_ttl_extend_at_unix = 0;
 };
 
 class KeyStore {

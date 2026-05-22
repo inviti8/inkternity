@@ -13,6 +13,8 @@
 
 #include <SDL3/SDL_misc.h>
 
+#include <chrono>
+
 namespace C2PA {
 
 RegistrationFlow::RegistrationFlow(std::filesystem::path configPath)
@@ -627,6 +629,39 @@ void run_revoke(
     }
 }
 
+// Periodic TTL-extend worker. Runs ExtendFootprintTTLOp against the
+// on-chain AppCa(app_address) entry. extendTo is an absolute floor
+// (not additive) so re-running early is a cheap no-op for rent —
+// only the inclusion fee applies (~10 stroops). The 20-day cadence
+// in render_active_card keeps us well clear of the 30-day archival
+// horizon.
+void run_ttl_extend(
+        std::shared_ptr<RegistrationFlow::TtlExtendResult> result,
+        StellarCli* cli,
+        std::string contract_id,
+        std::string source_account,
+        std::string app_address,
+        Soroban::RpcConfig rpc) {
+    Logger::get().log("INFO",
+        "[C2PA::Flow] TTL-extend worker started; rpc=" + rpc.rpc_url);
+    auto r = Soroban::extend_app_ca_ttl(*cli, rpc, contract_id,
+        source_account, app_address);
+    if (r.success) {
+        result->success = true;
+        const auto now = std::chrono::system_clock::now();
+        result->completed_at_unix = std::chrono::duration_cast<
+            std::chrono::seconds>(now.time_since_epoch()).count();
+    } else {
+        result->error = r.error.empty() ? r.raw_out : r.error;
+        // Stash the raw output alongside the error so the drain
+        // branch can pattern-match underfunded vs other failures.
+        if (!r.raw_out.empty() && r.raw_out != result->error) {
+            result->error += "\n" + r.raw_out;
+        }
+    }
+    result->done.store(true);
+}
+
 }  // namespace
 
 void RegistrationFlow::render_active_card(MainProgram& main) {
@@ -634,6 +669,73 @@ void RegistrationFlow::render_active_card(MainProgram& main) {
     using namespace ElementHelpers;
     auto& gui = main.g.gui;
     auto& io  = gui.io;
+
+    // Auto-extend the on-chain AppCa entry's TTL. stellar mainnet caps
+    // a single ExtendFootprintTTLOp at 535,679 ledgers (~30 days at the
+    // 5s nominal close, ~34 days at the ~5.76s observed). Re-extend
+    // every 20 days while the artist has settings open and the cert is
+    // Active — that's ~10 days of headroom against the archival
+    // horizon. extendTo is an absolute floor, so re-running early is a
+    // cheap no-op (only the inclusion fee applies, no rent).
+    //
+    // last_ttl_extend_at_unix == 0 means "we've never extended" — fires
+    // immediately the first time settings is opened post-upgrade so
+    // pre-rc10 installs get topped up. The op naturally fails with a
+    // non-zero exit code if the wallet is underfunded; the drain
+    // branch below converts that into a single USERINFO toast asking
+    // the artist to top up. Per the design memo: if no XLM, the cert
+    // decays — explicitly accepted by the user.
+    {
+        constexpr int64_t kTtlExtendCadenceSeconds = 20 * 24 * 3600;
+        auto stateSnapshot = store_.load_state();
+        const auto now = std::chrono::system_clock::now();
+        const int64_t now_unix = std::chrono::duration_cast<
+            std::chrono::seconds>(now.time_since_epoch()).count();
+        const int64_t since_last =
+            now_unix - stateSnapshot.last_ttl_extend_at_unix;
+
+        if (!ttlExtend_ && since_last >= kTtlExtendCadenceSeconds) {
+            ttlExtend_ = std::make_shared<TtlExtendResult>();
+            if (ttlExtendThread_.joinable()) ttlExtendThread_.detach();
+            const auto net = main.conf.stellarNetwork;
+            const std::string contract_id = reg_.cert_registry_id(net);
+            const auto rpc = Soroban::config_for_env_or_global(main.conf);
+            ttlExtendThread_ = std::thread(run_ttl_extend,
+                ttlExtend_,
+                &cli_,
+                contract_id,
+                main.devKeys.app_secret(),
+                main.devKeys.app_pubkey(),
+                rpc);
+        }
+
+        // Drain a completed result on the frame after the worker
+        // flipped `done`. Update state on success; surface a one-shot
+        // USERINFO toast on insufficient-funds failure.
+        if (ttlExtend_ && ttlExtend_->done.load()) {
+            if (ttlExtend_->success) {
+                stateSnapshot.last_ttl_extend_at_unix =
+                    ttlExtend_->completed_at_unix;
+                store_.save_state(stateSnapshot);
+                Logger::get().log("INFO",
+                    "[C2PA::Flow] Cert TTL extended on-chain (+~30 days).");
+            } else {
+                const auto& err = ttlExtend_->error;
+                if (err.find("underfunded") != std::string::npos
+                    || err.find("insufficient") != std::string::npos
+                    || err.find("tx_INSUFFICIENT_BALANCE") != std::string::npos) {
+                    Logger::get().log("USERINFO",
+                        "Cert TTL renewal needs a small XLM top-up. "
+                        "Without it your registration will archive on "
+                        "chain in ~30 days.");
+                } else {
+                    Logger::get().log("INFO",
+                        "[C2PA::Flow] TTL extend failed: " + err);
+                }
+            }
+            ttlExtend_.reset();
+        }
+    }
 
     CLAY_AUTO_ID({
         .layout = {

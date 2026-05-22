@@ -365,4 +365,100 @@ std::optional<std::string> get_app_ca_raw(
     return out.out;
 }
 
+InvokeResult extend_app_ca_ttl(
+        const StellarCli& cli,
+        const RpcConfig& rpc,
+        std::string_view contract_id,
+        std::string_view source_account,
+        std::string_view app_address,
+        uint32_t ledgers_to_extend) {
+    InvokeResult r;
+
+    Logger::get().log("INFO",
+        "[C2PA::Soroban] extend_app_ca_ttl: contract=" + std::string(contract_id)
+        + " app=" + std::string(app_address)
+        + " ledgers=" + std::to_string(ledgers_to_extend)
+        + " rpc=" + rpc.rpc_url);
+
+    if (cli.binary_path().empty()) {
+        r.error = "stellar CLI not available";
+        Logger::get().log("INFO", "[C2PA::Soroban] " + r.error);
+        return r;
+    }
+
+    // Step 1: stage the LedgerKey's ScVal as JSON. The on-chain
+    // DataKey::AppCa(Address) variant serializes as
+    //   ScVal::Vec([ScVal::Symbol("AppCa"), ScVal::Address(G...)])
+    // which is the JSON {"vec":[{"symbol":"AppCa"},{"address":"G..."}]}.
+    // Validated against the deployed testnet contract — see
+    // docs/design/C2PA.md §TTL-extension.
+    std::string key_json = "{\"vec\":[{\"symbol\":\"AppCa\"},{\"address\":\""
+                         + std::string(app_address) + "\"}]}";
+    auto keyJsonFile = cli.make_json_arg_file(key_json);
+    if (!keyJsonFile.valid()) {
+        r.error = "Could not stage scval key JSON";
+        Logger::get().log("INFO", "[C2PA::Soroban] " + r.error);
+        return r;
+    }
+
+    // Step 2: `stellar xdr encode --type ScVal <file>` → single-line
+    // base64 ScVal XDR on stdout. We can't use `--key SYMBOL` shorthand
+    // on the extend command because our key is an enum variant, not a
+    // bare Symbol — `--key-xdr <base64>` is the only path.
+    auto encOut = cli.invoke({
+        "xdr", "encode", "--type", "ScVal",
+        keyJsonFile.path().string()
+    });
+    if (!encOut.ok()) {
+        r.error = "stellar xdr encode exited "
+                + std::to_string(encOut.exit_code);
+        r.raw_out = std::move(encOut.out);
+        Logger::get().log("INFO",
+            "[C2PA::Soroban] xdr encode failed: " + r.raw_out);
+        return r;
+    }
+    std::string key_xdr_b64 = encOut.out;
+    // Trim trailing whitespace / newlines.
+    while (!key_xdr_b64.empty()
+           && (key_xdr_b64.back() == '\r' || key_xdr_b64.back() == '\n'
+               || key_xdr_b64.back() == ' ' || key_xdr_b64.back() == '\t')) {
+        key_xdr_b64.pop_back();
+    }
+    if (key_xdr_b64.empty()) {
+        r.error = "stellar xdr encode produced empty output";
+        Logger::get().log("INFO", "[C2PA::Soroban] " + r.error);
+        return r;
+    }
+
+    // Step 3: submit the extend op. extendTo is an absolute floor —
+    // if the entry's current liveUntilLedger already exceeds
+    // (current + ledgers_to_extend), the op rents zero ledgers and
+    // only the inclusion fee applies. So re-running early is cheap.
+    std::vector<std::string> argv = {
+        "contract", "extend",
+        "--id",                  std::string(contract_id),
+        "--source-account",      std::string(source_account),
+        "--rpc-url",             rpc.rpc_url,
+        "--network-passphrase",  rpc.network_passphrase,
+        "--key-xdr",             key_xdr_b64,
+        "--durability",          "persistent",
+        "--ledgers-to-extend",   std::to_string(ledgers_to_extend),
+    };
+    auto out = cli.invoke(argv);
+    r.raw_out = std::move(out.out);
+    if (out.ok()) {
+        r.success = true;
+        Logger::get().log("INFO",
+            "[C2PA::Soroban] extend_app_ca_ttl OK app=" + std::string(app_address));
+    } else {
+        r.error = "stellar contract extend exited "
+                + std::to_string(out.exit_code);
+        if (out.spawn_failed) r.error = "subprocess spawn failed";
+        Logger::get().log("WORLDFATAL",
+            "[C2PA::Soroban] extend_app_ca_ttl FAILED: " + r.error
+            + "\n--- raw output ---\n" + r.raw_out);
+    }
+    return r;
+}
+
 }  // namespace C2PA::Soroban
