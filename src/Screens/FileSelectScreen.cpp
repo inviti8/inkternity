@@ -468,13 +468,17 @@ void FileSelectScreen::verifiable_publishing_section() {
             "registration (about 5 XLM) to write.");
 
         if (main.conf.verifiablePublishingEnabled) {
-            // I7 (wallet panel), I10 (registration walkthrough), and
-            // I11 (rotate/revoke) attach here when ON. For now, just
-            // acknowledge the flip so the artist sees the gate moved.
-            text_label_light(gui,
-                "Wallet + first-run registration will appear here in a "
-                "follow-up build. Toggle saved.");
+            // First frame after the artist flips the toggle ON: kick off
+            // a Horizon balance probe so the wallet panel has data to
+            // show without waiting for an explicit Refresh click.
+            if (!c2paWalletPrevEnabled && main.devKeys.is_loaded()) {
+                c2paWalletPanel.refresh_balance(main.devKeys.app_pubkey());
+            }
+            c2paWalletPanel.render(main);
+            // I10 (registration walkthrough) and I11 (rotate/revoke)
+            // attach below here in follow-up commits.
         }
+        c2paWalletPrevEnabled = main.conf.verifiablePublishingEnabled;
     }
 }
 

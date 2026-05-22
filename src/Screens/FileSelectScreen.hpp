@@ -3,6 +3,7 @@
 #include "nlohmann/json.hpp"
 #include "../GUIStuff/GUIFloatAnimation.hpp"
 #include "../GUIStuff/Elements/ScrollArea.hpp"
+#include "../C2PA/WalletPanel.hpp"
 
 class FileSelectScreen : public Screen {
     public:
@@ -96,6 +97,12 @@ class FileSelectScreen : public Screen {
         // (I7 wallet panel, I10 walkthrough) attach below the toggle
         // when it's ON.
         void verifiable_publishing_section();
+        C2PA::WalletPanel c2paWalletPanel;
+        // Tracks the previous toggle state so the first frame after
+        // OFF→ON kicks off an initial balance probe (matches the
+        // "Horizon polling: on Settings-open only" decision from
+        // DISTRIBUTION-PHASE1.md §8.6, generalized to "on first reveal").
+        bool c2paWalletPrevEnabled = false;
         bool exportKeyOpen = false;
         bool restoreKeyOpen = false;
         std::string restoreKeyInput;
