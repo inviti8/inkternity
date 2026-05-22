@@ -72,9 +72,30 @@ private:
     // to collapse when focusing on the registration walkthrough below.
     bool open_ = true;
 
-    // QR display state. Lazily generated on first Show; cleared on Hide
-    // or when the underlying pubkey changes (rotation / restore).
-    bool qrVisible_ = false;
+    // Fund popup state. The popup is a floating modal (attached to the
+    // GUIManager root, centered on screen) that surfaces the funding
+    // address + QR + a live balance ticker while it's open. Closes on
+    // click-outside or the explicit Close button.
+    //
+    // Self-chaining poll: each successful Horizon fetch raises a
+    // USERINFO toast iff the balance jumped, then auto-fires the next
+    // fetch from inside render(). The existing set_to_layout() side
+    // effect of toast logging + fetch resolution keeps the GUI
+    // redrawing, which keeps render() being called, which keeps the
+    // chain alive. No separate timer/thread required.
+    bool   fundPopupOpen_   = false;
+    bool   haveObservedXlm_ = false;
+    double observedXlm_     = 0.0;
+    // baseline_set_ defers capture until the first successful poll
+    // after the popup opens — that way we don't toast a phantom
+    // "received N XLM" on first read when the wallet was already
+    // funded before the popup opened.
+    bool   baselineSet_     = false;
+    double baselineXlm_     = 0.0;
+
+    // QR image cache. Lazily generated on first popup-open; reused
+    // across re-opens unless the underlying pubkey changes
+    // (rotation / restore).
     sk_sp<SkImage> qrImage_;
     std::string    qrEncodedAddress_;
 
