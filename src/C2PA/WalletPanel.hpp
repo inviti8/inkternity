@@ -21,6 +21,8 @@
 // address is the load-bearing primitive; QR is a nice-to-have follow-up.
 
 #include <Helpers/FileDownloader.hpp>
+#include <include/core/SkImage.h>
+#include <include/core/SkRefCnt.h>
 #include <memory>
 #include <string>
 
@@ -53,6 +55,12 @@ private:
     std::shared_ptr<FileDownloader::DownloadData> pendingFetch_;
     std::string lastBalanceText_;   // display copy (set in render after a fetch resolves)
     bool isFunded_ = false;          // last successful read had a native balance
+
+    // QR display state. Lazily generated on first Show; cleared on Hide
+    // or when the underlying pubkey changes (rotation / restore).
+    bool qrVisible_ = false;
+    sk_sp<SkImage> qrImage_;
+    std::string    qrEncodedAddress_;
 
     // Pull JSON from `data->str` and produce a display string. Sets
     // isFunded_ as a side effect.

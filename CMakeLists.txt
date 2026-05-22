@@ -98,11 +98,13 @@ set(sources "src/main.cpp"
             "src/C2PA/AppCa.cpp"
             "src/C2PA/Bundle.cpp"
             "src/C2PA/KeyStore.cpp"
+            "src/C2PA/QrCodeRender.cpp"
             "src/C2PA/Registry.cpp"
             "src/C2PA/SorobanSubmit.cpp"
             "src/C2PA/StellarCli.cpp"
             "src/C2PA/WalletPanel.cpp"
             "src/C2PA/WireToken.cpp"
+            "deps/qrcodegen/qrcodegen.cpp"
             "deps/tweetnacl/tweetnacl.c"
             "deps/tweetnacl/randombytes.cpp"
             "src/crypto/stellar/StellarStrkey.cpp"
@@ -440,6 +442,7 @@ endif()
 
 target_include_directories(main PRIVATE "include")
 target_include_directories(main PRIVATE "deps/miniaudio")
+target_include_directories(main PRIVATE "deps/qrcodegen")
 if(ANDROID)
     target_include_directories(main PRIVATE "android-project/SDL/include")
 endif()

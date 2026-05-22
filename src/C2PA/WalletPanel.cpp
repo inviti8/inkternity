@@ -1,7 +1,9 @@
 #include "WalletPanel.hpp"
 
+#include "QrCodeRender.hpp"
 #include "../MainProgram.hpp"
 #include "../GUIStuff/GUIManager.hpp"
+#include "../GUIStuff/Elements/MemoryImageDisplay.hpp"
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/TextBoxHelpers.hpp"
@@ -124,6 +126,30 @@ void WalletPanel::render(MainProgram& main) {
                 main.input.set_clipboard_str(main.devKeys.app_pubkey());
             },
         });
+
+        // Show/Hide QR toggle. QR is lazily encoded on first show, then
+        // cached until the pubkey changes (rotation/restore) or the
+        // user hides it. Scanning saves the artist a 56-char manual
+        // typing pass when funding from a mobile Stellar wallet.
+        text_button(gui, "c2pa wallet toggle qr",
+            qrVisible_ ? "Hide QR" : "Show QR", {
+            .wide = true,
+            .onClick = [this, pubkey] {
+                qrVisible_ = !qrVisible_;
+                if (qrVisible_ && (qrEncodedAddress_ != pubkey || !qrImage_)) {
+                    qrImage_ = render_qr_image(pubkey, 256);
+                    qrEncodedAddress_ = pubkey;
+                    if (!qrImage_) {
+                        Logger::get().log("INFO",
+                            "[C2PA::WalletPanel] QR encode returned null");
+                    }
+                }
+            },
+        });
+        if (qrVisible_ && qrImage_) {
+            gui.element<MemoryImageDisplay>("c2pa wallet qr",
+                MemoryImageDisplay::Data{ .img = qrImage_, .radius = 0.0f });
+        }
 
         const std::string balanceLabel = state_ == FetchState::InFlight
             ? "Checking balance..."
