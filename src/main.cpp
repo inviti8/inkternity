@@ -425,9 +425,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                 // SDL_AppInit, so register minimal sinks here for the
                 // probe path. Without these, Logger::log() throws on a
                 // missing channel and the stack-canary kills the process.
-                Logger::get().add_log("INFO",      [](const std::string&) {});
-                Logger::get().add_log("WORLDFATAL",[](const std::string&) {});
-                Logger::get().add_log("USERINFO",  [](const std::string&) {});
+                // Capture into a buffer the probe dumps at the end —
+                // verifies the per-CLI-invocation trace works.
+                static std::string s_probeLogBuf;
+                Logger::get().add_log("INFO",      [&](const std::string& s){ s_probeLogBuf += "[INFO] "       + s + "\n"; });
+                Logger::get().add_log("WORLDFATAL",[&](const std::string& s){ s_probeLogBuf += "[WORLDFATAL] " + s + "\n"; });
+                Logger::get().add_log("USERINFO",  [&](const std::string& s){ s_probeLogBuf += "[USERINFO] "   + s + "\n"; });
                 std::filesystem::path outFile(argv[i + 1]);
                 C2PA::StellarCli cli(outFile.parent_path());
                 auto av = cli.probe();
@@ -469,6 +472,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                     f << "cert_reg_testnet: " << testId
                       << " (live=" << (reg.last_was_from_registry() ? "yes" : "no") << ")\n";
                 }
+                f << "\n--- captured log ---\n";
+                f << s_probeLogBuf;
                 f.close();
                 return SDL_APP_SUCCESS;
             }

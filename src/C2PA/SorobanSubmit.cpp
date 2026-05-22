@@ -123,12 +123,21 @@ InvokeResult submit_register(
         const std::vector<uint8_t>& auth_signature) {
     InvokeResult r;
 
+    Logger::get().log("INFO",
+        "[C2PA::Soroban] submit_register: contract=" + std::string(contract_id)
+        + " app=" + std::string(app_address)
+        + " kind=" + std::string(app_kind)
+        + " nonce=" + std::to_string(nonce)
+        + " rpc=" + rpc.rpc_url);
+
     if (auth_signature.size() != 64) {
         r.error = "auth_signature must be 64 bytes";
+        Logger::get().log("INFO", "[C2PA::Soroban] " + r.error);
         return r;
     }
     if (cli.binary_path().empty()) {
         r.error = "stellar CLI not available";
+        Logger::get().log("INFO", "[C2PA::Soroban] " + r.error);
         return r;
     }
 
@@ -169,11 +178,15 @@ InvokeResult submit_register(
     r.tx_hash = find_tx_hash(r.raw_out);
     if (out.ok()) {
         r.success = true;
+        Logger::get().log("INFO",
+            "[C2PA::Soroban] submit_register OK tx_hash="
+            + (r.tx_hash.empty() ? "<none-parsed>" : r.tx_hash));
     } else {
         r.error = "stellar contract invoke exited " + std::to_string(out.exit_code);
         if (out.spawn_failed) r.error = "subprocess spawn failed";
-        Logger::get().log("INFO",
-            "[Soroban] register_app_ca failed: " + r.error + "\n--- output ---\n" + r.raw_out);
+        Logger::get().log("WORLDFATAL",
+            "[C2PA::Soroban] submit_register FAILED: " + r.error
+            + "\n--- raw output ---\n" + r.raw_out);
     }
     return r;
 }
@@ -185,7 +198,15 @@ std::optional<bool> is_trusted(
         std::string_view source_account,
         std::string_view app_address,
         const std::array<uint8_t, 32>& fingerprint) {
-    if (cli.binary_path().empty()) return std::nullopt;
+    Logger::get().log("INFO",
+        "[C2PA::Soroban] is_trusted: contract=" + std::string(contract_id)
+        + " app=" + std::string(app_address)
+        + " rpc=" + rpc.rpc_url);
+    if (cli.binary_path().empty()) {
+        Logger::get().log("INFO",
+            "[C2PA::Soroban] is_trusted: stellar CLI unavailable");
+        return std::nullopt;
+    }
 
     auto argv = base_invoke_args(rpc, contract_id, source_account, /*send_no=*/true);
     argv.emplace_back("is_trusted");
@@ -195,8 +216,8 @@ std::optional<bool> is_trusted(
     auto out = cli.invoke(argv);
     if (!out.ok()) {
         Logger::get().log("INFO",
-            "[Soroban] is_trusted invocation failed (exit " +
-            std::to_string(out.exit_code) + "):\n" + out.out);
+            "[C2PA::Soroban] is_trusted exit=" + std::to_string(out.exit_code)
+            + " out=" + out.out);
         return std::nullopt;
     }
 
@@ -209,10 +230,16 @@ std::optional<bool> is_trusted(
     };
     const size_t t = find_last("true");
     const size_t f = find_last("false");
-    if (t == std::string::npos && f == std::string::npos) return std::nullopt;
-    if (t == std::string::npos) return false;
-    if (f == std::string::npos) return true;
-    return t > f;
+    if (t == std::string::npos && f == std::string::npos) {
+        Logger::get().log("INFO",
+            "[C2PA::Soroban] is_trusted: could not parse true/false from output");
+        return std::nullopt;
+    }
+    const bool result = (t != std::string::npos) &&
+                        (f == std::string::npos || t > f);
+    Logger::get().log("INFO",
+        std::string("[C2PA::Soroban] is_trusted = ") + (result ? "true" : "false"));
+    return result;
 }
 
 }  // namespace C2PA::Soroban

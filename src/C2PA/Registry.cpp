@@ -53,7 +53,14 @@ const char* network_label(GlobalConfig::StellarNetwork n) {
 
 std::optional<std::string> Registry::lookup_via_cli(
         GlobalConfig::StellarNetwork network) const {
-    if (cli_.binary_path().empty()) return std::nullopt;
+    Logger::get().log("INFO",
+        std::string("[C2PA::Registry] live lookup for hvym_cert_registry@")
+        + network_label(network) + " via " + REGISTRY_RPC_URL);
+    if (cli_.binary_path().empty()) {
+        Logger::get().log("INFO",
+            "[C2PA::Registry] no stellar CLI available — will use fallback");
+        return std::nullopt;
+    }
 
     // CLI scval arg formatting matrix (confirmed empirically against
     // the deployed contract): String values are JSON-quoted, enum

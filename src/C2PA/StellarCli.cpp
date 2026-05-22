@@ -8,6 +8,7 @@
 #include <SDL3/SDL_properties.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -160,6 +161,76 @@ std::string win_quote_arg(std::string_view a) {
 }
 #endif
 
+// Sensitive arg names whose values are elided from the logged
+// argv trace. The value of `--source-account` is also redacted iff
+// it looks like an S-strkey (secret) rather than a G-strkey (public)
+// — that's caller-context-dependent so we sniff at log time.
+const std::initializer_list<std::string_view> kAlwaysRedactedArgs = {
+    "--auth_payload",
+    "--auth_signature",
+    "--sign-with-key",
+    "--secret-key",
+};
+
+bool is_secret_strkey(std::string_view s) {
+    return s.size() == 56 && s.front() == 'S';
+}
+
+// Build a one-line redacted argv string for logging. Long hex blobs
+// are summarised by length; secret strkeys are replaced with
+// "<secret:S...>"; everything else is included verbatim. Newlines
+// are stripped so the log line stays single-line.
+std::string redact_argv_for_log(const std::vector<std::string>& args) {
+    std::string out;
+    out.reserve(256);
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i) out.push_back(' ');
+        const std::string& a = args[i];
+
+        // If the previous token names a sensitive arg, redact this
+        // token. Also catch `--foo-file-path` companions — the file
+        // path itself is non-secret but the content is, so just note
+        // the temp file pointer.
+        if (i > 0) {
+            const std::string& prev = args[i - 1];
+            for (auto name : kAlwaysRedactedArgs) {
+                if (prev == name) {
+                    out.append("<redacted:");
+                    out.append(std::to_string(a.size()));
+                    out.append(" bytes>");
+                    goto next;
+                }
+            }
+        }
+        // Auth via secret-key on --source-account.
+        if (i > 0 && args[i - 1] == "--source-account" && is_secret_strkey(a)) {
+            out.append("<secret-source:S...>");
+            goto next;
+        }
+        // Plain arg — strip newlines defensively.
+        for (char c : a) {
+            if (c == '\n' || c == '\r') out.push_back(' ');
+            else out.push_back(c);
+        }
+      next:;
+    }
+    return out;
+}
+
+// First N chars of `s` with newlines flattened, for one-line log
+// previews of CLI output.
+std::string first_chars_flat(const std::string& s, size_t n) {
+    std::string out;
+    out.reserve(std::min(n, s.size()));
+    for (size_t i = 0; i < s.size() && out.size() < n; ++i) {
+        char c = s[i];
+        if (c == '\n' || c == '\r' || c == '\t') out.push_back(' ');
+        else out.push_back(c);
+    }
+    if (s.size() > n) out += " ...";
+    return out;
+}
+
 // Spawn `argv`, block until exit, return (exit_code, captured
 // stdout+stderr).
 //
@@ -176,6 +247,14 @@ StellarCli::InvocationResult run_subprocess(const std::vector<std::string>& args
     StellarCli::InvocationResult r;
     if (args.empty()) { r.spawn_failed = true; return r; }
 
+    // Pre-log: every subprocess goes through here, so any
+    // platform-specific weirdness (Linux/macOS smoke test surprises,
+    // path-resolution quirks, missing binaries) shows up in the same
+    // single-line trace format.
+    const auto t_start = std::chrono::steady_clock::now();
+    Logger::get().log("INFO",
+        "[C2PA::CLI] invoke: " + redact_argv_for_log(args));
+
 #if defined(_WIN32)
     std::string cmdline;
     cmdline.reserve(256);
@@ -189,7 +268,7 @@ StellarCli::InvocationResult run_subprocess(const std::vector<std::string>& args
     if (!pipe) {
         r.spawn_failed = true;
         Logger::get().log("INFO",
-            "[StellarCli] _popen failed for cmdline: " + cmdline);
+            "[C2PA::CLI] _popen spawn failed: " + cmdline);
         return r;
     }
     char buf[4096];
@@ -203,6 +282,14 @@ StellarCli::InvocationResult run_subprocess(const std::vector<std::string>& args
     // wait/spawn failure. We mirror the SDL contract: exit_code = -1
     // when something went sideways at the C-runtime layer.
     r.exit_code = rc;
+    const auto t_end = std::chrono::steady_clock::now();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        t_end - t_start).count();
+    Logger::get().log("INFO",
+        "[C2PA::CLI] result: exit=" + std::to_string(r.exit_code)
+        + " duration=" + std::to_string(ms) + "ms"
+        + " out_len=" + std::to_string(r.out.size())
+        + " preview=" + first_chars_flat(r.out, 240));
     return r;
 #else
     auto argv = make_argv(args);
@@ -220,7 +307,7 @@ StellarCli::InvocationResult run_subprocess(const std::vector<std::string>& args
     if (!p) {
         r.spawn_failed = true;
         Logger::get().log("INFO",
-            "[StellarCli] SDL_CreateProcessWithProperties failed: "
+            "[C2PA::CLI] SDL_CreateProcessWithProperties spawn failed: "
             + std::string(SDL_GetError() ? SDL_GetError() : ""));
         return r;
     }
@@ -231,6 +318,14 @@ StellarCli::InvocationResult run_subprocess(const std::vector<std::string>& args
         SDL_free(buf);
     }
     SDL_DestroyProcess(p);
+    const auto t_end = std::chrono::steady_clock::now();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        t_end - t_start).count();
+    Logger::get().log("INFO",
+        "[C2PA::CLI] result: exit=" + std::to_string(r.exit_code)
+        + " duration=" + std::to_string(ms) + "ms"
+        + " out_len=" + std::to_string(r.out.size())
+        + " preview=" + first_chars_flat(r.out, 240));
     return r;
 #endif
 }
