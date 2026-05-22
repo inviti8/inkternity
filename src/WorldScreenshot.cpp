@@ -137,6 +137,12 @@ void world_take_screenshot(const std::shared_ptr<World>& w, const WorldScreensho
             auto skData = out.detachAsData();
             if(!SDL_SaveFile(info.filePath.string().c_str(), skData->bytes(), skData->size()))
                 throw std::runtime_error("SDL_SaveFile failed with error: " + std::string(SDL_GetError()));
+            // SVG isn't a c2pa-rs embed target — sidecar instead
+            // (plan §10/Q7). The PublishHook short-circuits when the
+            // gateway is OFF or registration not Active, so the SVG
+            // landing above is the always-correct outcome.
+            C2PA::PublishHook::try_write_sidecar(
+                w->main, info.filePath, "image/svg+xml");
         }
         catch(const std::exception& e) {
             Logger::get().log("WORLDFATAL", std::string("[ScreenshotTool::take_screenshot] Save screenshot error: ") + e.what());

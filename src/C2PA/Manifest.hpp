@@ -65,4 +65,22 @@ struct ReadResult {
 // validation_results field carries the outcome.
 ReadResult read_and_verify(const std::filesystem::path& source);
 
+// Write a .c2pa sidecar containing a signed manifest for `asset_path`,
+// without modifying the asset itself. Used for file formats c2pa-rs
+// can't embed manifests directly into (e.g. .inkternity, .svg).
+// The sidecar lands at `asset_path + ".c2pa"`.
+//
+// `format_mime` is the asset's MIME type so c2pa-rs can compute the
+// right hash binding. Use "image/svg+xml" for SVG, the closest known
+// type for custom containers (or "application/octet-stream" as a
+// fallback for `.inkternity`).
+//
+// Reads the entire asset into memory — fine for canvas files
+// (typically < 50 MB) and SVG exports (< 5 MB).
+EmbedResult write_sidecar(const std::filesystem::path& asset_path,
+                          std::string_view             manifest_json,
+                          std::string_view             format_mime,
+                          const AppCa&                 ca,
+                          const MemberLeaf&            leaf);
+
 }  // namespace C2PA

@@ -17,6 +17,7 @@ extern "C" {
 
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -188,6 +189,196 @@ EmbedResult embed_into_image_file(
     Logger::get().log("INFO",
         "[C2PA::Manifest] embed OK: " + dest.string()
         + " (" + std::to_string(dstSize) + " bytes)");
+    return r;
+}
+
+// ---- write_sidecar -------------------------------------------------------
+//
+// c2pa-rs's Builder API has c2pa_builder_set_no_embed which tells the
+// signer to compute the hash binding + produce the manifest bytes but
+// skip writing them into the asset. We pair that with memory-backed
+// source / discard-dest streams to get raw manifest bytes out via
+// c2pa_builder_sign's manifest_bytes_ptr out-param, then write to
+// asset_path + ".c2pa".
+
+namespace {
+
+struct ROStreamCtx { const std::vector<uint8_t>* data; std::size_t pos; };
+struct WOStreamCtx { std::vector<uint8_t>* buf; };
+
+extern "C" intptr_t ro_read(StreamContext* sc, uint8_t* out, intptr_t len) {
+    auto* s = reinterpret_cast<ROStreamCtx*>(sc);
+    if (!s || !s->data) return -1;
+    const std::size_t avail =
+        s->pos < s->data->size() ? s->data->size() - s->pos : 0;
+    const std::size_t n = std::min<std::size_t>(static_cast<std::size_t>(len), avail);
+    if (n) std::memcpy(out, s->data->data() + s->pos, n);
+    s->pos += n;
+    return static_cast<intptr_t>(n);
+}
+extern "C" intptr_t ro_seek(StreamContext* sc, intptr_t offset, C2paSeekMode mode) {
+    auto* s = reinterpret_cast<ROStreamCtx*>(sc);
+    if (!s || !s->data) return -1;
+    int64_t pos = static_cast<int64_t>(s->pos);
+    switch (mode) {
+        case C2paSeekMode::Start:   pos = offset; break;
+        case C2paSeekMode::Current: pos += offset; break;
+        case C2paSeekMode::End:
+            pos = static_cast<int64_t>(s->data->size()) + offset;
+            break;
+    }
+    if (pos < 0) return -1;
+    if (pos > static_cast<int64_t>(s->data->size())) {
+        pos = static_cast<int64_t>(s->data->size());
+    }
+    s->pos = static_cast<std::size_t>(pos);
+    return pos;
+}
+extern "C" intptr_t ro_write(StreamContext*, const uint8_t*, intptr_t) { return -1; }
+extern "C" intptr_t ro_flush(StreamContext*) { return 0; }
+
+extern "C" intptr_t wo_read(StreamContext*, uint8_t*, intptr_t) { return -1; }
+extern "C" intptr_t wo_seek(StreamContext*, intptr_t, C2paSeekMode) { return -1; }
+extern "C" intptr_t wo_write(StreamContext* sc, const uint8_t* data, intptr_t len) {
+    auto* s = reinterpret_cast<WOStreamCtx*>(sc);
+    if (!s || !s->buf) return -1;
+    s->buf->insert(s->buf->end(), data, data + len);
+    return len;
+}
+extern "C" intptr_t wo_flush(StreamContext*) { return 0; }
+
+}  // namespace
+
+EmbedResult write_sidecar(const std::filesystem::path& asset_path,
+                          std::string_view             manifest_json,
+                          std::string_view             format_mime,
+                          const AppCa&                 ca,
+                          const MemberLeaf&            leaf) {
+    EmbedResult r;
+    if (!ca.valid() || !leaf.valid()) {
+        r.error = "ca or leaf invalid";
+        return r;
+    }
+    apply_c2pa_settings_once();
+
+    Logger::get().log("INFO",
+        "[C2PA::Manifest] sidecar " + asset_path.string()
+        + " (format=" + std::string(format_mime) + ")");
+
+    // Load the asset bytes into memory.
+    std::vector<uint8_t> assetBytes;
+    {
+        std::ifstream f(asset_path, std::ios::binary | std::ios::ate);
+        if (!f) {
+            r.error = "could not open asset: " + asset_path.string();
+            return r;
+        }
+        const std::streamsize sz = f.tellg();
+        if (sz <= 0) {
+            r.error = "asset is empty";
+            return r;
+        }
+        f.seekg(0, std::ios::beg);
+        assetBytes.resize(static_cast<std::size_t>(sz));
+        f.read(reinterpret_cast<char*>(assetBytes.data()), sz);
+    }
+
+    // Build cert chain + private key PEM (same shape as embed_into_image_file).
+    std::string leafPem = der_to_pem(leaf.cert_der());
+    auto caPemVec = ca.pem_bytes();
+    if (leafPem.empty() || caPemVec.empty()) {
+        r.error = "PEM conversion failed (leaf or CA)";
+        return r;
+    }
+    std::string chainPem = leafPem +
+        std::string(reinterpret_cast<const char*>(caPemVec.data()),
+                    caPemVec.size());
+    std::string keyPem = seed_to_pkcs8_pem(leaf.private_seed());
+    if (keyPem.empty()) {
+        r.error = "private key PEM conversion failed";
+        return r;
+    }
+
+    C2paSignerInfo info{};
+    info.alg         = "Ed25519";
+    info.sign_cert   = chainPem.c_str();
+    info.private_key = keyPem.c_str();
+    info.ta_url      = nullptr;
+    C2paSigner* signer = c2pa_signer_from_info(&info);
+    OPENSSL_cleanse(keyPem.data(), keyPem.size());
+    if (!signer) {
+        r.error = "c2pa_signer_from_info failed: " + drain_c2pa_error();
+        return r;
+    }
+
+    const std::string mj(manifest_json);
+    C2paBuilder* builder = c2pa_builder_from_json(mj.c_str());
+    if (!builder) {
+        c2pa_free(signer);
+        r.error = "c2pa_builder_from_json failed: " + drain_c2pa_error();
+        return r;
+    }
+    // Skipping c2pa_builder_set_no_embed in v1 — leaving it on tripped
+    // an Io error in c2pa-rs's stream path. With embed enabled, dest
+    // ends up with the asset + embedded manifest; we keep
+    // manifest_bytes (which is also populated) for the sidecar write
+    // and discard dest. Cost is one extra in-memory copy of the
+    // signed asset, which is fine for `.inkternity` + SVG sizes.
+
+    ROStreamCtx srcCtx{ &assetBytes, 0 };
+    std::vector<uint8_t> discardBuf;
+    WOStreamCtx dstCtx{ &discardBuf };
+
+    C2paStream* srcStream = c2pa_create_stream(
+        reinterpret_cast<StreamContext*>(&srcCtx),
+        ro_read, ro_seek, ro_write, ro_flush);
+    C2paStream* dstStream = c2pa_create_stream(
+        reinterpret_cast<StreamContext*>(&dstCtx),
+        wo_read, wo_seek, wo_write, wo_flush);
+    if (!srcStream || !dstStream) {
+        if (srcStream) c2pa_release_stream(srcStream);
+        if (dstStream) c2pa_release_stream(dstStream);
+        c2pa_free(builder);
+        c2pa_free(signer);
+        r.error = "c2pa_create_stream failed";
+        return r;
+    }
+
+    const std::string fmt(format_mime);
+    const unsigned char* manifestBytes = nullptr;
+    int64_t sz = c2pa_builder_sign(builder, fmt.c_str(),
+                                    srcStream, dstStream,
+                                    signer, &manifestBytes);
+
+    c2pa_release_stream(srcStream);
+    c2pa_release_stream(dstStream);
+    c2pa_free(builder);
+    c2pa_free(signer);
+
+    if (sz < 0 || !manifestBytes) {
+        r.error = "c2pa_builder_sign failed: " + drain_c2pa_error();
+        return r;
+    }
+
+    // Write the manifest bytes to <asset>.c2pa.
+    std::filesystem::path sidecarPath = asset_path;
+    sidecarPath += ".c2pa";
+    {
+        std::ofstream f(sidecarPath, std::ios::binary | std::ios::trunc);
+        if (!f) {
+            c2pa_free(const_cast<unsigned char*>(manifestBytes));
+            r.error = "could not open sidecar for write: " + sidecarPath.string();
+            return r;
+        }
+        f.write(reinterpret_cast<const char*>(manifestBytes),
+                static_cast<std::streamsize>(sz));
+    }
+    c2pa_free(const_cast<unsigned char*>(manifestBytes));
+
+    Logger::get().log("INFO",
+        "[C2PA::Manifest] sidecar OK: " + sidecarPath.string()
+        + " (" + std::to_string(sz) + " bytes)");
+    r.success = true;
     return r;
 }
 

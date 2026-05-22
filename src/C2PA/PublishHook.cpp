@@ -154,4 +154,37 @@ bool try_save_signed_image(MainProgram& main,
     return true;
 }
 
+bool try_write_sidecar(MainProgram& main,
+                       const std::filesystem::path& asset_path,
+                       std::string_view format_mime) {
+    if (!main.conf.verifiablePublishingEnabled) return false;
+
+    KeyStore store(main.conf.configPath);
+    if (store.load_state().status != RegistrationStatus::Active) {
+        return false;  // not registered yet; quiet
+    }
+
+    // Sidecar generation via c2pa_builder_sign tripped a Rust-side
+    // io::Error with memory-backed streams under v0.84.1 — needs
+    // focused debugging or a switch to file-backed streams + the
+    // post-sign manifest-extraction path. Tracked as a known v1 gap.
+    // The asset itself (.inkternity / .svg) lands unsigned for now;
+    // the export path's embed signing in I14 covers the image case.
+    static bool warned = false;
+    if (!warned) {
+        Logger::get().log("USERINFO",
+            "Verifiable publishing for " + std::string(format_mime)
+            + " assets isn't fully wired yet — the export saved "
+            "unsigned (the .c2pa sidecar will land in a follow-up "
+            "build). Inkternity image exports continue to sign "
+            "normally.");
+        warned = true;
+    }
+    Logger::get().log("INFO",
+        "[C2PA::PublishHook] sidecar TODO for "
+        + asset_path.string() + " (format=" + std::string(format_mime) + ")");
+    (void)asset_path;
+    return false;
+}
+
 }  // namespace C2PA::PublishHook

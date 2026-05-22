@@ -411,6 +411,44 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     }
 #endif // HVYM_HAS_LIBMYPAINT
 
+    // C2PA bridge: smoke-test the sidecar path. Takes an arbitrary
+    // source file + format hint, writes <src>.c2pa next to it.
+    //   --c2pa-sidecar-test <src> <format-mime>
+    {
+        for (int i = 1; i + 2 < argc; ++i) {
+            const std::string_view flag(argv[i]);
+            if (flag == "--c2pa-sidecar-test") {
+                const std::filesystem::path src(argv[i + 1]);
+                const std::string fmt(argv[i + 2]);
+                static std::string smokeLog;
+                Logger::get().add_log("INFO",       [](const std::string& s){ smokeLog += s + "\n"; });
+                Logger::get().add_log("WORLDFATAL", [](const std::string& s){ smokeLog += "[FATAL] " + s + "\n"; });
+                Logger::get().add_log("USERINFO",   [](const std::string& s){ smokeLog += s + "\n"; });
+                C2PA::AppCa ca = C2PA::AppCa::generate("Inkternity",
+                    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+                C2PA::MemberLeaf leaf = C2PA::issue_leaf(ca,
+                    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+                    "Inkternity Smoke");
+                if (!ca.valid() || !leaf.valid()) return SDL_APP_FAILURE;
+                const std::string manifest = R"({
+                    "claim_generator": "inkternity/0.12.0",
+                    "title": "Sidecar Smoke",
+                    "assertions": [
+                        { "label": "c2pa.actions",
+                          "data": { "actions": [{"action":"c2pa.created"}] } }
+                    ]
+                })";
+                auto sr = C2PA::write_sidecar(src, manifest, fmt, ca, leaf);
+                std::ofstream lf(src.string() + ".smoke.log",
+                    std::ios::binary | std::ios::trunc);
+                lf << "success=" << (sr.success ? "yes" : "no") << "\n";
+                lf << "error=" << sr.error << "\n";
+                lf << "--- captured log ---\n" << smokeLog;
+                return sr.success ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
+            }
+        }
+    }
+
     // C2PA bridge: smoke-test the full embed + read pipeline. Takes
     // an unsigned source image, embeds a manifest signed by a fresh
     // CA + leaf, writes the dest image, then reads it back and

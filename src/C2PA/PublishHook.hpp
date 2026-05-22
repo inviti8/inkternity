@@ -39,4 +39,12 @@ bool try_save_signed_image(MainProgram& main,
                            std::size_t byte_count,
                            std::string_view format_mime);
 
+// Sidecar variant for assets c2pa-rs can't embed manifests directly
+// into (.inkternity, .svg). Writes <asset_path>.c2pa next to the
+// already-on-disk asset. Same gating as try_save_signed_image; same
+// return semantics. Caller must have already written `asset_path`.
+bool try_write_sidecar(MainProgram& main,
+                       const std::filesystem::path& asset_path,
+                       std::string_view format_mime);
+
 }  // namespace C2PA::PublishHook
