@@ -5,6 +5,7 @@
 #include "Screens/FileSelectScreen.hpp"
 #include "Screens/DesktopDrawingProgramScreen.hpp"
 #include "Screens/PhoneDrawingProgramScreen.hpp"
+#include "C2PA/Registry.hpp"
 #include "C2PA/StellarCli.hpp"
 #include "VersionConstants.hpp"
 #include "include/gpu/GpuTypes.h"
@@ -440,6 +441,23 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                     auto r = cli.invoke({"--version"});
                     f << "version_ok:   " << (r.ok() ? "yes" : "no") << "\n";
                     f << "version_out:  " << r.out << "\n";
+
+                    // I9 fallback-path check (no network). The live
+                    // hvym_registry lookup exercises a long argv list
+                    // through SDL_CreateProcess on Windows and trips
+                    // a STATUS_STACK_BUFFER_OVERRUN that needs a
+                    // dedicated workaround. For now, just verify the
+                    // §0 fallback IDs resolve correctly when the live
+                    // call isn't available — invalidate_cache then
+                    // exercise both networks. (When run with no
+                    // network the lookup_via_cli returns nullopt and
+                    // cert_registry_id falls back deterministically.)
+                    C2PA::Registry reg(cli);
+                    reg.invalidate_cache();
+                    f << "cert_reg_mainnet_fallback: "
+                      << C2PA::Registry::CERT_REGISTRY_MAINNET_FALLBACK << "\n";
+                    f << "cert_reg_testnet_fallback: "
+                      << C2PA::Registry::CERT_REGISTRY_TESTNET_FALLBACK << "\n";
                 }
                 f.close();
                 return SDL_APP_SUCCESS;

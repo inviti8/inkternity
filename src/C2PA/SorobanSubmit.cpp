@@ -94,11 +94,18 @@ RpcConfig mainnet_config() noexcept {
     return RpcConfig{ kMainnetRpc, kMainnetPassphrase };
 }
 
-RpcConfig config_from_env_or_default() {
+RpcConfig config_for(GlobalConfig::StellarNetwork n) {
+    return n == GlobalConfig::StellarNetwork::Testnet
+        ? testnet_config()
+        : mainnet_config();
+}
+
+RpcConfig config_for_env_or_global(const GlobalConfig& conf) {
     if (const char* env = std::getenv("STELLAR_NETWORK")) {
         if (std::strcmp(env, "testnet") == 0) return testnet_config();
+        if (std::strcmp(env, "mainnet") == 0) return mainnet_config();
     }
-    return mainnet_config();
+    return config_for(conf.stellarNetwork);
 }
 
 InvokeResult submit_register(
@@ -126,15 +133,22 @@ InvokeResult submit_register(
     }
 
     auto argv = base_invoke_args(rpc, contract_id, source_account, /*send_no=*/false);
+    // CLI scval arg format (confirmed against deployed contract):
+    //   Address      → bare strkey ("GABC..."), no quotes
+    //   String       → JSON-quoted ('"ed25519"')
+    //   enum variant → JSON-quoted ('"Inkternity"')
+    //   Bytes/BytesN → bare hex
+    //   integers     → bare numbers
+    auto jstr = [](std::string_view s) {
+        return std::string("\"") + std::string(s) + "\"";
+    };
+
     argv.emplace_back("register_app_ca");
     argv.emplace_back("--app_address");     argv.emplace_back(std::string(app_address));
     argv.emplace_back("--member_pubkey");   argv.emplace_back(hex_lower_of_array32(member_pubkey));
-    // Unit enum: the CLI's auto-generated parser accepts the bare variant
-    // name (e.g. "Inkternity"). If a future CLI version requires JSON
-    // form ("\"Inkternity\""), bump this site.
-    argv.emplace_back("--app_kind");        argv.emplace_back(std::string(app_kind));
+    argv.emplace_back("--app_kind");        argv.emplace_back(jstr(app_kind));
     argv.emplace_back("--fingerprint");     argv.emplace_back(hex_lower_of_array32(fingerprint));
-    argv.emplace_back("--pubkey_alg");      argv.emplace_back("ed25519");
+    argv.emplace_back("--pubkey_alg");      argv.emplace_back(jstr("ed25519"));
     argv.emplace_back("--expires_at");      argv.emplace_back(std::to_string(expires_at));
     argv.emplace_back("--nonce");           argv.emplace_back(std::to_string(nonce));
     argv.emplace_back("--auth_payload");    argv.emplace_back(hex_lower_of_vec(auth_payload));

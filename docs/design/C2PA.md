@@ -532,6 +532,22 @@ Resolved 2026-05-21 by founder:
 
 All §10 questions resolved. Ready for implementation per §12.
 
+### Implementation notes — discovered during build
+
+- **SDL_CreateProcess + Windows + JSON-quoted args + network-bound
+  child**: tripped a STATUS_STACK_BUFFER_OVERRUN (-1073740791) when
+  running `Registry::cert_registry_id` via `stellar contract invoke
+  ... -- get_contract_id --name '"hvym_cert_registry"' --network
+  '"Mainnet"'` through SDL's argv-to-cmdline encoder on Windows. The
+  same CLI call works from PowerShell directly. Workaround paths (any
+  of, when I10 needs the live registry view): (a) pass JSON args via
+  the CLI's `--<arg>-file-path` flag pointing at a temp file (sidesteps
+  embedded-quote encoding entirely); (b) bypass SDL_CreateProcess and
+  call CreateProcessW directly with explicit quoting we control;
+  (c) use `SDL_PROP_PROCESS_CREATE_CMDLINE_STRING` with hand-built
+  cmdline. The §0 hardcoded fallback IDs work today, so this is a
+  refinement, not a blocker.
+
 ---
 
 ## 11. Deliberately not in this plan

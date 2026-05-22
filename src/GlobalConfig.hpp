@@ -65,6 +65,18 @@ class GlobalConfig {
         // behavior with no on-chain side effects.
         bool verifiablePublishingEnabled = false;
 
+        // docs/design/C2PA.md §10/Q3 — which Stellar network the
+        // C2PA submitter targets. Defaults to mainnet (where the
+        // hvym-cert-registry was deployed 2026-05-21). The
+        // STELLAR_NETWORK env var overrides this for dev / smoke
+        // testing — set STELLAR_NETWORK=testnet to flip without
+        // touching the saved config. The hvym_registry contract
+        // itself always lives on mainnet regardless of this knob.
+        enum class StellarNetwork {
+            Mainnet,
+            Testnet,
+        } stellarNetwork = StellarNetwork::Mainnet;
+
         std::string themeCurrentlyLoaded = "Default";
 
         enum class AntiAliasing {
@@ -93,4 +105,9 @@ NLOHMANN_JSON_SERIALIZE_ENUM(GlobalConfig::AntiAliasing, {
     {GlobalConfig::AntiAliasing::NONE, "None"},
     {GlobalConfig::AntiAliasing::SKIA, "Skia"},
     {GlobalConfig::AntiAliasing::DYNAMIC_MSAA, "Dynamic MSAA"},
+})
+
+NLOHMANN_JSON_SERIALIZE_ENUM(GlobalConfig::StellarNetwork, {
+    {GlobalConfig::StellarNetwork::Mainnet, "mainnet"},
+    {GlobalConfig::StellarNetwork::Testnet, "testnet"},
 })

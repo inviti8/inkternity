@@ -10,6 +10,7 @@
 // Plan §G3.
 
 #include "StellarCli.hpp"
+#include "../GlobalConfig.hpp"
 
 #include <array>
 #include <cstdint>
@@ -29,11 +30,13 @@ struct RpcConfig {
 RpcConfig testnet_config() noexcept;
 RpcConfig mainnet_config() noexcept;
 
-// Resolve via STELLAR_NETWORK env var (matches Portal convention):
-// "testnet" → testnet_config(), anything else → mainnet_config().
-// I9 will replace this with the persisted GlobalConfig::stellarNetwork
-// knob, with the env var as override.
-RpcConfig config_from_env_or_default();
+// Resolve from a network kind (preset RPC URLs + passphrases).
+RpcConfig config_for(GlobalConfig::StellarNetwork);
+
+// Resolve from GlobalConfig + STELLAR_NETWORK env-var override.
+// Env wins for dev / smoke testing; otherwise the persisted user
+// preference applies. Matches §10/Q3 resolution.
+RpcConfig config_for_env_or_global(const GlobalConfig&);
 
 struct InvokeResult {
     bool success = false;

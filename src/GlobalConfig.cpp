@@ -38,6 +38,7 @@ nlohmann::json GlobalConfig::get_config_json(const InputManager& input) const {
     toRet["antialiasing"] = antialiasing;
     toRet["useNativeFilePicker"] = useNativeFilePicker;
     toRet["verifiablePublishingEnabled"] = verifiablePublishingEnabled;
+    toRet["stellarNetwork"] = stellarNetwork;
     toRet["themeInUse"] = themeCurrentlyLoaded;
     toRet["defaultCanvasBackgroundColor"] = defaultCanvasBackgroundColor;
     toRet["flipZoomToolDirection"] = flipZoomToolDirection;
@@ -106,6 +107,7 @@ void GlobalConfig::set_config_json(InputManager& input, const nlohmann::json& j,
     try{j.at("disableGraphicsDriverWorkarounds").get_to(disableGraphicsDriverWorkarounds);} catch(...) {}
     try{j.at("useNativeFilePicker").get_to(useNativeFilePicker);} catch(...) {}
     try{j.at("verifiablePublishingEnabled").get_to(verifiablePublishingEnabled);} catch(...) {}
+    try{j.at("stellarNetwork").get_to(stellarNetwork);} catch(...) {}
     try{j.at("themeInUse").get_to(themeCurrentlyLoaded);} catch(...) {}
     if(version >= VersionNumber(0, 3, 0))
         try{j.at("defaultCanvasBackgroundColor").get_to(defaultCanvasBackgroundColor);} catch(...) {}
