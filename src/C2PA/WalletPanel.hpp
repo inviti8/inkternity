@@ -6,11 +6,12 @@
 // plus an async Horizon balance probe so the artist can confirm the
 // account has enough XLM to submit register_app_ca.
 //
-// Network selection in v1: defaults to mainnet Horizon; honors
-// STELLAR_NETWORK=testnet env override (matches the Portal's convention)
-// so testnet smoke tests can hit the right RPC without UX rigging. The
-// persisted GlobalConfig::stellarNetwork knob (plan §10/Q3) lands in I9
-// alongside the contract-registry resolver.
+// Network selection: GlobalConfig::stellarNetwork (Mainnet|Testnet)
+// is the source of truth, set via the radio in the FileSelectScreen
+// "Verifiable publishing" section. STELLAR_NETWORK=testnet|mainnet
+// remains as a dev override (matches the Portal's convention) so
+// smoke tests can hit the right RPC without flipping the persisted
+// knob.
 //
 // Balance polling: on settings open + on user-clicked Refresh + on
 // every Submit attempt (the latter wired by I10). No background poll —
@@ -39,17 +40,13 @@ public:
     // Kick off an async Horizon GET for the given G-address. No-op if a
     // request is already in flight. Internal state cleared on success
     // or failure; render() reflects the result on the next frame.
-    // The MainProgram& overload picks the network from
-    // GlobalConfig::stellarNetwork (with STELLAR_NETWORK env override
-    // for dev); the legacy single-arg form is kept for callers that
-    // don't have a MainProgram in scope (env-var-only path).
+    // Network comes from GlobalConfig::stellarNetwork, with the
+    // STELLAR_NETWORK env var as a dev override (testnet|mainnet).
     void refresh_balance(MainProgram& main, const std::string& app_pubkey);
-    void refresh_balance(const std::string& app_pubkey);
 
     // Network selector. Honors STELLAR_NETWORK env var ("testnet" →
     // horizon-testnet.stellar.org), else the persisted
     // GlobalConfig::stellarNetwork knob, else mainnet.
-    static std::string horizon_base_url();
     static std::string horizon_base_url(MainProgram& main);
 
     // True iff the last successful Horizon read found a native XLM

@@ -15,14 +15,6 @@
 
 namespace C2PA {
 
-std::string WalletPanel::horizon_base_url() {
-    if (const char* env = std::getenv("STELLAR_NETWORK")) {
-        if (std::strcmp(env, "testnet") == 0)
-            return "https://horizon-testnet.stellar.org";
-    }
-    return "https://horizon.stellar.org";
-}
-
 std::string WalletPanel::horizon_base_url(MainProgram& main) {
     // Env override wins for dev / smoke testing.
     if (const char* env = std::getenv("STELLAR_NETWORK")) {
@@ -34,15 +26,6 @@ std::string WalletPanel::horizon_base_url(MainProgram& main) {
     return main.conf.stellarNetwork == GlobalConfig::StellarNetwork::Testnet
         ? "https://horizon-testnet.stellar.org"
         : "https://horizon.stellar.org";
-}
-
-void WalletPanel::refresh_balance(const std::string& app_pubkey) {
-    if (state_ == FetchState::InFlight) return;
-    if (app_pubkey.empty()) return;
-
-    const std::string url = horizon_base_url() + "/accounts/" + app_pubkey;
-    pendingFetch_ = FileDownloader::download_data_from_url(url);
-    state_ = FetchState::InFlight;
 }
 
 void WalletPanel::refresh_balance(MainProgram& main, const std::string& app_pubkey) {
@@ -201,7 +184,7 @@ void WalletPanel::render(MainProgram& main) {
         text_button(gui, "c2pa wallet refresh balance", "Refresh balance", {
             .wide = true,
             .onClick = [this, &main] {
-                refresh_balance(main.devKeys.app_pubkey());
+                refresh_balance(main, main.devKeys.app_pubkey());
             },
         });
 
