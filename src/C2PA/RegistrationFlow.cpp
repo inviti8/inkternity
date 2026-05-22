@@ -143,8 +143,71 @@ void RegistrationFlow::render_paste_card(MainProgram& main) {
     using namespace GUIStuff;
     using namespace ElementHelpers;
     auto& gui = main.g.gui;
-    text_label_light(gui,
-        "Step 2: paste-token + cross-check — lands in next commit (I10b).");
+    auto& io  = gui.io;
+
+    CLAY_AUTO_ID({
+        .layout = {
+            .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+            .padding = CLAY_PADDING_ALL(io.theme->padding1),
+            .childGap = io.theme->childGap1,
+            .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+    }) {
+        text_label(gui,
+            "Step 2: Paste the wire token the portal returned. It looks "
+            "like \"<base64>.<base64>\" on a single line.");
+
+        input_text_field(gui, "c2pa flow paste token field",
+            "Portal-minted token", &pastedToken_);
+
+        text_button(gui, "c2pa flow validate token", "Validate token", {
+            .wide = true,
+            .onClick = [this, &main] {
+                tokenValid_ = false;
+                tokenStatusMsg_.clear();
+                if (pastedToken_.empty()) {
+                    tokenStatusMsg_ = "Paste a token first.";
+                    return;
+                }
+                // Parse the wire format + extract fields.
+                auto rc = WireToken::parse_register(pastedToken_, tokenParams_);
+                if (rc != WireToken::ParseStatus::OK) {
+                    tokenStatusMsg_ = WireToken::parse_status_str(rc);
+                    Logger::get().log("INFO",
+                        std::string("[C2PA::Flow] paste-token parse failed: ")
+                        + tokenStatusMsg_);
+                    return;
+                }
+                // Cross-check against the locally-generated CA + the
+                // identity DevKeys knows. Mismatch returns a one-line
+                // human-readable string naming the first failing field.
+                WireToken::ExpectedRegisterValues expected{};
+                expected.app_address     = main.devKeys.app_pubkey();
+                expected.app_kind        = "Inkternity";
+                expected.fingerprint     = ca_.fingerprint_sha256();
+                expected.expires_at_unix = ca_.expires_at_unix();
+                std::string mismatch =
+                    WireToken::check_register(tokenParams_, expected);
+                if (!mismatch.empty()) {
+                    tokenStatusMsg_ = mismatch;
+                    Logger::get().log("INFO",
+                        "[C2PA::Flow] paste-token cross-check failed: " + mismatch);
+                    return;
+                }
+                tokenValid_ = true;
+                tokenStatusMsg_ = "Token validated.";
+                Logger::get().log("INFO",
+                    "[C2PA::Flow] paste-token validated; nonce="
+                    + std::to_string(tokenParams_.nonce));
+            },
+        });
+
+        if (!tokenStatusMsg_.empty()) {
+            text_label(gui, tokenStatusMsg_.c_str());
+        }
+    }
 }
 
 void RegistrationFlow::render_funding_card(MainProgram& main, WalletPanel&) {

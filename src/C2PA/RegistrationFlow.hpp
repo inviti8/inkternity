@@ -73,6 +73,20 @@ private:
     // CA + derived bundle. Lazy-initialized in ensure_ca_loaded.
     AppCa       ca_;
     std::string bundleText_;
+
+    // Paste-token state (Step 2). pastedToken_ is the artist's
+    // input buffer; tokenStatusMsg_ is the line shown below the
+    // paste field — empty before any Validate attempt, "Token
+    // validated." on success, or a per-field mismatch message
+    // from WireToken::check_register on failure. tokenParams_ is
+    // populated only when tokenValid_ is true; carried forward to
+    // Step 4's Submit call so we hand the contract the exact
+    // pass-through auth_payload / auth_signature bytes the Portal
+    // signed (gate G3).
+    std::string                  pastedToken_;
+    bool                         tokenValid_ = false;
+    std::string                  tokenStatusMsg_;
+    WireToken::RegisterParams    tokenParams_;
 };
 
 }  // namespace C2PA
