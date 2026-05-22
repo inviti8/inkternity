@@ -6,6 +6,7 @@
 #include "Helpers/ConvertVec.hpp"
 #include "../GUIStuff/Elements/GridScrollArea.hpp"
 #include "../GUIStuff/Elements/ManyElementScrollArea.hpp"
+#include "../GUIStuff/Elements/ScrollArea.hpp"
 #include "../GUIStuff/Elements/ImageDisplay.hpp"
 #include "../GUIStuff/Elements/LayoutElement.hpp"
 #include "../GUIStuff/Elements/SVGIcon.hpp"
@@ -212,9 +213,26 @@ void FileSelectScreen::settings_view() {
     auto& gui = main.g.gui;
     auto& io = gui.io;
 
+    // Settings sidebar: fixed 700px wide column that fills the
+    // available vertical space. The inner ScrollArea clips on the y
+    // axis so all sections (App Key, Verifiable Publishing, Auto-
+    // hosting) remain reachable even when content overflows the
+    // viewport — wheel + drag scroll work, and a y-scrollbar appears
+    // when needed.
     CLAY_AUTO_ID({
         .layout = {
-            .sizing = {.width = CLAY_SIZING_FIT(700), .height = CLAY_SIZING_FIT(0)},
+            .sizing = {.width = CLAY_SIZING_FIT(700), .height = CLAY_SIZING_GROW(0)},
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        }
+    }) {
+    gui.clipping_element<ScrollArea>("settings scroll area", ScrollArea::Options{
+        .scrollVertical = true,
+        .clipVertical = true,
+        .scrollbarY = ScrollArea::ScrollbarType::NORMAL,
+        .innerContent = [&](const ScrollArea::InnerContentParameters&) {
+    CLAY_AUTO_ID({
+        .layout = {
+            .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
             .padding = CLAY_PADDING_ALL(io.theme->padding1),
             .childGap = io.theme->childGap1,
             .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP },
@@ -330,6 +348,9 @@ void FileSelectScreen::settings_view() {
                 "Nothing marked published. Open a canvas with portal "
                 "subscription metadata, then Canvas Settings -> Publish.");
         }
+    }
+        }
+    });
     }
 }
 
