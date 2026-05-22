@@ -10,6 +10,10 @@
 #include "C2PA/Registry.hpp"
 #include "C2PA/StellarCli.hpp"
 #include "VersionConstants.hpp"
+
+extern "C" {
+#include "c2pa.h"
+}
 #include "include/gpu/GpuTypes.h"
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_hints.h>
@@ -405,6 +409,24 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         }
     }
 #endif // HVYM_HAS_LIBMYPAINT
+
+    // C2PA bridge: smoke-test the c2pa-rs prebuilt linkage by calling
+    // c2pa_version(). Writes the version string to the named file.
+    // Confirms cbindgen header + import lib + DLL load all align.
+    //   --c2pa-rs-version <out-file>
+    {
+        for (int i = 1; i + 1 < argc; ++i) {
+            const std::string_view flag(argv[i]);
+            if (flag == "--c2pa-rs-version") {
+                const std::filesystem::path outFile(argv[i + 1]);
+                char* v = c2pa_version();
+                std::ofstream f(outFile, std::ios::binary | std::ios::trunc);
+                f << (v ? v : "(c2pa_version returned NULL)");
+                if (v) free(v);
+                return SDL_APP_SUCCESS;
+            }
+        }
+    }
 
     // C2PA bridge: smoke-test the LeafIssuer path. Generates a fresh
     // CA + a fresh leaf signed by that CA, writes both DER blobs to

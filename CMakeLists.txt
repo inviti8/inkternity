@@ -443,8 +443,77 @@ if(MSVC)
 endif()
 
 target_include_directories(main PRIVATE "include")
+target_include_directories(main PRIVATE "deps/c2pa")
 target_include_directories(main PRIVATE "deps/miniaudio")
 target_include_directories(main PRIVATE "deps/qrcodegen")
+
+# c2pa-rs prebuilt C ABI (docs/design/C2PA.md §8.3 revised). ContentAuth
+# publishes per-platform prebuilt zips on github.com/contentauth/c2pa-rs/
+# releases; we download once on first configure into build/c2pa-runtime/
+# and link against the platform-specific import lib + shared lib. Header
+# is vendored under deps/c2pa/ so a clean checkout builds without
+# requiring the download to succeed at the moment cmake runs.
+set(C2PA_RS_VERSION "0.84.1")
+set(C2PA_RUNTIME_DIR "${CMAKE_BINARY_DIR}/c2pa-runtime")
+if(NOT EMSCRIPTEN)
+    # Map CMake target to the Rust target triple ContentAuth ships
+    # release assets under.
+    if(WIN32)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64")
+            set(C2PA_RS_TRIPLE "aarch64-pc-windows-msvc")
+        else()
+            set(C2PA_RS_TRIPLE "x86_64-pc-windows-msvc")
+        endif()
+        set(C2PA_RS_SHLIB    "c2pa_c.dll")
+        set(C2PA_RS_IMPLIB   "c2pa_c.dll.lib")
+    elseif(APPLE)
+        # Universal binary covers Intel + Apple Silicon in one zip.
+        set(C2PA_RS_TRIPLE "universal-apple-darwin")
+        set(C2PA_RS_SHLIB  "libc2pa_c.dylib")
+        set(C2PA_RS_IMPLIB "libc2pa_c.dylib")
+    else()
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+            set(C2PA_RS_TRIPLE "aarch64-unknown-linux-gnu")
+        else()
+            set(C2PA_RS_TRIPLE "x86_64-unknown-linux-gnu")
+        endif()
+        set(C2PA_RS_SHLIB  "libc2pa_c.so")
+        set(C2PA_RS_IMPLIB "libc2pa_c.so")
+    endif()
+    set(C2PA_RS_SHLIB_PATH  "${C2PA_RUNTIME_DIR}/lib/${C2PA_RS_SHLIB}")
+    set(C2PA_RS_IMPLIB_PATH "${C2PA_RUNTIME_DIR}/lib/${C2PA_RS_IMPLIB}")
+    if(NOT EXISTS "${C2PA_RS_SHLIB_PATH}")
+        set(C2PA_RS_URL
+            "https://github.com/contentauth/c2pa-rs/releases/download/c2pa-v${C2PA_RS_VERSION}/c2pa-v${C2PA_RS_VERSION}-${C2PA_RS_TRIPLE}.zip")
+        message(STATUS "Fetching c2pa-rs prebuilt for ${C2PA_RS_TRIPLE} from ${C2PA_RS_URL}")
+        set(C2PA_RS_ZIP "${CMAKE_BINARY_DIR}/c2pa-rs-${C2PA_RS_VERSION}.zip")
+        file(DOWNLOAD "${C2PA_RS_URL}" "${C2PA_RS_ZIP}"
+             SHOW_PROGRESS STATUS C2PA_RS_DL_STATUS)
+        list(GET C2PA_RS_DL_STATUS 0 C2PA_RS_DL_CODE)
+        if(NOT C2PA_RS_DL_CODE EQUAL 0)
+            list(GET C2PA_RS_DL_STATUS 1 C2PA_RS_DL_MSG)
+            message(FATAL_ERROR "c2pa-rs download failed: ${C2PA_RS_DL_MSG}")
+        endif()
+        file(MAKE_DIRECTORY "${C2PA_RUNTIME_DIR}")
+        file(ARCHIVE_EXTRACT INPUT "${C2PA_RS_ZIP}"
+             DESTINATION "${C2PA_RUNTIME_DIR}")
+    endif()
+    target_link_libraries(main "${C2PA_RS_IMPLIB_PATH}")
+    # Tell c2pa.h's cbindgen-generated decls to use dllimport linkage
+    # on Windows so the linker resolves through the import lib.
+    if(WIN32)
+        target_compile_definitions(main PRIVATE C2PA_DLL=0)
+    endif()
+    # Copy the shared lib next to inkternity.exe so it's on the
+    # default DLL search path at run time. POSIX equivalents land
+    # in $<TARGET_FILE_DIR:main>; macOS bundling step (DragNDrop)
+    # picks them up via the same path. add_custom_command runs every
+    # build (cheap copy_if_different).
+    add_custom_command(TARGET main POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${C2PA_RS_SHLIB_PATH}"
+                "$<TARGET_FILE_DIR:main>/${C2PA_RS_SHLIB}")
+endif()
 if(ANDROID)
     target_include_directories(main PRIVATE "android-project/SDL/include")
 endif()
