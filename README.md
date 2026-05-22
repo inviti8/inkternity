@@ -39,6 +39,7 @@ Files saved by Inkternity use the `.inkternity` extension; existing `.infpnt` fi
 - **Stroke vectorize** — drag a rect over recorded libmypaint strokes to convert them into editable vector beziers
 - **Artist avatar** — capture a 256×256 square from the canvas; a downscaled 64×64 broadcasts to peers and renders above their remote cursor during collaboration
 - **Subscription hosting** — alongside ephemeral collab lobbies, a canvas with portal-issued metadata (or dev keys) can be published under a stable share code; subscribers join read-only as live viewers
+- **Verifiable publishing (C2PA + Heavymeta on-chain trust)** — opt-in provenance for exported canvases. Enable via Settings → Verifiable publishing; the gateway generates a self-signed Ed25519 X.509 CA, walks the artist through a one-time on-chain registration via the Heavymeta portal + `hvym-cert-registry` Soroban contract, and from then on every PNG/JPG/WEBP export carries a signed C2PA manifest. Re-opening a signed file in Inkternity surfaces a "Provenance signature verifies" toast; tampered files toast red. Rotation + revocation are buttons in the same panel. Crypto-averse by default: the entire surface is hidden behind the toggle, the word "Stellar" stays inside a "Show advanced" disclosure
 
 ## Inherited from InfiniPaint
 

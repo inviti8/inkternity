@@ -147,6 +147,21 @@
 - Capture switches the canvas to a square-aspect capture tool — drag a rectangle and the captured image becomes your avatar. It's saved locally at 256×256 (master copy) and 64×64 (wire form)
 - During collaboration, your 64×64 avatar broadcasts to every peer alongside your cursor metadata. Other artists see your avatar rendered above your remote cursor — useful for distinguishing peers at a glance
 - Viewers (subscription read-only mode) don't broadcast their cursor or avatar to the host
+## Verifiable Publishing
+- Inkternity can attach a tamper-evident, on-chain-anchored provenance signature ("C2PA manifest") to every PNG/JPG/WEBP you export. Anyone re-opening a signed image in Inkternity sees a green "Provenance signature verifies" toast; tampered files get a red toast. The same trust system is used by Adobe, the BBC, the New York Times, and other CAI members
+- The whole feature is hidden by default. To turn it on: file-select screen → **Settings** → scroll to **Verifiable publishing** → check **Enable verifiable publishing**
+- Once enabled, Inkternity generates a fresh Ed25519 keypair + an X.509 CA cert ("your install's signing identity"). The keypair is identical to your existing Inkternity App Key — there's nothing extra to back up
+- Below the toggle:
+    - **Funding address** — the Stellar G... that needs ≈ 5 XLM in it before you can register. **Copy address** + **Show QR** for scanning from a Stellar wallet (Lobstr, Solar, Freighter). **Refresh balance** queries Horizon on demand. Inkternity is non-custodial; the cooperative never sees the secret
+    - **Step 1 — Bundle.** Copy the `HVYM-CA-REG-v1` text block. Open the Heavymeta portal, paste it into the Provenance card, click Authorize. The portal returns a one-line wire token signed by your member key
+    - **Step 2 — Paste token.** Drop the token back into the field, hit Validate. Per-field cross-check verifies the token actually matches this install's keypair before you spend a transaction fee
+    - **Step 3 — Funding.** Account needs ≈ 5 XLM. The Submit button stays disabled until both Steps 2 and 3 are green
+    - **Step 4 — Register on chain.** Submits to the `hvym-cert-registry` Soroban contract. Takes ~5–10 seconds. The walkthrough self-hides on success and the section now shows **Rotate keys** + **Revoke this install's signing keypair** buttons
+- Every PNG/JPG/WEBP you export after registration carries an embedded C2PA manifest. SVG and `.inkternity` files are deferred to a follow-up (the manifest writes to a separate `.c2pa` file alongside, not embedded). You can inspect signed images at https://contentauthenticity.org/inspect or with the `c2patool` CLI
+- **Rotate keys** replaces your current signing keypair on chain. Subscribers' historic signed exports stay verifiable until they expire (24-hour leaf certs, 10-year CA default). Same walkthrough as initial registration
+- **Revoke this install's signing keypair** marks the keypair as untrusted on chain. Future signed exports won't carry verifiable provenance until you re-register. Files you've already exported continue to verify, but viewers will see them as "Revoked"
+- **Network**: Inkternity defaults to Stellar mainnet (where the contract is deployed for production). For pre-release testing against the testnet contract, set the environment variable `STELLAR_NETWORK=testnet` before launching Inkternity, or use a testnet-only build
+
 ## Screenshots
 - Start taking a screenshot by going to Menu->Take Screenshot
 - Hold <kbd>LMB</kbd> and drag the mouse to select an area to take a screenshot of

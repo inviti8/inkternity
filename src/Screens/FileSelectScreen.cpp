@@ -13,6 +13,7 @@
 #include "../GUIStuff/ElementHelpers/LayoutHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/TextBoxHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
+#include "../GUIStuff/ElementHelpers/RadioButtonHelpers.hpp"
 #include "../GUIStuff/Elements/PositionAdjustingPopupMenu.hpp"
 #include "../World.hpp"
 #include "Helpers/StringHelpers.hpp"
@@ -466,6 +467,21 @@ void FileSelectScreen::verifiable_publishing_section() {
             "exported images. Verifiable against the Heavymeta cooperative's "
             "on-chain trust list. Free to read; requires a one-time on-chain "
             "registration (about 5 XLM) to write.");
+
+        // Network selector. Mainnet is the production target; Testnet
+        // is for pre-release smoke against the testnet-deployed cert
+        // registry. Defaults to Mainnet (per GlobalConfig). Hidden
+        // when the gateway is OFF so the surface stays uncluttered.
+        if (main.conf.verifiablePublishingEnabled) {
+            text_label(gui, "Network:");
+            radio_button_selector<GlobalConfig::StellarNetwork>(
+                gui, "c2pa network select",
+                &main.conf.stellarNetwork,
+                {
+                    { "Mainnet (production)",        GlobalConfig::StellarNetwork::Mainnet },
+                    { "Testnet (pre-release test)", GlobalConfig::StellarNetwork::Testnet },
+                });
+        }
 
         if (main.conf.verifiablePublishingEnabled) {
             // First frame after the artist flips the toggle ON: kick off
