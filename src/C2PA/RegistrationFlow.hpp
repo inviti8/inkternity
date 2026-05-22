@@ -57,6 +57,16 @@ public:
     StellarCli&  cli()               { return cli_; }
     Registry&    registry()          { return reg_; }
 
+    // Public so the anonymous-namespace worker entry function in
+    // RegistrationFlow.cpp can reference them. Treat as opaque from
+    // outside the .cpp.
+    enum class SubmitPhase { Idle, InFlight, Success, Failed };
+    struct SubmitResult {
+        std::atomic<SubmitPhase> phase{SubmitPhase::Idle};
+        std::string tx_hash;
+        std::string error;
+    };
+
 private:
     void render_bundle_card(MainProgram& main);
     // Stubs added by I10b / I10c — declared here so the unique IDs
@@ -87,6 +97,15 @@ private:
     bool                         tokenValid_ = false;
     std::string                  tokenStatusMsg_;
     WireToken::RegisterParams    tokenParams_;
+
+    // Submit state (Step 4). The worker thread captures the inputs
+    // by value, runs SorobanSubmit::submit_register (5-10 s on testnet),
+    // and writes back into the shared SubmitResult via shared_ptr —
+    // that way the worker survives RegistrationFlow destruction
+    // without dangling-pointer writes. SubmitPhase + SubmitResult are
+    // declared above (publicly).
+    std::shared_ptr<SubmitResult> submit_;
+    std::thread                   submitThread_;
 };
 
 }  // namespace C2PA

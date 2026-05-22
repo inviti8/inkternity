@@ -1,6 +1,7 @@
 #include "RegistrationFlow.hpp"
 
 #include "Bundle.hpp"
+#include "SorobanSubmit.hpp"
 #include "WalletPanel.hpp"
 #include "../MainProgram.hpp"
 #include "../GUIStuff/GUIManager.hpp"
@@ -23,7 +24,15 @@ RegistrationFlow::RegistrationFlow(std::filesystem::path configPath)
     cli_.probe();
 }
 
-RegistrationFlow::~RegistrationFlow() = default;
+RegistrationFlow::~RegistrationFlow() {
+    // The submit worker writes results via the SubmitResult shared_ptr,
+    // not back into RegistrationFlow itself, so detach() is safe: the
+    // shared_ptr keeps the result alive until the thread exits even
+    // if RegistrationFlow is destroyed mid-submit. Blocking on join
+    // here would freeze app shutdown for up to 10 s on a slow testnet
+    // round-trip.
+    if (submitThread_.joinable()) submitThread_.detach();
+}
 
 void RegistrationFlow::ensure_ca_loaded(MainProgram& main) {
     if (ca_.valid()) return;
@@ -210,20 +219,192 @@ void RegistrationFlow::render_paste_card(MainProgram& main) {
     }
 }
 
-void RegistrationFlow::render_funding_card(MainProgram& main, WalletPanel&) {
+void RegistrationFlow::render_funding_card(MainProgram& main, WalletPanel& wallet) {
     using namespace GUIStuff;
     using namespace ElementHelpers;
     auto& gui = main.g.gui;
-    text_label_light(gui,
-        "Step 3: funding gate — lands in next commit (I10c).");
+    auto& io  = gui.io;
+
+    CLAY_AUTO_ID({
+        .layout = {
+            .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+            .padding = CLAY_PADDING_ALL(io.theme->padding1),
+            .childGap = io.theme->childGap1,
+            .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+    }) {
+        text_label(gui,
+            "Step 3: Make sure the wallet above has about 5 XLM. The "
+            "exact ledger fee for register_app_ca lands in this budget.");
+        text_label(gui, wallet.is_funded()
+            ? "Wallet is funded."
+            : "Wallet is not funded yet — send XLM to the address above.");
+        text_button(gui, "c2pa flow refresh balance",
+            "Refresh balance", {
+            .wide = true,
+            .onClick = [&main, &wallet] {
+                wallet.refresh_balance(main.devKeys.app_pubkey());
+            },
+        });
+    }
 }
 
-void RegistrationFlow::render_submit_card(MainProgram& main, WalletPanel&) {
+namespace {
+
+// Worker thread entry: runs the Soroban submit and writes results
+// back via the shared SubmitResult pointer. Captured arguments are
+// all by-value so the worker survives RegistrationFlow destruction.
+void run_submit(
+        std::shared_ptr<RegistrationFlow::SubmitResult> result,
+        StellarCli* cli,
+        std::string  contract_id,
+        std::string  source_account,
+        std::string  app_address,
+        std::array<uint8_t, 32> member_pubkey,
+        std::string  app_kind,
+        std::array<uint8_t, 32> fingerprint,
+        uint64_t     expires_at,
+        uint64_t     nonce,
+        std::vector<uint8_t> auth_payload,
+        std::vector<uint8_t> auth_signature,
+        Soroban::RpcConfig rpc,
+        std::filesystem::path c2paDir) {
+    Logger::get().log("INFO",
+        "[C2PA::Flow] submit worker started; rpc=" + rpc.rpc_url);
+    auto r = Soroban::submit_register(*cli, rpc, contract_id, source_account,
+        app_address, member_pubkey, app_kind, fingerprint,
+        expires_at, nonce, auth_payload, auth_signature);
+    if (r.success) {
+        result->tx_hash = r.tx_hash;
+        result->phase.store(RegistrationFlow::SubmitPhase::Success);
+        // Persist Active status to disk so the walkthrough self-hides
+        // on next render and survives a restart.
+        std::error_code ec;
+        std::filesystem::create_directories(c2paDir, ec);
+        RegistrationState state{};
+        state.status                  = RegistrationStatus::Active;
+        state.expires_at_unix         = static_cast<int64_t>(expires_at);
+        state.last_known_member_pubkey =
+            // best-effort — caller already has member_pubkey raw bytes;
+            // we don't re-encode to strkey here. The full record can
+            // be backfilled by a get_app_ca read in I16's verifier.
+            std::string{};
+        KeyStore tmpStore(c2paDir.parent_path());
+        tmpStore.save_state(state);
+    } else {
+        result->error = r.error.empty()
+            ? std::string("submit failed; see log.txt for raw CLI output")
+            : r.error;
+        result->phase.store(RegistrationFlow::SubmitPhase::Failed);
+    }
+}
+
+}  // namespace
+
+void RegistrationFlow::render_submit_card(MainProgram& main, WalletPanel& wallet) {
     using namespace GUIStuff;
     using namespace ElementHelpers;
     auto& gui = main.g.gui;
-    text_label_light(gui,
-        "Step 4: submit register_app_ca — lands in next commit (I10c).");
+    auto& io  = gui.io;
+
+    const bool funded  = wallet.is_funded();
+    const bool ready   = tokenValid_ && funded;
+    const auto phase   = submit_ ? submit_->phase.load()
+                                  : SubmitPhase::Idle;
+
+    CLAY_AUTO_ID({
+        .layout = {
+            .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+            .padding = CLAY_PADDING_ALL(io.theme->padding1),
+            .childGap = io.theme->childGap1,
+            .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+    }) {
+        text_label(gui,
+            "Step 4: Submit the registration on chain. Takes a few "
+            "seconds and uses about 5 XLM. The button is disabled "
+            "until Steps 2 + 3 are green.");
+
+        if (!ready && phase == SubmitPhase::Idle) {
+            std::string reason;
+            if (!tokenValid_) reason = "Validate a token in Step 2 first.";
+            else if (!funded) reason = "Fund the wallet in Step 3 first.";
+            text_label_light(gui, reason.c_str());
+        }
+
+        switch (phase) {
+        case SubmitPhase::Idle: {
+            text_button(gui, "c2pa flow submit",
+                ready ? "Register on chain"
+                      : "Register on chain (disabled)", {
+                .wide = true,
+                .onClick = [this, &main] {
+                    if (!tokenValid_ || !ca_.valid()) return;
+                    if (submit_ &&
+                        submit_->phase.load() == SubmitPhase::InFlight) return;
+
+                    // Resolve the cert-registry contract ID for the
+                    // currently-selected network. The Registry caches
+                    // per session; falls back to the §0 hardcoded ID
+                    // if the live hvym_registry lookup misfires.
+                    const auto net = main.conf.stellarNetwork;
+                    const std::string contract_id =
+                        reg_.cert_registry_id(net);
+                    const auto rpc = Soroban::config_for_env_or_global(main.conf);
+
+                    submit_ = std::make_shared<SubmitResult>();
+                    submit_->phase.store(SubmitPhase::InFlight);
+
+                    if (submitThread_.joinable()) submitThread_.detach();
+                    submitThread_ = std::thread(run_submit,
+                        submit_,
+                        &cli_,
+                        contract_id,
+                        main.devKeys.app_pubkey(),
+                        main.devKeys.app_pubkey(),  // app_address == source
+                        tokenParams_.member_pubkey,
+                        std::string("Inkternity"),
+                        tokenParams_.fingerprint,
+                        static_cast<uint64_t>(tokenParams_.expires_at_unix),
+                        static_cast<uint64_t>(tokenParams_.nonce),
+                        tokenParams_.auth_payload,
+                        tokenParams_.auth_signature,
+                        rpc,
+                        store_.c2pa_dir());
+                },
+            });
+            break;
+        }
+        case SubmitPhase::InFlight:
+            text_label(gui,
+                "Submitting on chain... (network round-trip, may take "
+                "a few seconds)");
+            break;
+        case SubmitPhase::Success: {
+            const std::string okMsg =
+                "Registration submitted. tx_hash="
+                + (submit_->tx_hash.empty()
+                    ? std::string("<none-parsed>") : submit_->tx_hash);
+            text_label(gui, okMsg.c_str());
+            // The walkthrough's top-level render() will self-hide on
+            // the next frame because KeyStore::load_state() now
+            // returns Active.
+            break;
+        }
+        case SubmitPhase::Failed:
+            text_label(gui,
+                ("Submission failed: " + submit_->error).c_str());
+            text_button(gui, "c2pa flow submit retry", "Try again", {
+                .wide = true,
+                .onClick = [this] { submit_.reset(); },
+            });
+            break;
+        }
+    }
 }
 
 // ---- Top-level render ----------------------------------------------------

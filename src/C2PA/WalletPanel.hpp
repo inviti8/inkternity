@@ -45,6 +45,13 @@ public:
     // var; "testnet" → horizon-testnet.stellar.org, else mainnet.
     static std::string horizon_base_url();
 
+    // True iff the last successful Horizon read found a native XLM
+    // balance on the account. Consumed by RegistrationFlow's Step 3
+    // funding gate. nullopt-ish semantics: false also covers
+    // "haven't fetched yet" — caller should ensure a fresh probe ran
+    // before reading this.
+    bool is_funded() const noexcept { return isFunded_; }
+
 private:
     enum class FetchState {
         Idle,        // never fetched, or last fetch fully resolved
