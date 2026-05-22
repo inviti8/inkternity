@@ -246,6 +246,20 @@ void WalletPanel::render(MainProgram& main) {
             "never holds custody.");
         }  // if (open_)
 
+        // Heartbeat. Inkternity's GUI is lazy-relayout: render() only
+        // runs when something marks the GUI dirty via set_to_layout().
+        // FileDownloader resolves Horizon fetches on a background
+        // thread and just flips an atomic status flag — no main-thread
+        // callback. Without continuous redraw, the self-chain in the
+        // fetch-drain block never advances past the first poll because
+        // the drain doesn't run unless the user moves the mouse. While
+        // the popup is open, tick layout every frame so the chain
+        // self-perpetuates and the receipt banner / status line stay
+        // current. Same pattern as GUIFloatAnimation.cpp:36.
+        if (fundPopupOpen_) {
+            gui.set_to_layout();
+        }
+
         // Fund popup. Floating, attached to the GUIManager root so it
         // overlays the whole screen regardless of where this wallet
         // panel sits in the layout. Lives OUTSIDE the if (open_) block

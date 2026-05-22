@@ -125,6 +125,12 @@ class FileSelectScreen : public Screen {
         std::string restoreFeedback;
         void create_file_button();
         void file_view_edit();
+        // USERINFO / WORLDFATAL toast overlay. Mirrors the canvas-mode
+        // renderer at Toolbar.cpp:1433 so toasts (e.g. "Received 10
+        // XLM" from the Fund popup, file save errors, restore feedback)
+        // surface outside canvas mode too. Floating, top-right of the
+        // screen, fades out per UserLogMessage::DISPLAY_TIME.
+        void global_log();
         void menu_black_box();
         void edit_action_bar();
         void edit_title_bar();

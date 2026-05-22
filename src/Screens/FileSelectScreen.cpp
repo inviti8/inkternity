@@ -4,6 +4,7 @@
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
 #include "Helpers/ConvertVec.hpp"
+#include "Helpers/MathExtras.hpp"
 #include "../GUIStuff/Elements/GridScrollArea.hpp"
 #include "../GUIStuff/Elements/ManyElementScrollArea.hpp"
 #include "../GUIStuff/Elements/ScrollArea.hpp"
@@ -206,7 +207,83 @@ void FileSelectScreen::main_display() {
             edit_action_bar();
             menu_black_box();
         }
+        // Toast overlay last so it sits at the highest z within this
+        // screen's layout. Floating-to-root anchors it to the window
+        // corner regardless of the surrounding tree.
+        global_log();
     }
+}
+
+void FileSelectScreen::global_log() {
+    auto& gui = main.g.gui;
+    auto& io  = gui.io;
+
+    // Mirror of Toolbar::global_log (Toolbar.cpp:1433) for screens
+    // outside canvas mode. Pinned to the top-right of the root, with
+    // a small inset so it clears the title bar.
+    gui.new_id("FileSelectScreen global log popup list", [&] {
+        CLAY_AUTO_ID({
+            .layout = {
+                .sizing = {.width = CLAY_SIZING_FIXED(300), .height = CLAY_SIZING_FIT(0)},
+                .childGap = io.theme->childGap1,
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_TOP },
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .floating = {
+                .offset = {-20, 60},
+                .attachPoints = {
+                    .element = CLAY_ATTACH_POINT_RIGHT_TOP,
+                    .parent  = CLAY_ATTACH_POINT_RIGHT_TOP,
+                },
+                .attachTo = CLAY_ATTACH_TO_ROOT,
+            }
+        }) {
+            for (size_t i = 0; i < main.logMessages.size(); i++) {
+                auto& logM = main.logMessages[i];
+                logM.time.update_time_since();
+                if (logM.time < UserLogMessage::DISPLAY_TIME) {
+                    float a = 1.0f - lerp_time<float>(
+                        logM.time,
+                        UserLogMessage::DISPLAY_TIME,
+                        UserLogMessage::FADE_START_TIME);
+                    // The fade requires a fresh layout each frame; the
+                    // canvas Toolbar's update() drives this via
+                    // logMessages erase + set_to_layout, but
+                    // FileSelectScreen has no equivalent hook so we
+                    // tick layout here while any toast is on screen.
+                    gui.set_to_layout();
+                    gui.new_id(i, [&] {
+                        gui.element<LayoutElement>("Global log message", [&] (LayoutElement*, const Clay_ElementId& lId) {
+                            CLAY(lId, {
+                                .layout = {
+                                    .sizing = {.width = CLAY_SIZING_FIT(300), .height = CLAY_SIZING_FIT(0)},
+                                    .padding = CLAY_PADDING_ALL(io.theme->padding1),
+                                    .childGap = 0,
+                                    .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP },
+                                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                                },
+                                .backgroundColor = convert_vec4<Clay_Color>(color_mul_alpha(io.theme->backColor1, a)),
+                                .cornerRadius = CLAY_CORNER_RADIUS(io.theme->windowCorners1),
+                            }) {
+                                SkColor4f c{0, 0, 0, 0};
+                                switch (logM.color) {
+                                    case UserLogMessage::COLOR_NORMAL:
+                                        c = io.theme->frontColor1;
+                                        break;
+                                    case UserLogMessage::COLOR_ERROR:
+                                        c = io.theme->errorColor;
+                                        break;
+                                }
+                                text_label_color(gui, logM.text, color_mul_alpha(c, a));
+                            }
+                        });
+                    });
+                } else {
+                    break;
+                }
+            }
+        }
+    });
 }
 
 void FileSelectScreen::settings_view() {
