@@ -581,20 +581,19 @@ void FileSelectScreen::verifiable_publishing_section() {
                 "on-chain trust list. Free to read; requires a one-time on-chain "
                 "registration (about 5 XLM) to write.");
 
-            // Network selector. Mainnet is the production target; Testnet
-            // is for pre-release smoke against the testnet-deployed cert
-            // registry. Defaults to Mainnet (per GlobalConfig). Hidden
-            // when the gateway is OFF so the surface stays uncluttered.
-            if (main.conf.verifiablePublishingEnabled) {
-                text_label(gui, "Network:");
-                radio_button_selector<GlobalConfig::StellarNetwork>(
-                    gui, "c2pa network select",
-                    &main.conf.stellarNetwork,
-                    {
-                        { "Mainnet (production)",        GlobalConfig::StellarNetwork::Mainnet },
-                        { "Testnet (pre-release test)", GlobalConfig::StellarNetwork::Testnet },
-                    });
-            }
+            // Network selector hidden for release — mainnet only.
+            // Dev override: set STELLAR_NETWORK=testnet env var.
+            //
+            // if (main.conf.verifiablePublishingEnabled) {
+            //     text_label(gui, "Network:");
+            //     radio_button_selector<GlobalConfig::StellarNetwork>(
+            //         gui, "c2pa network select",
+            //         &main.conf.stellarNetwork,
+            //         {
+            //             { "Mainnet (production)",        GlobalConfig::StellarNetwork::Mainnet },
+            //             { "Testnet (pre-release test)", GlobalConfig::StellarNetwork::Testnet },
+            //         });
+            // }
 
             if (main.conf.verifiablePublishingEnabled) {
                 // First frame after the artist flips the toggle ON: kick off

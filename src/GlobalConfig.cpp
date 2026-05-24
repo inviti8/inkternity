@@ -4,6 +4,7 @@
 #include "ResourceDisplay/ImageResourceDisplay.hpp"
 #include "DrawingProgram/DrawingProgramCache.hpp"
 #include <SDL3/SDL_time.h>
+#include <cstdlib>
 #include <fstream>
 
 GlobalConfig::GlobalConfig() {
@@ -107,7 +108,11 @@ void GlobalConfig::set_config_json(InputManager& input, const nlohmann::json& j,
     try{j.at("disableGraphicsDriverWorkarounds").get_to(disableGraphicsDriverWorkarounds);} catch(...) {}
     try{j.at("useNativeFilePicker").get_to(useNativeFilePicker);} catch(...) {}
     try{j.at("verifiablePublishingEnabled").get_to(verifiablePublishingEnabled);} catch(...) {}
+    // Network toggle hidden for release — force mainnet unless env override.
+    // Still deserialize so we don't lose the field on round-trip save.
     try{j.at("stellarNetwork").get_to(stellarNetwork);} catch(...) {}
+    if (!std::getenv("STELLAR_NETWORK"))
+        stellarNetwork = StellarNetwork::Mainnet;
     try{j.at("themeInUse").get_to(themeCurrentlyLoaded);} catch(...) {}
     if(version >= VersionNumber(0, 3, 0))
         try{j.at("defaultCanvasBackgroundColor").get_to(defaultCanvasBackgroundColor);} catch(...) {}
