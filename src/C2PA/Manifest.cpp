@@ -204,7 +204,7 @@ EmbedResult embed_into_image_file(
 namespace {
 
 struct ROStreamCtx { const std::vector<uint8_t>* data; std::size_t pos; };
-struct WOStreamCtx { std::vector<uint8_t>* buf; };
+struct WOStreamCtx { std::vector<uint8_t>* buf; std::size_t pos = 0; };
 
 extern "C" intptr_t ro_read(StreamContext* sc, uint8_t* out, intptr_t len) {
     auto* s = reinterpret_cast<ROStreamCtx*>(sc);
@@ -237,12 +237,41 @@ extern "C" intptr_t ro_seek(StreamContext* sc, intptr_t offset, C2paSeekMode mod
 extern "C" intptr_t ro_write(StreamContext*, const uint8_t*, intptr_t) { return -1; }
 extern "C" intptr_t ro_flush(StreamContext*) { return 0; }
 
-extern "C" intptr_t wo_read(StreamContext*, uint8_t*, intptr_t) { return -1; }
-extern "C" intptr_t wo_seek(StreamContext*, intptr_t, C2paSeekMode) { return -1; }
+extern "C" intptr_t wo_read(StreamContext* sc, uint8_t* out, intptr_t len) {
+    auto* s = reinterpret_cast<WOStreamCtx*>(sc);
+    if (!s || !s->buf) return -1;
+    const std::size_t avail =
+        s->pos < s->buf->size() ? s->buf->size() - s->pos : 0;
+    const std::size_t n = std::min<std::size_t>(static_cast<std::size_t>(len), avail);
+    if (n) std::memcpy(out, s->buf->data() + s->pos, n);
+    s->pos += n;
+    return static_cast<intptr_t>(n);
+}
+extern "C" intptr_t wo_seek(StreamContext* sc, intptr_t offset, C2paSeekMode mode) {
+    auto* s = reinterpret_cast<WOStreamCtx*>(sc);
+    if (!s || !s->buf) return -1;
+    int64_t pos = static_cast<int64_t>(s->pos);
+    switch (mode) {
+        case C2paSeekMode::Start:   pos = offset; break;
+        case C2paSeekMode::Current: pos += offset; break;
+        case C2paSeekMode::End:
+            pos = static_cast<int64_t>(s->buf->size()) + offset;
+            break;
+    }
+    if (pos < 0) return -1;
+    s->pos = static_cast<std::size_t>(pos);
+    if (s->pos > s->buf->size())
+        s->buf->resize(s->pos, 0);
+    return static_cast<intptr_t>(s->pos);
+}
 extern "C" intptr_t wo_write(StreamContext* sc, const uint8_t* data, intptr_t len) {
     auto* s = reinterpret_cast<WOStreamCtx*>(sc);
     if (!s || !s->buf) return -1;
-    s->buf->insert(s->buf->end(), data, data + len);
+    const std::size_t end = s->pos + static_cast<std::size_t>(len);
+    if (end > s->buf->size())
+        s->buf->resize(end);
+    std::memcpy(s->buf->data() + s->pos, data, static_cast<std::size_t>(len));
+    s->pos = end;
     return len;
 }
 extern "C" intptr_t wo_flush(StreamContext*) { return 0; }

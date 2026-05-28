@@ -689,11 +689,23 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAtRaw, bool 
                     // deep in serialization (e.g. a null member ptr) becomes
                     // a catchable runtime_error instead of terminating the
                     // process and silently losing the artist's work.
+                    std::string cppExMsg;
                     const unsigned long sehCode = seh_guard_call([&] {
-                        cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
-                        save_file(a);
+                        try {
+                            cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
+                            save_file(a);
+                        } catch (const std::exception& e) {
+                            cppExMsg = e.what();
+                            throw;
+                        }
                     });
                     if(sehCode != 0) {
+                        if (!cppExMsg.empty()) {
+                            throw std::runtime_error(
+                                "Save failed: " + cppExMsg +
+                                ". Your work is still in memory — try Save "
+                                "As again to a different path.");
+                        }
                         char buf[24];
                         std::snprintf(buf, sizeof(buf), "0x%08lx", sehCode);
                         throw std::runtime_error(
@@ -855,16 +867,21 @@ void World::autosave_tick() {
             std::stringstream fWorldDataToCompress;
             {
                 #ifdef _WIN32
+                    std::string cppExMsg;
                     const unsigned long sehCode = seh_guard_call([&] {
-                        cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
-                        save_file(a);
+                        try {
+                            cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
+                            save_file(a);
+                        } catch (const std::exception& e) {
+                            cppExMsg = e.what();
+                            throw;
+                        }
                     });
                     if(sehCode != 0) {
-                        char buf[24];
-                        std::snprintf(buf, sizeof(buf), "0x%08lx", sehCode);
                         Logger::get().log("INFO",
-                            std::string("[autosave] SEH (") + buf +
-                            ") during serialization; skipping this tick");
+                            cppExMsg.empty()
+                                ? std::string("[autosave] SEH during serialization; skipping this tick")
+                                : "[autosave] serialization failed: " + cppExMsg);
                         return;
                     }
                 #else
