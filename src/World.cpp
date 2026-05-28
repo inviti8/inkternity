@@ -1,5 +1,5 @@
 #include "World.hpp"
-#include "C2PA/PublishHook.hpp"
+// C2PA/PublishHook.hpp removed — .inkternity sidecar signing not supported
 #include <Helpers/CanvasShareId.hpp>
 #include <Helpers/HsvRgb.hpp>
 #include <Helpers/MathExtras.hpp>
@@ -761,15 +761,11 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAtRaw, bool 
                 std::filesystem::remove(tmpPath, rec);
             }
 
-            // C2PA sidecar (docs/design/C2PA.md §I15). When the gateway
-            // is ON + registration Active, write <filePath>.c2pa next
-            // to the saved canvas. The .inkternity binary container
-            // can't carry an embedded C2PA manifest — sidecar lets
-            // recipients verify provenance via Inkternity's I16
-            // verifier on open. Short-circuits in the off / not-yet-
-            // registered cases; the canvas bytes always land first.
-            C2PA::PublishHook::try_write_sidecar(
-                main, filePath, "application/octet-stream");
+            // C2PA: .inkternity sidecar signing is not supported.
+            // c2pa-rs requires a recognized media type to compute hash
+            // bindings; application/octet-stream is rejected. Image
+            // exports (PNG/JPEG/WEBP) are signed via try_save_signed_image
+            // in the screenshot/export path.
 
             if(saveThumbnail && !disableThumbnailSaving) {
                 // Thumbnail is a JPG sidecar for the file-select tile.

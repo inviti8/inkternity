@@ -154,44 +154,13 @@ bool try_save_signed_image(MainProgram& main,
     return true;
 }
 
-bool try_write_sidecar(MainProgram& main,
-                       const std::filesystem::path& asset_path,
-                       std::string_view format_mime) {
-    if (!main.conf.verifiablePublishingEnabled) return false;
-
-    KeyStore store(main.conf.configPath);
-    const auto state = store.load_state();
-    if (state.status != RegistrationStatus::Active) {
-        return false;  // not registered yet; quiet
-    }
-
-    if (!store.has_saved_ca()) return false;
-    AppCa ca = store.load();
-    if (!ca.valid()) {
-        Logger::get().log("INFO",
-            "[C2PA::PublishHook] sidecar: CA invalid — skipping");
-        return false;
-    }
-    if (!main.devKeys.is_loaded()) return false;
-
-    MemberLeaf leaf = issue_leaf(ca, main.devKeys.app_pubkey(),
-        "Inkternity Member");
-    if (!leaf.valid()) {
-        Logger::get().log("INFO",
-            "[C2PA::PublishHook] sidecar: leaf invalid — skipping");
-        return false;
-    }
-
-    const std::string title = asset_path.stem().string();
-    const std::string manifest = build_manifest_json(
-        title.empty() ? std::string("Inkternity Canvas") : title);
-
-    auto er = write_sidecar(asset_path, manifest, format_mime, ca, leaf);
-    if (!er.success) {
-        Logger::get().log("INFO",
-            "[C2PA::PublishHook] sidecar failed: " + er.error);
-    }
-    return er.success;
+bool try_write_sidecar(MainProgram&,
+                       const std::filesystem::path&,
+                       std::string_view) {
+    // Not supported: c2pa-rs requires a recognized media type to
+    // compute hash bindings. .inkternity (application/octet-stream)
+    // is rejected. Image exports are signed via try_save_signed_image.
+    return false;
 }
 
 }  // namespace C2PA::PublishHook
