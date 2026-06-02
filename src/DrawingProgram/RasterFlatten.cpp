@@ -9,7 +9,6 @@
 #include "../CanvasComponents/MyPaintLayerCanvasComponent.hpp"
 #include "Layers/DrawingProgramLayerManager.hpp"
 #include "Layers/DrawingProgramLayerListItem.hpp"
-#include "Layers/LayerKind.hpp"
 
 #include <Helpers/Logger.hpp>
 
@@ -41,13 +40,14 @@ void flatten_ink_strokes_in_view(DrawingProgram& drawP) {
     auto& world = drawP.world;
     auto& main = world.main;
 
-    auto inkLayerWeak = drawP.layerMan.get_named_layer(LayerKind::INK);
-    auto inkLayer = inkLayerWeak.lock();
-    if (!inkLayer || inkLayer->is_folder()) {
-        Logger::get().log("USERINFO", "Flatten: no ink layer to flatten.");
+    // Flatten the layer currently being edited — same scoping as the brush,
+    // eraser, and vectorize tool. Bail if the edit target is unset/a folder.
+    auto editLayer = drawP.layerMan.get_editing_layer().lock();
+    if (!editLayer || editLayer->is_folder()) {
+        Logger::get().log("USERINFO", "Flatten: no active layer to flatten.");
         return;
     }
-    auto& components = inkLayer->get_layer().components;
+    auto& components = editLayer->get_layer().components;
     if (!components) return;
 
     // Active-view world AABB: project the four screen corners into world
@@ -161,7 +161,7 @@ void flatten_ink_strokes_in_view(DrawingProgram& drawP) {
 
     std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
     toPlace.emplace_back(anchor, merged);
-    const auto placed = drawP.layerMan.add_many_components_to_specific_layer(*inkLayer, toPlace);
+    const auto placed = drawP.layerMan.add_many_components_to_specific_layer(*editLayer, toPlace);
     for (auto& pit : placed)
         pit->obj->commit_update(drawP);
 

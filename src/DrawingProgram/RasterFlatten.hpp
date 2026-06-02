@@ -22,10 +22,10 @@ class DrawingProgram;
 namespace RasterFlatten {
 
 // Bake every libmypaint (raster) ink stroke whose world bounds intersect
-// the current camera view into a single merged raster component on the INK
-// layer, replacing the originals. Undoable (place + erase). No-op with an
-// in-app notice if fewer than two raster strokes are in view, or if the
-// build has no libmypaint.
+// the current camera view into a single merged raster component on the
+// layer being edited, replacing the originals. Undoable (place + erase).
+// No-op with an in-app notice if fewer than two raster strokes are in
+// view, or if the build has no libmypaint.
 void flatten_ink_strokes_in_view(DrawingProgram& drawP);
 
 }  // namespace RasterFlatten

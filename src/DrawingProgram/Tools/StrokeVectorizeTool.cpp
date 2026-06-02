@@ -43,7 +43,7 @@ void StrokeVectorizeTool::gui_toolbox(Toolbar&) {
     auto& gui = drawP.world.main.g.gui;
     gui.new_id("stroke vectorize tool", [&] {
         text_label_centered(gui, "Stroke Vectorize");
-        text_label(gui, "Drag a rect on the Ink layer to convert recorded libmypaint strokes inside it into vector strokes.");
+        text_label(gui, "Drag a rect over the active layer to convert recorded libmypaint strokes inside it into vector strokes.");
     });
 }
 
@@ -187,14 +187,15 @@ void StrokeVectorizeTool::convert_selection(const Vector2f& camMin, const Vector
 #ifdef HVYM_HAS_LIBMYPAINT
     auto& world = drawP.world;
 
-    // Find the INK-kind layer. Per the named-layers invariant there's
-    // exactly one (lazy-created on world load). Bail if absent (legacy
-    // file mid-migration before ensure_named_layers ran somehow).
-    auto inkLayerWeak = drawP.layerMan.get_named_layer(LayerKind::INK);
-    auto inkLayerLock = inkLayerWeak.lock();
-    if (!inkLayerLock || inkLayerLock->is_folder()) return;
+    // Operate on the layer currently being edited — same scoping as the
+    // brush (add-to-layer-being-edited) and eraser (LAYER_BEING_EDITED).
+    // libmypaint strokes can live on any layer, not just the named Ink
+    // layer, so vectorize follows the active edit target. Bail if that
+    // target is unset or a folder.
+    auto editLayerLock = drawP.layerMan.get_editing_layer().lock();
+    if (!editLayerLock || editLayerLock->is_folder()) return;
 
-    auto& components = inkLayerLock->get_layer().components;
+    auto& components = editLayerLock->get_layer().components;
     if (!components) return;
 
     // Build the world-space AABB of the selection rect by projecting
@@ -270,7 +271,7 @@ void StrokeVectorizeTool::convert_selection(const Vector2f& camMin, const Vector
     }
 
     if (!placedNewObjs.empty())
-        drawP.layerMan.add_many_components_to_specific_layer(*inkLayerLock, placedNewObjs);
+        drawP.layerMan.add_many_components_to_specific_layer(*editLayerLock, placedNewObjs);
 
     // Third pass: erase the source MyPaint components. erase_component_container
     // produces its own undo entry; together with the place-undo above, the user
