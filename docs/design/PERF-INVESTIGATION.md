@@ -279,14 +279,22 @@ paying any cost when the overlay is off.
 Once the harness confirms the hypotheses, the cheapest mitigations
 to test, in order of likely impact:
 
-1. **Lower `MINIMUM_COMPONENTS_TO_START_REBUILD` for raster-dominant
-   canvases** — possibly type-aware: rebuild trigger at e.g. 50
-   raster components, 1000 vector. Or just lower across the board
-   to 100–200 and accept the tradeoff on vector-heavy canvases.
+1. **Lower `MINIMUM_COMPONENTS_TO_START_REBUILD`.** ✅ **DONE — now
+   300.** Full history lives in the comment at the constant's
+   definition (`DrawingProgramCache.cpp`). Short version: it went
+   1000 → 100 (helped raster draw, but caused eraser rebuild thrash)
+   → back to 1000 (eraser fixed, but heavy crosshatch files stayed
+   sluggish too long) → **300**, validated live against a heavy
+   crosshatch file: draw responsiveness restored, eraser regression
+   did not return. A type-aware threshold (low for raster, high for
+   vector) was considered but not needed — 300 holds for both. Note
+   the eraser concern is raster-specific, so a raster-aware split
+   would NOT have dodged it.
 2. **Cache the composited SkImage per MyPaintLayerCanvasComponent**
-   — invalidate only on the surface's `mark_dirty()`. Avoids the
-   allocate-bitmap + composite + upload per frame; pays only on
-   stroke modification.
+   ✅ **DONE** — `MyPaintLayerCanvasComponent::draw` now builds the
+   bitmap + SkImage once per surface mutation and reuses it until
+   `mark_dirty()`. This is what made (1) safe to tune for the
+   node-cache-kick-in tradeoff rather than for per-frame draw cost.
 3. **Remove the duplicate `preupdate_component` call in
    `commit_update`** — pending verification.
 4. **Eraser: defer `send_comp_update` to `pen-up` instead of

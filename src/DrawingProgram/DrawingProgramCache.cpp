@@ -12,38 +12,48 @@
     #include <include/gpu/ganesh/SkSurfaceGanesh.h>
 #endif
 
-// Restored to 1000 after the PERF-INVESTIGATION iteration.
+// 300 — validated live against a heavy crosshatch file (zynx,
+// custom-ink stress test). Picked deliberately; do NOT bump back
+// to 1000 without re-reading this whole history.
 //
-// First-pass lowered this to 100 to combat per-frame redraw cost
-// for raster strokes (MyPaintLayerCanvasComponent::draw was
-// recomposing every tile every frame). That fix has since been
-// landed properly — the per-component cached SkImage on
-// MyPaintLayer makes per-frame draw cheap regardless of how many
-// components are in unsortedComponents, so the threshold no
-// longer needs to be low to keep frame times reasonable.
+// Timeline:
+//   - First-pass lowered this to 100 to combat per-frame redraw
+//     cost for raster strokes (MyPaintLayerCanvasComponent::draw
+//     was recomposing every tile every frame).
+//   - That per-frame cost was then fixed properly — the
+//     per-component cached SkImage on MyPaintLayer makes per-frame
+//     draw cheap regardless of how many components sit in
+//     unsortedComponents. So the threshold no longer needs to be
+//     low *for frame time*.
+//   - With that fix in, 100 was reverted to 1000 because of an
+//     ERASER regression: each eraser segment dirties several
+//     components (every overlapping stroke under the cursor),
+//     pushing them to unsortedComponents. Tripping the threshold
+//     reconstructs the ENTIRE BVH (internal_build walks the full
+//     flattened component list, not just the unsorted set) plus
+//     re-renders every BVH-node cache surface — a cost that scales
+//     with total component count. At 100 the eraser tripped a full
+//     rebuild every few segments, so erasing got sluggish as the
+//     canvas filled up.
 //
-// Lowering to 100 had a downside that showed up under heavy
-// eraser use: each eraser segment can dirty several components
-// (every overlapping stroke under the cursor), and the rebuild
-// triggered at the 100 threshold reconstructs the ENTIRE BVH
-// (internal_build walks the full flattened component list, not
-// just the unsorted set), plus re-renders every BVH-node cache
-// surface. That cost scales with total component count, so as
-// the artist accumulates strokes, each rebuild hitch grows. At
-// threshold 100, the eraser was triggering rebuilds every few
-// segments, compounding the cost across multiple eraser strokes
-// — reported by zynx as "the eraser itself becomes sluggish
-// after multiple strokes."
-//
-// 1000 amortizes that cost across many more mutations. Combined
-// with the SkImage per-component cache, per-frame draw stays
-// cheap while rebuild thrash drops back to historical levels.
+// Why 300 (not 1000, not 100): the threshold also gates when the
+// BVH node-cache kicks in. Below it, every component draws
+// individually each frame (thousands of cheap-but-not-free
+// drawImage blits + per-frame predraw computation across all of
+// unsortedComponents). Above it, those strokes collapse into a
+// handful of consolidated node-cache surfaces. Crosshatching
+// generates components fast, so 1000 left the canvas in the
+// draw-everything-individually regime far too long. 300 brings the
+// node-cache benefit forward enough to keep heavy crosshatch files
+// responsive, while staying high enough that eraser-driven rebuild
+// thrash stays acceptable (the 100-era regression did not return at
+// 300 in testing).
 //
 // User-tunable live via Settings -> Debug ("Number of components
 // to force cache rebuild") and persisted in config.json, so an
 // artist can adjust to taste. See docs/design/PERF-INVESTIGATION.md
 // for the full investigation.
-size_t DrawingProgramCache::MINIMUM_COMPONENTS_TO_START_REBUILD = 1000;
+size_t DrawingProgramCache::MINIMUM_COMPONENTS_TO_START_REBUILD = 300;
 size_t DrawingProgramCache::MAXIMUM_COMPONENTS_IN_SINGLE_NODE = 50;
 #ifdef __EMSCRIPTEN__
     size_t DrawingProgramCache::MAXIMUM_DRAW_CACHE_SURFACES = 40; // Use less VRAM in web build
