@@ -208,7 +208,22 @@ void MyPaintLayerCanvasComponent::erase_along_segment(const Vector2f& localStart
         );
     }
     mypaint_surface_end_atomic(surf, nullptr);
-    if (anyDab) mark_dirty();
+    if (anyDab) {
+        // Reclaim any tile this segment fully cleared. libmypaint never
+        // frees tiles, so without this an erased-to-nothing region keeps
+        // its 32 KiB buffer (and its contribution to component bounds).
+        // Scoped to the segment's pixel footprint so the scan stays cheap
+        // at 60 Hz. See PERF-INVESTIGATION.md (monotonic tile growth).
+        const float minX = std::min(localStart.x(), localEnd.x()) - localRadius;
+        const float minY = std::min(localStart.y(), localEnd.y()) - localRadius;
+        const float maxX = std::max(localStart.x(), localEnd.x()) + localRadius;
+        const float maxY = std::max(localStart.y(), localEnd.y()) + localRadius;
+        surface_->drop_fully_transparent_tiles_in_pixel_rect(
+            static_cast<int>(std::floor(minX)), static_cast<int>(std::floor(minY)),
+            static_cast<int>(std::ceil(maxX - minX)) + 1,
+            static_cast<int>(std::ceil(maxY - minY)) + 1);
+        mark_dirty();
+    }
 }
 
 void MyPaintLayerCanvasComponent::begin_recorded_stroke(const Eigen::Vector3f& color, float baseRadius) {

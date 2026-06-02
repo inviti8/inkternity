@@ -179,6 +179,115 @@ void LibMyPaintSkiaSurface::copy_tiles_from(const LibMyPaintSkiaSurface& other) 
     }
 }
 
+namespace {
+// Inverse of channel_to_8bit_unpremul. channel_to_8bit_unpremul does
+// a8 = a16 >> 8 and cu8 = ((c16 * 0xFFFF) / a16) >> 8. Using the 8->16
+// expansion v16 = v8 * 257 (0xFF -> 0xFFFF) makes the round-trip exact:
+//   a16  = a8 * 257
+//   c16  = (cu8 * 257) * a16 / 0xFFFF      (premultiply)
+// then composite recovers a8 and cu8 with no drift (verified algebraically).
+inline uint16_t channel_to_16bit_premul(uint8_t cu8, uint32_t a16) {
+    const uint32_t cu16 = static_cast<uint32_t>(cu8) * 257u;
+    return static_cast<uint16_t>((cu16 * a16) / 0xFFFFu);
+}
+
+inline int floor_div_tile(int a, int b) {
+    int q = a / b;
+    return (a % b != 0 && ((a < 0) != (b < 0))) ? q - 1 : q;
+}
+}  // namespace
+
+void LibMyPaintSkiaSurface::import_from_bitmap(const SkBitmap& src, int srcOriginPxX, int srcOriginPxY) {
+    if (src.colorType() != kRGBA_8888_SkColorType) return;
+    const uint8_t* srcPixels = static_cast<const uint8_t*>(src.getPixels());
+    if (!srcPixels) return;
+    const int srcW = src.width();
+    const int srcH = src.height();
+    if (srcW <= 0 || srcH <= 0) return;
+    const size_t srcRowBytes = src.rowBytes();
+
+    // Tile-index range covering the source rect in surface-local space.
+    const int tx0 = floor_div_tile(srcOriginPxX, kTilePx);
+    const int ty0 = floor_div_tile(srcOriginPxY, kTilePx);
+    const int tx1 = floor_div_tile(srcOriginPxX + srcW - 1, kTilePx);
+    const int ty1 = floor_div_tile(srcOriginPxY + srcH - 1, kTilePx);
+
+    for (int ty = ty0; ty <= ty1; ++ty) {
+        for (int tx = tx0; tx <= tx1; ++tx) {
+            const int tilePxX = tx * kTilePx;
+            const int tilePxY = ty * kTilePx;
+            // Overlap of this tile with the source rect, in source pixel coords.
+            const int sx0 = std::max(0, tilePxX - srcOriginPxX);
+            const int sy0 = std::max(0, tilePxY - srcOriginPxY);
+            const int sx1 = std::min(srcW, tilePxX + kTilePx - srcOriginPxX);
+            const int sy1 = std::min(srcH, tilePxY + kTilePx - srcOriginPxY);
+            if (sx0 >= sx1 || sy0 >= sy1) continue;
+
+            // Skip allocating a tile the source only covers transparently —
+            // keeps the tile store sparse (the whole point of flattening).
+            bool anyOpaque = false;
+            for (int sy = sy0; sy < sy1 && !anyOpaque; ++sy) {
+                const uint8_t* row = srcPixels + sy * srcRowBytes + sx0 * 4;
+                for (int sx = sx0; sx < sx1; ++sx) {
+                    if (row[3] != 0) { anyOpaque = true; break; }
+                    row += 4;
+                }
+            }
+            if (!anyOpaque) continue;
+
+            const TileKey key{tx, ty};
+            auto it = tiles_.find(key);
+            if (it == tiles_.end()) {
+                auto buf = std::make_unique<uint16_t[]>(kU16PerTile);
+                std::memset(buf.get(), 0, kU16PerTile * sizeof(uint16_t));
+                it = tiles_.emplace(key, std::move(buf)).first;
+            }
+            uint16_t* tile = it->second.get();
+
+            for (int sy = sy0; sy < sy1; ++sy) {
+                const uint8_t* srcRow = srcPixels + sy * srcRowBytes + sx0 * 4;
+                const int ly = (srcOriginPxY + sy) - tilePxY;           // 0..kTilePx-1
+                const int lx0 = (srcOriginPxX + sx0) - tilePxX;
+                uint16_t* dstRow = tile + (static_cast<size_t>(ly) * kTilePx + lx0) * 4;
+                for (int sx = sx0; sx < sx1; ++sx) {
+                    const uint32_t a16 = static_cast<uint32_t>(srcRow[3]) * 257u;
+                    dstRow[0] = channel_to_16bit_premul(srcRow[0], a16);
+                    dstRow[1] = channel_to_16bit_premul(srcRow[1], a16);
+                    dstRow[2] = channel_to_16bit_premul(srcRow[2], a16);
+                    dstRow[3] = static_cast<uint16_t>(a16);
+                    srcRow += 4;
+                    dstRow += 4;
+                }
+            }
+        }
+    }
+}
+
+size_t LibMyPaintSkiaSurface::drop_fully_transparent_tiles_in_pixel_rect(int pxX0, int pxY0, int pxW, int pxH) {
+    if (tiles_.empty() || pxW <= 0 || pxH <= 0) return 0;
+    const int tx0 = floor_div_tile(pxX0, kTilePx);
+    const int ty0 = floor_div_tile(pxY0, kTilePx);
+    const int tx1 = floor_div_tile(pxX0 + pxW - 1, kTilePx);
+    const int ty1 = floor_div_tile(pxY0 + pxH - 1, kTilePx);
+    size_t freed = 0;
+    for (int ty = ty0; ty <= ty1; ++ty) {
+        for (int tx = tx0; tx <= tx1; ++tx) {
+            auto it = tiles_.find(TileKey{tx, ty});
+            if (it == tiles_.end()) continue;
+            const uint16_t* buf = it->second.get();
+            bool anyOpaque = false;
+            for (size_t i = 3; i < kU16PerTile; i += 4) {  // alpha channel, stride 4
+                if (buf[i] != 0) { anyOpaque = true; break; }
+            }
+            if (!anyOpaque) {
+                tiles_.erase(it);
+                ++freed;
+            }
+        }
+    }
+    return freed;
+}
+
 }  // namespace HVYM::Brushes
 
 #endif  // HVYM_HAS_LIBMYPAINT

@@ -3,6 +3,7 @@
 #include "CustomEvents.hpp"
 #include "DrawingProgram/Tools/DrawingProgramToolBase.hpp"
 #include "DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
+#include "DrawingProgram/RasterFlatten.hpp"
 #include "FileHelpers.hpp"
 #include "GUIStuff/Elements/MemoryImageDisplay.hpp"
 #include "GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
@@ -685,6 +686,9 @@ void Toolbar::top_toolbar() {
                                 menu_popup_text_button("canvas specific settings", "Canvas Settings", [&] {
                                     optionsMenuOpen = true;
                                     optionsMenuType = CANVAS_SETTINGS_MENU;
+                                });
+                                menu_popup_text_button("flatten ink in view", "Flatten Ink (View)", [&] {
+                                    RasterFlatten::flatten_ink_strokes_in_view(main.world->drawProg);
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {

@@ -95,6 +95,27 @@ public:
     // NetObj replication — see RASTER-WIRE-SYNC.md.
     void copy_tiles_from(const LibMyPaintSkiaSurface& other);
 
+    // Inverse of composite_to_bitmap: read an 8bpc UNPREMULTIPLIED
+    // kRGBA_8888 bitmap and write its pixels into this surface's tiles,
+    // converting to the 16bpc-premultiplied tile format. (srcOriginPxX,
+    // srcOriginPxY) is the surface-local pixel coordinate of src's
+    // top-left corner. Tiles are allocated lazily; a tile the source
+    // covers only with fully-transparent pixels is left unallocated, so
+    // the sparse tile model (and its dedup/memory benefit) is preserved.
+    // Existing tiles are overwritten where src covers them. The
+    // conversion round-trips composite_to_bitmap exactly. Used by the
+    // raster-flatten feature to bake many strokes into one component.
+    void import_from_bitmap(const SkBitmap& src, int srcOriginPxX, int srcOriginPxY);
+
+    // Drop any allocated tile that is fully transparent (every pixel's
+    // alpha == 0), but only among tiles overlapping the inclusive pixel
+    // rect [pxX0, pxX0+pxW) x [pxY0, pxY0+pxH). libmypaint allocates tiles
+    // lazily and never frees them, so erasing a stroke region to nothing
+    // (or read-probes against blank tiles) leave 32 KiB zero buffers
+    // behind. The eraser calls this scoped to each segment's footprint so
+    // the scan stays cheap. Returns the number of tiles freed.
+    size_t drop_fully_transparent_tiles_in_pixel_rect(int pxX0, int pxY0, int pxW, int pxH);
+
 private:
     static void s_tile_request_start(MyPaintTiledSurface*, MyPaintTileRequest*);
     static void s_tile_request_end(MyPaintTiledSurface*, MyPaintTileRequest*);
