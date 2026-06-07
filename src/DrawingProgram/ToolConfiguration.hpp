@@ -69,7 +69,12 @@ class ToolConfiguration {
         } myPaintBrush;
 
         struct ScreenshotToolConfig {
-            int setDimensionSize = 1000;
+            // Default export width. Was 1000 — too soft for sharing art;
+            // 2000 is a better floor and still encodes fast. Note: this is
+            // persisted per-user (config.json), so installs that have
+            // already saved a value keep it until the artist edits the
+            // Image Size field.
+            int setDimensionSize = 2000;
             bool setDimensionIsX = true;
             WorldScreenshotInfo::ScreenshotType selectedType = WorldScreenshotInfo::ScreenshotType::JPG;
             NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(ScreenshotToolConfig, setDimensionSize, setDimensionIsX, selectedType)
