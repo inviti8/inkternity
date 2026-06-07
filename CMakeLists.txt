@@ -517,6 +517,26 @@ if(NOT EMSCRIPTEN)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${C2PA_RS_SHLIB_PATH}"
                 "$<TARGET_FILE_DIR:main>/${C2PA_RS_SHLIB}")
+
+    # Dev-only repro harness for C2PA embed failures (tools/c2pa_repro.cpp).
+    # Excluded from ALL — build explicitly with `--target c2pa_repro`.
+    add_executable(c2pa_repro EXCLUDE_FROM_ALL
+        "tools/c2pa_repro.cpp"
+        "src/C2PA/AppCa.cpp"
+        "src/C2PA/LeafIssuer.cpp"
+        "src/C2PA/Manifest.cpp"
+        "deps/tweetnacl/tweetnacl.c"
+        "deps/tweetnacl/randombytes.cpp"
+        "include/Helpers/Logger.cpp")
+    target_include_directories(c2pa_repro PRIVATE "include" "deps/c2pa")
+    target_link_libraries(c2pa_repro OpenSSL::Crypto "${C2PA_RS_IMPLIB_PATH}")
+    if(WIN32)
+        target_compile_definitions(c2pa_repro PRIVATE C2PA_DLL=0)
+    endif()
+    add_custom_command(TARGET c2pa_repro POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${C2PA_RS_SHLIB_PATH}"
+                "$<TARGET_FILE_DIR:c2pa_repro>/${C2PA_RS_SHLIB}")
 endif()
 if(ANDROID)
     target_include_directories(main PRIVATE "android-project/SDL/include")

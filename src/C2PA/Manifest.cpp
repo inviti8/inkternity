@@ -150,6 +150,16 @@ EmbedResult embed_into_image_file(
     const std::string dstStr = dest.string();
     const std::string mj(manifest_json);
 
+    // c2pa-rs refuses to overwrite an existing dest ("bad parameter:
+    // Destination file already exists"). The caller's dest comes from a
+    // save dialog where the artist already confirmed the overwrite (and
+    // the unsigned SDL_SaveFile fallback overwrites unconditionally), so
+    // match that semantic here.
+    {
+        std::error_code ec;
+        std::filesystem::remove(dest, ec);
+    }
+
     char* signResult = c2pa_sign_file(
         srcStr.c_str(),
         dstStr.c_str(),
@@ -162,24 +172,25 @@ EmbedResult embed_into_image_file(
     // the same memzero pattern as DevKeys / KeyStore).
     OPENSSL_cleanse(keyPem.data(), keyPem.size());
 
-    // The c2pa-rs contract for the deprecated c2pa_sign_file is
-    // genuinely ambiguous in the cbindgen header — "returns an error
-    // field if there were errors" doesn't pin down NULL-vs-empty-vs-
-    // error-bytes. Empirically (v0.84.x): on failure the returned
-    // string is the failure message; on success c2pa_error() is
-    // empty and the dest file is non-empty. We treat presence of
-    // any c2pa_error message OR a zero-byte dest as failure.
+    // c2pa-rs C-FFI contract (pinned empirically with tools/c2pa_repro.cpp,
+    // v0.84.1): on failure c2pa_sign_file sets the thread-local last-error
+    // and returns NULL; on success it returns a (possibly empty) string.
+    // Do NOT consult c2pa_error() to detect success — the last-error slot
+    // is sticky, so a stale message from any earlier failed c2pa call on
+    // this thread (e.g. the Verifier probing an .inkternity file, which
+    // always fails with "NotSupported: type is unsupported") would
+    // misreport a successful embed as failed. That exact misreport shipped
+    // as the rc15 "save screen cap" bug.
     if (signResult) {
         if (*signResult) r.raw_out = signResult;
         c2pa_free(signResult);
     }
-    const std::string err = drain_c2pa_error();
     std::error_code ec;
     const auto dstSize = std::filesystem::file_size(dest, ec);
     const bool dstEmpty = ec || dstSize == 0;
-    if (!err.empty() || !r.raw_out.empty() || dstEmpty) {
+    if (!signResult || dstEmpty) {
+        const std::string err = drain_c2pa_error();
         if (!err.empty()) r.error = err;
-        else if (!r.raw_out.empty()) r.error = r.raw_out;
         else r.error = "destination file is empty after c2pa_sign_file";
         Logger::get().log("WORLDFATAL",
             "[C2PA::Manifest] embed FAILED: " + r.error);
