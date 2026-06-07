@@ -1,16 +1,19 @@
-# PHASE4 — Multiplane Parallax + Generalized Flatten
+# PHASE4 — Multiplane Parallax + Generalized Flatten + Merge Down
 
-Status: DESIGN — not started
+Status: Parts A (M1+M2) + B (M0) SHIPPED (rc17); Part C DESIGN
 Prereqs: PHASE2 layer system, PHASE3, raster flatten (commit 691a2f5)
 
-Two related layer-power features:
+Three related layer-power features:
 - **Part A — Multiplane parallax**: per-layer depth, camera pans produce
-  parallax (§1–§9).
+  parallax (§1–§9). Shipped in rc17 (M1+M2; M4 edit-at-depth pending).
 - **Part B — Generalized flatten**: "Flatten Ink (View)" grows into
   "Flatten Layer (View)" and rasterizes vector content too (§10).
-  Part B also feeds Part A: flatten is the documented perf mitigation
-  for raster-heavy parallax layers (§5), and after Part B it covers
-  vector-heavy layers as well.
+  Shipped in rc17 (M0; M0.5 scale-band partitioning pending). Part B
+  also feeds Part A: flatten is the documented perf mitigation for
+  parallax layers (§5).
+- **Part C — Merge Down**: lossless move of a layer's components into
+  the layer below, deleting the source layer (§11). Design agreed
+  (zynx, 2026-06-07: Option A — lossless move), not started.
 
 # Part A — Multiplane Parallax Layers
 
@@ -341,3 +344,80 @@ Two-step answer:
   flatten-time zoom, waypoints untouched, two-step undo restores all.
 - **M0.5 (when mixed-scale canvases hit the cap in practice):**
   scale-band partitioning per §10's follow-up.
+
+# Part C — Merge Down (lossless)
+
+## 11. Merge Down
+
+### Decision (zynx, 2026-06-07)
+
+**Option A — lossless component move.** Components transfer as-is:
+vector stays vector, text stays editable, ink stays per-stroke
+erasable. Exact and fully reversible. The alternative (baking the
+source layer through its alpha/blend into the dest) was rejected as
+nearly redundant with Flatten Layer (View).
+
+### Semantics
+
+A **Merge Down** button in the layer panel's Edit Layer section
+(alongside alpha / blend / parallax depth):
+
+1. Source = the selected layer. Dest = the item directly below it in
+   the same folder list (render-order below — note `folderList` draws
+   reversed, so "below" is the NEXT list index, not the previous).
+2. All source components are placed INTO dest **above dest's existing
+   content** (appended at top-z of dest's component list), preserving
+   their relative order — merge down means the upper layer keeps
+   compositing on top.
+3. The emptied source layer is deleted.
+4. Undo restores everything (acceptable as 2–3 steps — place, erase,
+   layer-delete — matching the flatten/vectorize two-step precedent;
+   a compound undo action is a nice-to-have, not a requirement).
+
+### Refusal guards (no silent appearance changes)
+
+Merge Down REFUSES with a USERINFO toast explaining why, when:
+
+- **Source layer has non-default alpha or blend mode.** Layer alpha/
+  blend composite per-LAYER; moving components out from under them
+  changes how the art looks (a 50%-alpha layer's strokes would become
+  opaque). Toast: "reset alpha/blend to default first, or use Flatten
+  Layer (View)." Baking alpha into per-component colors was considered
+  and rejected — not well-defined across component types.
+- **Source and dest parallax depths differ** (either non-zero and
+  unequal). Different derived cameras → content would visually jump.
+  Equal depths (including both 0) merge fine; the merged content
+  simply adopts dest's depth/anchor — identical rendering only when
+  depths AND anchors agree, so v1 requires both layers at depth 0 for
+  simplicity.
+- **Source is a named-kind layer** (SKETCH / COLOR / INK).
+  `ensure_named_layers()` recreates missing named layers on load, so
+  deleting one is pointless — it reappears empty next session.
+  Merging a DEFAULT layer *into* a named layer is fine.
+- **No eligible dest**: source is bottom-most in its folder, or the
+  item below is a folder (v1 keeps folders out of it).
+
+### Build sketch
+
+Every primitive exists already:
+
+- Clone components (the copy/paste-between-canvases path —
+  `get_data_copy` / container clone) → new containers with identical
+  coords.
+- `add_many_components_to_specific_layer(dest, pairs)` anchored at
+  dest's top-z end (place-undo included).
+- `erase_component_container(sourceComps)` (erase-undo included,
+  already groups by parentLayer).
+- Layer deletion with undo — the layer panel's existing remove path
+  (`DrawingProgramLayerManagerGUI::remove_layer`).
+- Net sync rides the same machinery as flatten/vectorize.
+
+Estimated at a focused day; the work is edge cases (guards above,
+folder-adjacency detection), not plumbing.
+
+### Milestone
+
+- **C1:** button + guards + move + delete + manual verification:
+  merge a vector+ink mixed layer into the one below, confirm z-order
+  (merged content above dest's), undo restores both layers intact,
+  collab session sees the same result.
