@@ -308,6 +308,13 @@ to test, in order of likely impact:
    reduces per-frame component count drastically. Requires the
    stroke-recording log to live separately so StrokeVectorize and
    per-stroke ops still work.
+   ✅ SHIPPED (manual variant): **Flatten Layer (View)** — the artist
+   triggers the merge per-region instead of the engine maintaining one
+   surface per layer. Initially ink-only (commit 691a2f5), generalized
+   to every visual component type with a WYSIWYG resolution floor and
+   a configurable bake cap in PHASE4 Part B (docs/design/PHASE4.md
+   §10). Also the designated perf mitigation for PHASE4 parallax
+   layers, which bypass the draw cache while active.
 2. **Tile eviction policy** — drop tile buffers for components
    off-screen for >N seconds; rematerialize on demand from a
    compressed cold-storage (e.g. PNG-encoded tile data sitting in

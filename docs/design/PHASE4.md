@@ -109,9 +109,10 @@ Depth + anchor join the existing per-layer synced display state:
 - **Wire format**: extending `DisplayData::serialize` changes the wire
   shape; mixed-version collab sessions already require matching builds,
   but call it out in the release notes.
-- Folders: depth on a folder applies to its whole subtree (the derived
-  camera is pushed during the tree walk; nested depths do **not**
-  compose in v1 — innermost non-zero wins, keep it simple).
+- Folders: v1 exposes depth on **layers only** (the GUI hides the field
+  for folder rows and the draw walk applies depth on non-folder items) —
+  this sidesteps the base-camera plumbing that nested folder depths
+  would need. Folder-subtree depth is a follow-up if anyone asks.
 
 ## 5. Rendering integration
 
@@ -131,17 +132,22 @@ Two draw paths exist today:
 
 Plan:
 
-- **Depth-0 layers: zero change.** They keep the full BVH node-cache
-  fast path. A canvas with no depths assigned renders bit-identically
-  through the code it uses today.
-- **Depth≠0 layers bypass the BVH node cache** and render through the
-  uncached per-layer walk with a per-layer `DrawData` whose `cam.c` is
-  the derived camera (recompute `refresh_draw_optimizing_values()` per
-  distinct depth, not per component). Cached BVH node surfaces are
-  cross-layer composites anchored in world space — they are *wrong* the
-  moment two layers move relative to each other, so they must exclude
-  depth≠0 layers at `internal_build` time (partition by
-  `parentLayer->get_depth() != 0`).
+- **Depth-0-everywhere canvases: zero change.** They keep the full BVH
+  node-cache fast path and render bit-identically through the code they
+  use today.
+- **Parallax active → full cache bypass** (implemented; simpler than the
+  originally sketched BVH partition). Cached BVH node surfaces AND the
+  window cache are cross-layer composites under ONE camera — wrong the
+  moment two layers move relative to each other. Worse, the cached
+  window image and interleaved parallax layers can't composite in
+  correct tree order. So while any visible layer has depth≠0,
+  `DrawingProgram::draw` walks the layer tree directly each frame (the
+  screenshot path), with `LayerListItem::draw` deriving the per-layer
+  camera and selected components skipped (they draw via the selection
+  preview; `DrawData::skipSelectedComponents`). The caches idle, keep
+  their contents, and resume when all depths return to 0. Per-depth
+  cached surfaces remain the follow-up optimization if profiling
+  demands it.
 - **Perf expectation, stated honestly:** a parallaxed layer redraws its
   components every frame while panning (same cost class as the
   pre-cache path). For vector strokes this is fine; for raster-heavy
@@ -185,14 +191,18 @@ controls are untouched.
 
 ## 8. Milestones
 
-- **M1 — Data + UI:** DisplayData/metaInfo/undo fields, file version
-  gate, net sync, depth field in the layer panel. No render change yet
-  (depth visible but inert). Smallest reviewable step.
-- **M2 — Parallax render:** BVH partition (depth≠0 excluded from node
-  caches), derived-camera tree walk in both the live path and
-  `layerMan.draw`, anchor no-jump math. Editing locked to depth-0.
-- **M3 — Exports:** screenshot + SVG honor depth (mostly falls out of
-  M2's `layerMan.draw` change; verify both).
+- **M1 — Data + UI** ✅: DisplayData/metaInfo/undo fields (anchor stored
+  as two WorldScalars — an Eigen member breaks MSVC SMF-trait evaluation
+  on the recursive undo struct), file gate INFPNT000013 → (0,12,0), net
+  sync, "Parallax Depth" slider in the layer panel (layers only).
+- **M2 — Parallax render** ✅: full cache bypass while parallax active
+  (see §5), derived-camera walk in `LayerListItem::draw` (live +
+  screenshot + SVG), anchor no-jump math in `set_parallax_depth`.
+  Editing locked to depth-0: left-click content tools blocked with a
+  toast (nav/inspect tools — pan, zoom, screenshot, eyedropper — stay
+  live); Flatten Layer (View) gated the same way.
+- **M3 — Exports:** falls out of M2 (`layerMan.draw` applies derived
+  cams in all paths) — needs verification on a real canvas.
 - **M4 — Edit-at-depth:** input remap through the derived camera for
   editing-layer-scoped tools.
 - **Later (separate docs):** per-depth cached surfaces (if profiling

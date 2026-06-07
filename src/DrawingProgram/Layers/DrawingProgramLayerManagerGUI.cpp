@@ -27,6 +27,7 @@ void DrawingProgramLayerManagerGUI::refresh_gui_data() {
     nameForNew.clear();
     editingLayerOldMetainfo = std::nullopt;
     alphaValToEdit = 0.0f;
+    depthValToEdit = 0.0f;
     blendModeValToEdit = 0;
 }
 
@@ -153,18 +154,21 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                         if(tempPtr) {
                             nameToEdit = tempPtr->get_name();
                             alphaValToEdit = tempPtr->get_alpha();
+                            depthValToEdit = tempPtr->get_parallax_depth();
                             auto it = std::find(get_blend_mode_useful_list().begin(), get_blend_mode_useful_list().end(), tempPtr->get_blend_mode());
                             blendModeValToEdit = (it == get_blend_mode_useful_list().end()) ? 0 : (it - get_blend_mode_useful_list().begin());
                         }
                         else {
                             nameToEdit.clear();
                             alphaValToEdit = 0.0f;
+                            depthValToEdit = 0.0f;
                             blendModeValToEdit = 0;
                         }
                     }
                     else {
                         nameToEdit.clear();
                         alphaValToEdit = 0.0f;
+                        depthValToEdit = 0.0f;
                         blendModeValToEdit = 0;
                     }
                 },
@@ -440,6 +444,24 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     }
                 });
             });
+            // PHASE4 Part A: parallax depth — layers only (folders draw
+            // their subtree with the camera they're given). 0 = canvas
+            // plane (today's behavior); >0 = farther, pans less; <0 =
+            // nearer, pans more. The setter applies the no-jump anchor
+            // rule, so editing this never moves the layer on screen —
+            // it changes how the layer responds to panning afterward.
+            if(!editingLayerLock->is_folder()) {
+                slider_scalar_field(gui, "input parallax depth slider", "Parallax Depth", &depthValToEdit, -0.9f, 10.0f, {
+                    .decimalPrecision = 2,
+                    .onEdit = [&] {
+                        auto editingLayerLock = editingLayer.lock();
+                        if(editingLayerLock)
+                            editingLayerLock->set_parallax_depth(layerMan, depthValToEdit);
+                    }
+                });
+                if(depthValToEdit != 0.0f)
+                    text_label(gui, "Parallax active: editing this layer is\nlocked until depth returns to 0.");
+            }
         }
     }
 }

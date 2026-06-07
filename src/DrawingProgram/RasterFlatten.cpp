@@ -50,6 +50,15 @@ void flatten_layer_in_view(DrawingProgram& drawP) {
         Logger::get().log("USERINFO", "Flatten: no active layer to flatten.");
         return;
     }
+    // PHASE4 Part A (§6): editing — flatten included — is locked to
+    // depth-0 layers. The view AABB below is built from the MAIN camera,
+    // but a parallaxed layer renders through its derived camera, so
+    // "what's in view" wouldn't match what the artist sees.
+    if (drawP.layerMan.editing_layer_is_parallaxed()) {
+        Logger::get().log("USERINFO",
+            "This layer has parallax depth — set its depth to 0 to flatten it.");
+        return;
+    }
     auto& components = editLayer->get_layer().components;
     if (!components) return;
 

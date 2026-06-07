@@ -26,6 +26,7 @@ class DrawingProgramLayerManagerGUI {
         std::string nameToEdit;
         std::string nameForNew;
         float alphaValToEdit = 0.0f;
+        float depthValToEdit = 0.0f;  // PHASE4 Part A: parallax depth
         size_t blendModeValToEdit = 0;
 
         std::set<GUIStuff::TreeListingObjIndexList> selectedLayerIndices;

@@ -109,6 +109,29 @@ void DrawingProgram::input_mouse_button_callback(const InputManager::MouseButton
         drawTool->input_mouse_button_on_canvas_callback(b);
     };
 
+    // PHASE4 Part A (§6 M1 policy): editing is locked to depth-0 layers.
+    // Tools consume screen coordinates through the MAIN camera, but a
+    // parallaxed layer renders through its DERIVED camera — a stroke
+    // would land visibly offset from the cursor. Until M4's input remap,
+    // block content tools (navigation/inspection tools stay live) and
+    // tell the artist why. Checked at left-click-down only, so the toast
+    // fires once per attempt, not per motion event.
+    auto editing_blocked_by_parallax = [&]() -> bool {
+        if(!layerMan.editing_layer_is_parallaxed()) return false;
+        switch(drawTool->get_type()) {
+            case DrawingProgramToolType::ZOOM:
+            case DrawingProgramToolType::PAN:
+            case DrawingProgramToolType::SCREENSHOT:
+            case DrawingProgramToolType::EYEDROPPER:
+            case DrawingProgramToolType::SQUARECANVASCAPTURE:
+                return false;
+            default:
+                Logger::get().log("USERINFO",
+                    "This layer has parallax depth — set its depth to 0 to edit it.");
+                return true;
+        }
+    };
+
     if(button.down) {
         if(button.button == InputManager::MouseButton::RIGHT) {
             if(!controls.middleClickHeld && !controls.leftClickHeld) {
@@ -121,6 +144,8 @@ void DrawingProgram::input_mouse_button_callback(const InputManager::MouseButton
         else {
             if(!world.main.g.gui.cursor_obstructed()) {
                 if(button.button == InputManager::MouseButton::LEFT && !controls.middleClickHeld) {
+                    if(editing_blocked_by_parallax())
+                        return;
                     controls.leftClickHeld = true;
                     buttonCallbacks(button);
                 }
@@ -916,6 +941,40 @@ void DrawingProgram::get_used_resources(std::unordered_set<NetworkingObjects::Ne
 void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
     if(drawData.takingScreenshot)
         layerMan.draw(canvas, drawData);
+    else if(layerMan.any_visible_parallax_layer()) {
+        // PHASE4 Part A M2: parallax bypass. The window/BVH caches bake
+        // cross-layer composites under ONE camera; with per-layer derived
+        // cameras those composites are wrong, so while any visible layer
+        // has depth, the layer tree is walked directly each frame (the
+        // same path screenshots use — LayerListItem::draw applies the
+        // derived cameras). Perf note (PHASE4.md §5): parallaxed canvases
+        // redraw uncached; Flatten Layer (View) is the mitigation for
+        // heavy layers. Depth-0-everywhere canvases never reach this
+        // branch and keep the cache path bit-identically.
+        canvas->saveLayer(nullptr, nullptr);
+            canvas->clear(SkColor4f{0.0f, 0.0f, 0.0f, 0.0f});
+            DrawData walkDD = drawData;
+            walkDD.skipSelectedComponents = true;  // selection preview draws below
+            layerMan.draw(canvas, walkDD);
+            canvas->saveLayer(nullptr, nullptr);
+                selection.draw_components(canvas, drawData);
+            canvas->restore();
+        canvas->restore();
+
+        for(auto& droppedDownFile : droppedDownloadingFiles)
+            static_cast<ImageCanvasComponent&>(droppedDownFile.comp->obj->get_comp()).draw_download_progress_bar(canvas, drawData, droppedDownFile.downData->progress);
+
+        for(auto& c : updateableComponents) {
+            if(c->obj->get_comp().get_type() == CanvasComponentType::IMAGE) {
+                auto& img = static_cast<ImageCanvasComponent&>(c->obj->get_comp());
+                float progress = drawData.main->world->rMan.get_resource_retrieval_progress(img.d.imageID);
+                img.draw_download_progress_bar(canvas, drawData, progress);
+            }
+        }
+
+        selection.draw_gui(canvas, drawData);
+        drawTool->draw(canvas, drawData);
+    }
     else {
         canvas->saveLayer(nullptr, nullptr);
             canvas->clear(SkColor4f{0.0f, 0.0f, 0.0f, 0.0f});

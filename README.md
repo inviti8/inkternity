@@ -36,7 +36,9 @@ Files saved by Inkternity use the `.inkternity` extension; existing `.infpnt` fi
 - **Waypoint skins** — capture a rectangle of the canvas (`ButtonSelectTool`) as a waypoint's skin, used as the artwork for nav buttons in reader mode and as node visuals in the tree view
 - **Pixel (raster) brushes** — curated set built on [libmypaint](https://github.com/mypaint/libmypaint) (Sharp / Textured categories: technical pen, fine inker, brush pen, fine/broad markers, wet ink, pencil) with persistent tile data per layer
 - **Brush customization + saved presets** — tune any libmypaint parameter (size, opacity, smudge, jitter, dabs, tracking, pressure curves…), capture a square icon from the canvas, and save the tuned brush to a per-user library
-- **Stroke vectorize** — drag a rect over recorded libmypaint strokes to convert them into editable vector beziers
+- **Stroke vectorize** — drag a rect over recorded libmypaint strokes on the layer you're editing to convert them into editable vector beziers
+- **Parallax layers (multiplane camera)** — give any layer a depth and panning produces true multiplane parallax: near layers slide past, far layers crawl. Zoom stays uniform and infinite; depth edits are undoable and never move the layer at the moment you set them. Draw a cloud per layer and pan through a sky with real depth
+- **Flatten Layer (View)** — bake everything in view on the active layer (ink, vector strokes, shapes, text, images) into one raster object. Collapses hundreds of strokes into a single component when a region is done — the perf answer for dense crosshatching and for heavy parallax layers. Resolution floor at the current view (zoom in to keep more detail); cap adjustable in Settings → General
 - **Artist avatar** — capture a 256×256 square from the canvas; a downscaled 64×64 broadcasts to peers and renders above their remote cursor during collaboration
 - **Subscription hosting** — alongside ephemeral collab lobbies, a canvas with portal-issued metadata (or dev keys) can be published under a stable share code; subscribers join read-only as live viewers
 - **Verifiable publishing (C2PA + Heavymeta on-chain trust)** — opt-in provenance for exported canvases. Enable via Settings → Verifiable publishing; the gateway generates a self-signed Ed25519 X.509 CA, walks the artist through a one-time on-chain registration via the Heavymeta portal + `hvym-cert-registry` Soroban contract, and from then on every PNG/JPG/WEBP export carries a signed C2PA manifest. Re-opening a signed file in Inkternity surfaces a "Provenance signature verifies" toast; tampered files toast red. Rotation + revocation are buttons in the same panel. Crypto-averse by default: the entire surface is hidden behind the toggle, the word "Stellar" stays inside a "Show advanced" disclosure
@@ -61,7 +63,7 @@ Files saved by Inkternity use the `.inkternity` extension; existing `.infpnt` fi
 
 ## Installation
 
-Inkternity is under active development. Phase 1 (waypoint graph, reader mode, tree view), Phase 2 (transitions + per-waypoint timing), and Phase 3 (brush customization, saved-preset library, artist avatars) have all landed; release-candidate installers are produced from each tagged build. Build from source via [BUILDING.md](docs/BUILDING.md).
+Inkternity is under active development. Phase 1 (waypoint graph, reader mode, tree view), Phase 2 (transitions + per-waypoint timing), Phase 3 (brush customization, saved-preset library, artist avatars), and Phase 4 (parallax layers + generalized flatten) have all landed; release-candidate installers are produced from each tagged build. Build from source via [BUILDING.md](docs/BUILDING.md).
 
 ## Contribution
 

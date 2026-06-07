@@ -141,6 +141,23 @@ bool DrawingProgramLayerManager::layer_tree_root_exists() {
     return layerTreeRoot;
 }
 
+bool DrawingProgramLayerManager::any_visible_parallax_layer() {
+    if(!layerTreeRoot) return false;
+    std::vector<DrawingProgramLayerListItem*> layers;
+    layerTreeRoot->get_flattened_layer_list(layers);
+    // A parallax layer inside a hidden folder triggers the bypass
+    // needlessly (the walk still renders correctly — the folder is just
+    // skipped); not worth threading ancestor visibility through here.
+    return std::any_of(layers.begin(), layers.end(), [](DrawingProgramLayerListItem* l) {
+        return l->get_visible() && l->get_parallax_depth() != 0.0f;
+    });
+}
+
+bool DrawingProgramLayerManager::editing_layer_is_parallaxed() {
+    auto l = editingLayer.lock();
+    return l && !l->is_folder() && l->get_parallax_depth() != 0.0f;
+}
+
 const DrawingProgramLayerListItem& DrawingProgramLayerManager::get_layer_root() {
     return *layerTreeRoot;
 }

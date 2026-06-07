@@ -88,7 +88,7 @@
 - Button Select Tool
     - Drag a rectangle over the canvas to capture that rectangle as the skin for the currently-selected waypoint. The skin is the artwork that renders for the waypoint's nav button in reader mode and as the node visual in the tree view
 - Stroke Vectorize Tool
-    - Drag a rectangle on a pixel (Ink) layer to convert the recorded libmypaint strokes inside it into editable vector beziers. The original pixel strokes are removed; the resulting vectors live on the active vector layer
+    - Drag a rectangle over the layer you're editing to convert the recorded libmypaint strokes inside it into editable vector beziers. The original pixel strokes are removed; the resulting vectors are placed back on the same layer. Works on any layer, not just Ink
 ## Brush Customization
 - When a Pixel Brush is the active tool, a **brush customization** button (live-brush icon) appears in the top toolbar
 - Open the drawer to expose every libmypaint parameter, grouped by category (Basic, Dabs, Speed, Smudge, Jitter, Tracking, Shape, Stroke, Rendering…). Each group is collapsible; only **Basic** is open by default to keep the slider count manageable
@@ -176,7 +176,7 @@
     - You can add a layer folder by pressing the folder button instead of the + button. Open/close the folder by pressing the arrow icon to the left of the folder, and drag layers into the folder while it's open to place them in the folder
     - There are two layer kinds: **vector** layers (host vector strokes, shapes, textboxes, embedded images) and **pixel** layers (host libmypaint raster strokes as tile data). New canvases ship with a default Sketch (vector) layer; an Ink layer is the conventional target for libmypaint strokes
 - To set the layer to edit, double click it (or click the pencil icon to the right of the layer). The layer that is currently being edited has a pencil icon to the left of it, and anything you draw will be placed in that layer
-- Select a layer by clicking it once. When it is selected, you can change its properties such as name, alpha, and blend mode (this is different from the "set to edit" mode)
+- Select a layer by clicking it once. When it is selected, you can change its properties such as name, alpha, blend mode, and parallax depth (this is different from the "set to edit" mode)
 - Hold shift and click to select multiple layers at once, or hold control and click to toggle the selection state of the layer. You can then hold <kbd>LMB</kbd> and move the mouse to move/sort the layers
 - Blend modes are the default ones available with the rendering library this program is using ([Skia](https://skia.org/)). The following explanation of the blend modes is mostly just copy-pasted from the library's documentation at [SkBlendMode](https://api.skia.org/SkBlendMode_8h.html):
     - The documentation is expressed as if the component values are always 0..1 (floats).
@@ -212,6 +212,20 @@
 |Color                  |hue and saturation of source with luminosity of destination      |
 |Luminosity             |luminosity of source with hue and saturation of destination      |
 -------------------------------------------------------------------------------------------
+## Parallax Layers (Multiplane Camera)
+- Every layer has a **Parallax Depth** property (select the layer in the layer window — the slider sits under Blend Mode). Default is `0`: the layer behaves exactly as it always has
+- Depth changes how the layer responds to **panning**: positive depth = farther away (slides less as you pan), negative depth (down to −0.9) = nearer than the canvas plane (slides more, good for foreground overlays). Pan the camera and layers at different depths drift past each other — the classic multiplane "moving through the scene" effect. Draw a cloud per layer at increasing depths and you have a sky with real depth
+- **Zoom is unaffected** — zooming magnifies all layers together, exactly like before, with no limit. Only lateral camera movement produces parallax
+- Setting a depth never moves the layer on screen at that moment — it only changes how the layer responds to panning afterward. Pick the camera position you want the scene composed at, then assign depths there
+- **Editing is locked while a layer has depth**: drawing tools on a parallaxed layer would land offset from the cursor, so content tools show a notice instead ("set its depth to 0 to edit it"). Pan, zoom, screenshot, and eyedropper keep working. Set depth back to `0`, edit, then restore the depth (depth edits are undoable like alpha/blend)
+- Depth applies to layers only, not folders. Screenshots and SVG exports capture the parallax view as seen
+- Performance note: while any visible layer has a non-zero depth, the canvas redraws without its usual caching. For heavy layers (lots of ink strokes), run **Flatten Layer (View)** on them first — a flattened layer is a single image and parallax-pans for free
+## Flatten Layer (View)
+- Menu->Flatten Layer (View) bakes everything currently in view on the **layer being edited** into a single pixel-layer component. Use it when a region is "done" and the app is getting sluggish from sheer object count — hundreds of crosshatch strokes become one object
+- All visual object types are included: pixel (ink) strokes, vector strokes, lines, rectangles, ellipses, textboxes, and embedded images. Waypoints are never flattened. Still-downloading images, selected objects, and anything mid-edit are left untouched
+- The bake is at least as sharp as your current view, and never coarser than the finest ink stroke's own pixels — **zoom in before flattening to preserve more detail**. Very large regions are capped by **Settings->General->Maximum flatten size (px per axis)** (default 8192; raising it costs memory) and a notice appears if the result had to be downsampled
+- Costs to know about: the merged result is a single raster object — the individual strokes can no longer be selected, vectorized, or deleted one-by-one; flattened text is no longer editable; flattened vector content no longer stays sharp under infinite zoom-in. The pixel eraser still works on the result
+- Undo restores the originals (it takes two undo steps: one for the merged object, one for the removed originals)
 ## Color Palettes
 - Click the color button on the left toolbar to open the color picker. The top color button, initially white, is for the brush color and outlines. The bottom color button, initially black, is for fill color (if applicable)
 - In the color picker window, you can use, create, and edit color palettes

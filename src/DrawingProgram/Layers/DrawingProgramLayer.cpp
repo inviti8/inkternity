@@ -2,6 +2,7 @@
 #include "DrawingProgramLayerManager.hpp"
 #include "../DrawingProgram.hpp"
 #include "../../World.hpp"
+#include "../../MainProgram.hpp"
 #include "../../CanvasComponents/WaypointCanvasComponent.hpp"
 #include "../../Waypoints/WaypointGraph.hpp"
 #include <Helpers/NetworkingObjects/NetObjOrderedList.hpp>
@@ -9,8 +10,17 @@
 #include <Helpers/Logger.hpp>
 
 void DrawingProgramLayer::draw(SkCanvas* canvas, const DrawData& drawData) const {
-    for(auto& p : *components)
+    // skipSelectedComponents: see DrawData.hpp — only set by the live
+    // parallax-bypass path, where the selection preview draws separately.
+    // (DrawingProgramLayer is on DrawingProgram's friend list.)
+    const bool skipSelected = drawData.skipSelectedComponents &&
+                              drawData.main && drawData.main->world;
+    for(auto& p : *components) {
+        if(skipSelected && drawData.main->world->drawProg.selection.is_selected(
+               const_cast<CanvasComponentContainer::ObjInfo*>(&p)))
+            continue;
         p.obj->draw(canvas, drawData);
+    }
 }
 
 void DrawingProgramLayer::set_component_list_callbacks(DrawingProgramLayerListItem& layerListItem, DrawingProgramLayerManager& layerMan) {

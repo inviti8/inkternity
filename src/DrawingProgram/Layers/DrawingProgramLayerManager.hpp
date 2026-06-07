@@ -61,6 +61,15 @@ class DrawingProgramLayerManager {
         const DrawingProgramLayerListItem& get_layer_root();
         uint32_t total_component_count();
 
+        // PHASE4 Part A: true if any visible non-folder layer has a
+        // non-zero parallax depth. The live draw path bypasses the
+        // window/BVH caches while this holds (per-layer derived cameras
+        // make cross-layer cached composites wrong).
+        bool any_visible_parallax_layer();
+        // True if the current edit target has non-zero depth — editing is
+        // locked to depth-0 layers until M4's input remap (PHASE4.md §6).
+        bool editing_layer_is_parallaxed();
+
         // PHASE2: ensure exactly one of each named-kind layer exists at
         // root; lazy-create any that are missing. Sets editingLayer to
         // the INK layer afterward. Safe to call multiple times.

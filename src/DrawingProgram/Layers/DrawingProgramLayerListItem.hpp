@@ -18,6 +18,17 @@ struct DrawingProgramLayerListItemMetaInfo {
     std::string name;
     float alpha = 1.0f;
     SerializedBlendMode blendMode = SerializedBlendMode::BLEND_SRC_OVER;
+    // PHASE4 Part A: multiplane parallax. Depth 0 = canvas plane (no
+    // parallax, the default for every layer that exists today); > 0 =
+    // farther (pans less); (-1, 0) = nearer (pans more). The anchor is
+    // the world point the parallax pivots around — recomputed on every
+    // depth edit so content doesn't jump on screen (docs/design/PHASE4.md §3).
+    // Stored as two WorldScalars rather than a WorldVec: an Eigen member
+    // breaks MSVC's SMF-trait evaluation for the recursive
+    // optional<vector<DrawingProgramComponentUndoData>> in the undo data.
+    float parallaxDepth = 0.0f;
+    WorldScalar parallaxAnchorX{0};
+    WorldScalar parallaxAnchorY{0};
     bool operator==(const DrawingProgramLayerListItemMetaInfo&) const = default;
 };
 
@@ -65,6 +76,16 @@ class DrawingProgramLayerListItem {
         void set_blend_mode(DrawingProgramLayerManager& layerMan, SerializedBlendMode newBlendMode) const;
         SerializedBlendMode get_blend_mode() const;
 
+        // PHASE4 Part A: depth edit with the no-jump rule — recomputes the
+        // anchor from the CURRENT camera so the layer's on-screen position
+        // is preserved at the moment of the edit (PHASE4.md §3). Clamps to
+        // (-0.95, 1000). Use this from UI; use the raw variant from
+        // undo/metainfo restore (exact pair, no recompute).
+        void set_parallax_depth(DrawingProgramLayerManager& layerMan, float newDepth) const;
+        void set_parallax_raw(DrawingProgramLayerManager& layerMan, float depth, const WorldVec& anchor) const;
+        float get_parallax_depth() const;
+        WorldVec get_parallax_anchor() const;
+
         void set_metainfo(DrawingProgramLayerManager& layerMan, const DrawingProgramLayerListItemMetaInfo& metaInfo);
         DrawingProgramLayerListItemMetaInfo get_metainfo() const;
 
@@ -86,8 +107,17 @@ class DrawingProgramLayerListItem {
             float alpha = 1.0f;
             bool visible = true;
             SerializedBlendMode blendMode = SerializedBlendMode::BLEND_SRC_OVER;
+            // PHASE4 Part A — see DrawingProgramLayerListItemMetaInfo for
+            // semantics (incl. why the anchor is two WorldScalars). File-
+            // load is version-gated in load_file (pre-INFPNT000013 files
+            // read only the first three fields); the wire always carries
+            // all of them (mixed-version collab already requires matching
+            // builds).
+            float parallaxDepth = 0.0f;
+            WorldScalar parallaxAnchorX{0};
+            WorldScalar parallaxAnchorY{0};
             template <typename Archive> void serialize(Archive& a) {
-                a(alpha, visible, blendMode);
+                a(alpha, visible, blendMode, parallaxDepth, parallaxAnchorX, parallaxAnchorY);
             }
         };
         NetworkingObjects::NetObjOwnerPtr<NameData> nameData;
