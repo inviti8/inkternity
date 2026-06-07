@@ -18,6 +18,10 @@ class DrawingProgramLayerManagerGUI {
         std::pair<NetworkingObjects::NetObjID, NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem>> create_in_proper_position(DrawingProgramLayerListItem* newItem);
         NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem> create_layer(DrawingProgramLayerListItem* newItem);
         void remove_layer(const GUIStuff::TreeListingObjIndexList& objIndex);
+        // PHASE4 Part C (§11): lossless merge of a layer's components into
+        // the layer below it. By-value index — internals clear the GUI
+        // selection (which owns the set the index would reference).
+        void merge_layer_down(GUIStuff::TreeListingObjIndexList objIndex);
         void editing_layer_check();
 
         NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> get_layer_parent_from_obj_index(const GUIStuff::TreeListingObjIndexList& objIndex);

@@ -7,6 +7,7 @@
 #include "Helpers/ConvertVec.hpp"
 #include "Helpers/NetworkingObjects/NetObjOrderedList.hpp"
 #include "SerializedBlendMode.hpp"
+#include <Helpers/Logger.hpp>
 
 #include "../../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
@@ -462,6 +463,20 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                 if(depthValToEdit != 0.0f)
                     text_label(gui, "Parallax active: editing this layer is\nlocked until depth returns to 0.");
             }
+            // PHASE4 Part C (§11): lossless merge into the layer below.
+            // Shown for plain DEFAULT layers only (named layers respawn
+            // on load; folders are out of scope for v1) — the function
+            // itself re-checks everything and toasts the reason if a
+            // guard trips.
+            if(!editingLayerLock->is_folder() && editingLayerLock->get_kind() == LayerKind::DEFAULT) {
+                text_button(gui, "merge down button", "Merge Down", {
+                    .wide = true,
+                    .onClick = [&] {
+                        if(selectedLayerIndices.size() == 1)
+                            merge_layer_down(*selectedLayerIndices.begin());
+                    }
+                });
+            }
         }
     }
 }
@@ -620,6 +635,101 @@ void DrawingProgramLayerManagerGUI::remove_layer(const GUIStuff::TreeListingObjI
     world.undo.push(std::make_unique<DeleteLayerWorldUndoAction>(std::make_unique<DrawingProgramLayerListItemUndoData>(layerPtr->get_undo_data(world.undo)), it->pos, world.undo.get_undoid_from_netid(parentPtr.get_net_id()), world.undo.get_undoid_from_netid(layerPtr.get_net_id())));
     parentPtr->get_folder().folderList->erase(parentPtr->get_folder().folderList, it);
     world.main.g.gui.set_to_layout();
+}
+
+void DrawingProgramLayerManagerGUI::merge_layer_down(GUIStuff::TreeListingObjIndexList objIndex) {
+    using namespace NetworkingObjects;
+    auto& world = layerMan.drawP.world;
+
+    NetObjTemporaryPtr<DrawingProgramLayerListItem> srcPtr = get_layer_from_obj_index(objIndex);
+    NetObjTemporaryPtr<DrawingProgramLayerListItem> parentPtr = get_layer_parent_from_obj_index(objIndex);
+    if(!srcPtr || srcPtr->is_folder())
+        return;
+
+    // PHASE4.md §11 refusal guards — no silent appearance changes.
+    // Named-kind source: ensure_named_layers() recreates missing named
+    // layers on load, so deleting one is pointless (it reappears empty).
+    if(srcPtr->get_kind() != LayerKind::DEFAULT) {
+        Logger::get().log("USERINFO", "Merge Down: Sketch/Color/Ink layers can't be merged away (they're recreated on load). Merge another layer into them instead.");
+        return;
+    }
+
+    // Dest = the item directly below in render order. folderList draws
+    // reversed (index 0 = topmost), so "below" is the NEXT list index.
+    auto& folderList = parentPtr->get_folder().folderList;
+    auto srcIt = folderList->get(srcPtr.get_net_id());
+    const uint32_t destPos = srcIt->pos + 1;
+    if(destPos >= folderList->size()) {
+        Logger::get().log("USERINFO", "Merge Down: this is the bottom-most layer — nothing below to merge into.");
+        return;
+    }
+    auto destIt = folderList->at(destPos);
+    DrawingProgramLayerListItem& dest = *destIt->obj;
+    if(dest.is_folder()) {
+        Logger::get().log("USERINFO", "Merge Down: the item below is a folder — move the layer or merge inside the folder instead.");
+        return;
+    }
+
+    // Layer alpha/blend composite per-LAYER; moving components from
+    // under (or into) a non-default one would change how the art looks.
+    auto has_default_compositing = [](const DrawingProgramLayerListItem& l) {
+        return l.get_alpha() == 1.0f && l.get_blend_mode() == SerializedBlendMode::BLEND_SRC_OVER;
+    };
+    if(!has_default_compositing(*srcPtr) || !has_default_compositing(dest)) {
+        Logger::get().log("USERINFO", "Merge Down: both layers need default alpha + blend mode (a merge under non-default compositing would change the art's appearance). Reset them, or use Flatten Layer (View).");
+        return;
+    }
+    // Different parallax depths = different derived cameras = content
+    // would visually jump. v1 requires both at 0 (PHASE4.md §11).
+    if(srcPtr->get_parallax_depth() != 0.0f || dest.get_parallax_depth() != 0.0f) {
+        Logger::get().log("USERINFO", "Merge Down: both layers need parallax depth 0.");
+        return;
+    }
+
+    // Waypoints can't be cloned-then-erased: the erase callback sweeps
+    // the waypoint out of wpGraph by id, orphaning the clone.
+    auto& srcComponents = srcPtr->get_layer().components;
+    for(auto it = srcComponents->begin(); it != srcComponents->end(); ++it) {
+        if(it->obj->get_comp().get_type() == CanvasComponentType::WAYPOINT) {
+            Logger::get().log("USERINFO", "Merge Down: this layer holds waypoint markers — move them to another layer first.");
+            return;
+        }
+    }
+
+    // Clone source components into dest ABOVE its existing content
+    // (components draw begin→end, so end() = top-z; same-anchor pairs
+    // insert in order, preserving the source's relative stacking).
+    // Clone + erase (rather than moving the live containers) reuses the
+    // proven flatten/vectorize undo machinery: place-undo + erase-undo
+    // + the layer-delete undo from remove_layer = fully reversible.
+    const size_t mergedCount = srcComponents->size();
+    if(mergedCount > 0) {
+        auto& destComponents = dest.get_layer().components;
+        std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
+        toPlace.reserve(mergedCount);
+        for(auto it = srcComponents->begin(); it != srcComponents->end(); ++it)
+            toPlace.emplace_back(destComponents->end(), new CanvasComponentContainer(world.netObjMan, *it->obj->get_data_copy()));
+        const auto placed = layerMan.add_many_components_to_specific_layer(*destIt->obj, toPlace);
+        for(auto& pit : placed)
+            pit->obj->commit_update(layerMan.drawP);
+
+        std::vector<CanvasComponentContainer::ObjInfo*> toErase;
+        toErase.reserve(mergedCount);
+        for(auto it = srcComponents->begin(); it != srcComponents->end(); ++it)
+            toErase.push_back(&(*it));
+        layerMan.erase_component_container(toErase);
+    }
+
+    // If the merged-away layer was the edit target, hand editing to dest
+    // so the artist's next stroke lands where the content went.
+    const std::string destName = dest.get_name();
+    if(layerMan.editingLayer.lock().get() == srcPtr.get())
+        layerMan.editingLayer = world.netObjMan.get_obj_temporary_ref_from_id<DrawingProgramLayerListItem>(destIt->obj.get_net_id());
+
+    remove_layer(objIndex);
+
+    Logger::get().log("USERINFO",
+        "Merged " + std::to_string(mergedCount) + " component(s) down into '" + destName + "'.");
 }
 
 void DrawingProgramLayerManagerGUI::editing_layer_check() {

@@ -1,6 +1,6 @@
 # PHASE4 — Multiplane Parallax + Generalized Flatten + Merge Down
 
-Status: Parts A (M1+M2) + B (M0) SHIPPED (rc17); Part C DESIGN
+Status: Parts A (M1+M2) + B (M0) SHIPPED (rc17); Part C (C1) SHIPPED (rc18)
 Prereqs: PHASE2 layer system, PHASE3, raster flatten (commit 691a2f5)
 
 Three related layer-power features:
@@ -12,8 +12,8 @@ Three related layer-power features:
   also feeds Part A: flatten is the documented perf mitigation for
   parallax layers (§5).
 - **Part C — Merge Down**: lossless move of a layer's components into
-  the layer below, deleting the source layer (§11). Design agreed
-  (zynx, 2026-06-07: Option A — lossless move), not started.
+  the layer below, deleting the source layer (§11). Option A (lossless
+  move) per zynx; C1 shipped + verified 2026-06-07 (rc18).
 
 # Part A — Multiplane Parallax Layers
 
@@ -378,12 +378,15 @@ A **Merge Down** button in the layer panel's Edit Layer section
 
 Merge Down REFUSES with a USERINFO toast explaining why, when:
 
-- **Source layer has non-default alpha or blend mode.** Layer alpha/
-  blend composite per-LAYER; moving components out from under them
-  changes how the art looks (a 50%-alpha layer's strokes would become
-  opaque). Toast: "reset alpha/blend to default first, or use Flatten
-  Layer (View)." Baking alpha into per-component colors was considered
-  and rejected — not well-defined across component types.
+- **Source OR dest layer has non-default alpha or blend mode.** Layer
+  alpha/blend composite per-LAYER; moving components out from under one
+  (or into one) changes how the art looks (a 50%-alpha layer's strokes
+  would become opaque on a default dest — or opaque strokes would turn
+  translucent moving into a 50%-alpha dest). Toast: "reset alpha/blend
+  to default first, or use Flatten Layer (View)." Baking alpha into
+  per-component colors was considered and rejected — not well-defined
+  across component types. (Dest guard added during C1 implementation —
+  same no-silent-appearance-changes principle as the source guard.)
 - **Source and dest parallax depths differ** (either non-zero and
   unequal). Different derived cameras → content would visually jump.
   Equal depths (including both 0) merge fine; the merged content
@@ -396,6 +399,11 @@ Merge Down REFUSES with a USERINFO toast explaining why, when:
   Merging a DEFAULT layer *into* a named layer is fine.
 - **No eligible dest**: source is bottom-most in its folder, or the
   item below is a folder (v1 keeps folders out of it).
+- **Source layer holds WAYPOINT components** (added during C1
+  implementation): waypoints can't be cloned-then-erased — the
+  component-erase callback sweeps the waypoint out of `wpGraph` by id,
+  which would orphan the clone. Toast: "move them to another layer
+  first."
 
 ### Build sketch
 
@@ -417,7 +425,11 @@ folder-adjacency detection), not plumbing.
 
 ### Milestone
 
-- **C1:** button + guards + move + delete + manual verification:
-  merge a vector+ink mixed layer into the one below, confirm z-order
-  (merged content above dest's), undo restores both layers intact,
-  collab session sees the same result.
+- **C1** ✅ SHIPPED (verified by zynx, 2026-06-07): "Merge Down"
+  button in the layer panel's Edit Layer section (DEFAULT layers only),
+  all guards above with explanatory toasts, clone → place-at-top-z →
+  erase → remove_layer (3 undo steps), edit target hands off to dest if
+  it pointed at the merged-away layer. Verify: merge a vector+ink mixed
+  layer into the one below, confirm z-order (merged content above
+  dest's), undo restores both layers intact, collab session sees the
+  same result.
