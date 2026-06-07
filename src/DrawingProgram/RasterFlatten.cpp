@@ -6,7 +6,10 @@
 #include "../CoordSpaceHelper.hpp"
 #include "../DrawData.hpp"
 #include "../CanvasComponents/CanvasComponentContainer.hpp"
+#include "../CanvasComponents/ImageCanvasComponent.hpp"
 #include "../CanvasComponents/MyPaintLayerCanvasComponent.hpp"
+#include "../CanvasComponents/TextBoxCanvasComponent.hpp"
+#include "../ResourceManager.hpp"
 #include "Layers/DrawingProgramLayerManager.hpp"
 #include "Layers/DrawingProgramLayerListItem.hpp"
 
@@ -26,17 +29,17 @@
 
 namespace RasterFlatten {
 
+// Per-axis cap on the baked bitmap so an over-zoomed-out flatten can't ask
+// for a gigapixel surface. Hit when the in-view region is physically large
+// relative to the bake scale; then we coarsen the scale to fit and tell
+// the user. Live-tunable (Settings → Debug), persisted in config.json —
+// defined outside the HVYM_HAS_LIBMYPAINT guard because GlobalConfig and
+// the settings GUI reference it in every build.
+int MAXIMUM_FLATTEN_SIZE_PX = 8192;
+
 #ifdef HVYM_HAS_LIBMYPAINT
 
-namespace {
-// Per-axis cap on the baked bitmap so an over-zoomed-out flatten can't ask
-// for a gigapixel surface. Hit only when the in-view region is physically
-// large relative to the finest stroke detail; then we coarsen the bake
-// scale to fit and tell the user.
-constexpr int kMaxFlattenDim = 8192;
-}  // namespace
-
-void flatten_ink_strokes_in_view(DrawingProgram& drawP) {
+void flatten_layer_in_view(DrawingProgram& drawP) {
     auto& world = drawP.world;
     auto& main = world.main;
 
@@ -65,39 +68,86 @@ void flatten_ink_strokes_in_view(DrawingProgram& drawP) {
     viewAABB.max = WorldVec{std::max({c00.x(), c10.x(), c01.x(), c11.x()}),
                             std::max({c00.y(), c10.y(), c01.y(), c11.y()})};
 
-    // Collect in-view raster strokes; track the merged bounds + the finest
-    // (smallest inverseScale = highest-res) source so the bake loses no detail.
+    // Collect every visual in-view component on the layer (PHASE4 §10).
+    // Skip-list rather than allow-list:
+    //  - WAYPOINT: functional marker, not artwork — rasterizing the pin
+    //    would orphan it from wpGraph.
+    //  - IMAGE without its resource on hand (still downloading / display
+    //    missing): it currently draws as a gray placeholder; baking that
+    //    and erasing the component would silently lose the real image.
+    //  - currently-selected components: mid-manipulation, and some types
+    //    draw editing overlays (crop shade, handles) that must not bake.
+    // Track merged bounds + the finest (smallest inverseScale =
+    // highest-res) RASTER source; vector content has no native scale and
+    // is covered by the current-view WYSIWYG floor below.
     std::vector<CanvasComponentContainer::ObjInfoIterator> sources;
     std::optional<SCollision::AABB<WorldScalar>> mergedAABB;
     std::optional<WorldScalar> finestInverseScale;
+    bool hasVectorSource = false;
+    size_t skippedPendingImages = 0;
     for (auto it = components->begin(); it != components->end(); ++it) {
         auto& container = *it->obj;
-        if (container.get_comp().get_type() != CanvasComponentType::MYPAINTLAYER) continue;
+        const auto type = container.get_comp().get_type();
+        if (type == CanvasComponentType::WAYPOINT) continue;
         const auto wb = container.get_world_bounds();
         if (!wb.has_value()) continue;
         if (!SCollision::collide(wb.value(), viewAABB)) continue;
+        if (drawP.selection.is_selected(&(*it))) continue;
+        if (type == CanvasComponentType::IMAGE) {
+            auto& img = static_cast<ImageCanvasComponent&>(container.get_comp());
+            // Mid-crop: draws the crop-shade overlay, and the edit tool
+            // holds a reference — leave it alone (same reason as selected).
+            if (img.d.editing) continue;
+            const bool stillDownloading = std::any_of(
+                drawP.droppedDownloadingFiles.begin(), drawP.droppedDownloadingFiles.end(),
+                [&](const auto& df) { return df.comp == &(*it); });
+            if (stillDownloading || !world.drawData.rMan->get_display_data(img.d.imageID)) {
+                ++skippedPendingImages;
+                continue;
+            }
+        }
+        if (type == CanvasComponentType::TEXTBOX &&
+            static_cast<TextBoxCanvasComponent&>(container.get_comp()).d.editing)
+            continue;  // text being typed right now — don't bake the cursor
 
         sources.push_back(it);
         if (!mergedAABB) mergedAABB = wb.value();
         else mergedAABB->include_aabb_in_bounds(wb.value());
-        const WorldScalar inv = container.coords.inverseScale;
-        if (!finestInverseScale || inv < finestInverseScale.value())
-            finestInverseScale = inv;
+        // Raster-backed sources pin the bake scale (their pixels are the
+        // detail that exists). For IMAGE, coords.inverseScale is the
+        // placement scale — a conservative proxy for its pixel density.
+        if (type == CanvasComponentType::MYPAINTLAYER || type == CanvasComponentType::IMAGE) {
+            const WorldScalar inv = container.coords.inverseScale;
+            if (!finestInverseScale || inv < finestInverseScale.value())
+                finestInverseScale = inv;
+        } else {
+            hasVectorSource = true;
+        }
     }
 
     if (sources.size() < 2) {
         Logger::get().log("USERINFO",
-            "Flatten: need at least 2 ink strokes in view (found " +
+            "Flatten: need at least 2 components in view (found " +
             std::to_string(sources.size()) + ").");
         return;
     }
 
-    // Bake scale = finest source scale, coarsened only if the resulting
-    // bitmap would blow past the per-axis cap.
+    // Bake scale: never coarser than the finest raster source AND never
+    // coarser than the current view (WYSIWYG floor — vectors are
+    // resolution-free, so "at least as sharp as what's on screen" is the
+    // intuitive guarantee; zoom in before flattening to keep more detail).
+    // Coarsened only if the resulting bitmap would blow past the per-axis
+    // cap.
+    const int maxFlattenDim = std::max(MAXIMUM_FLATTEN_SIZE_PX, 256);
     const WorldVec dim = mergedAABB->dim();
-    WorldScalar targetInv = finestInverseScale.value();
-    const WorldScalar minInvX = dim.x().divide_double(static_cast<double>(kMaxFlattenDim));
-    const WorldScalar minInvY = dim.y().divide_double(static_cast<double>(kMaxFlattenDim));
+    // Pure-raster flatten keeps the finest-source rule (baking finer than
+    // the sources' pixels gains nothing and costs tile memory); the
+    // current-view floor applies once vector content is in the mix.
+    WorldScalar targetInv = finestInverseScale.value_or(cam.c.inverseScale);
+    if (hasVectorSource && cam.c.inverseScale < targetInv)
+        targetInv = cam.c.inverseScale;
+    const WorldScalar minInvX = dim.x().divide_double(static_cast<double>(maxFlattenDim));
+    const WorldScalar minInvY = dim.y().divide_double(static_cast<double>(maxFlattenDim));
     bool downsampled = false;
     if (minInvX > targetInv) { targetInv = minInvX; downsampled = true; }
     if (minInvY > targetInv) { targetInv = minInvY; downsampled = true; }
@@ -107,8 +157,8 @@ void flatten_ink_strokes_in_view(DrawingProgram& drawP) {
     // to_space(max) == the pixel resolution.
     const Vector2f resF = targetCoords.to_space(mergedAABB->max);
     Vector2i resolution{
-        std::clamp(static_cast<int>(std::ceil(resF.x())), 1, kMaxFlattenDim),
-        std::clamp(static_cast<int>(std::ceil(resF.y())), 1, kMaxFlattenDim)};
+        std::clamp(static_cast<int>(std::ceil(resF.x())), 1, maxFlattenDim),
+        std::clamp(static_cast<int>(std::ceil(resF.y())), 1, maxFlattenDim)};
 
     sk_sp<SkSurface> surface = main.create_native_surface(resolution, false);
     if (!surface) {
@@ -170,14 +220,21 @@ void flatten_ink_strokes_in_view(DrawingProgram& drawP) {
     for (auto& it : sources) toErase.push_back(&(*it));
     drawP.layerMan.erase_component_container(toErase);
 
+    std::string note;
+    if (downsampled)
+        note += " Region large — baked at reduced resolution.";
+    if (skippedPendingImages)
+        note += " Skipped " + std::to_string(skippedPendingImages) +
+                " still-loading image(s).";
     Logger::get().log("USERINFO",
-        "Flattened " + std::to_string(sources.size()) + " ink strokes" +
-        (downsampled ? " (region large — baked at reduced resolution)." : "."));
+        "Flattened " + std::to_string(sources.size()) + " components." + note);
 }
 
 #else  // !HVYM_HAS_LIBMYPAINT
 
-void flatten_ink_strokes_in_view(DrawingProgram&) {
+void flatten_layer_in_view(DrawingProgram&) {
+    // The merged result is a libmypaint surface (raster-erasable), so
+    // flatten as a whole is gated on the ink feature.
     Logger::get().log("USERINFO", "Flatten: custom ink isn't available in this build.");
 }
 

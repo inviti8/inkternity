@@ -21,6 +21,8 @@
 
 class World;
 class PhoneDrawingProgramScreen;
+class DrawingProgram;
+namespace RasterFlatten { void flatten_layer_in_view(DrawingProgram& drawP); }
 
 class DrawingProgram {
     public:
@@ -174,4 +176,7 @@ class DrawingProgram {
         friend class DrawingProgramLayer;
         friend class DrawingProgramLayerFolder;
         friend class ToolConfiguration;
+        // PHASE4 §10: flatten needs selection (skip mid-manipulation
+        // comps) + droppedDownloadingFiles (skip still-loading images).
+        friend void RasterFlatten::flatten_layer_in_view(DrawingProgram& drawP);
 };

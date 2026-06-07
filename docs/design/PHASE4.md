@@ -288,12 +288,16 @@ loss (this is the "region large — baked at reduced resolution" toast).
 
 Two-step answer:
 
-1. **M0 — settings knob.** "Maximum flatten size (px)" in Settings,
+1. **M0 — settings knob.** "Maximum flatten size (px per axis)" in
+   Settings → **General** (it's a production setting — it directly
+   controls how much detail survives a flatten; zynx call, 2026-06-06),
    default 8192, range 2048–16384. Memory is why the cap exists and why
    the range is bounded: an 8192² bake is ~256 MB readback + up to
    ~512 MB of transient 16-bit tiles; 16384² quadruples that. State the
-   cost in the setting's help text. Live-tunable like the BVH rebuild
-   threshold (Toolbar Settings → Debug precedent, src/Toolbar.cpp:2339).
+   cost in the setting's help text. Live-tunable static persisted in
+   config.json (under the debug json section — UI placement and
+   persistence key are independent; key kept stable so early-tester
+   configs don't reset).
 2. **Follow-up — scale-band partitioning (the principled fix).** Instead
    of one merged component at one scale, cluster sources by
    `coords.inverseScale` into bands (e.g. each band spans ≤ 2⁴× scale

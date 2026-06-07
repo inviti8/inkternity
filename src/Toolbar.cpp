@@ -687,8 +687,8 @@ void Toolbar::top_toolbar() {
                                     optionsMenuOpen = true;
                                     optionsMenuType = CANVAS_SETTINGS_MENU;
                                 });
-                                menu_popup_text_button("flatten ink in view", "Flatten Ink (View)", [&] {
-                                    RasterFlatten::flatten_ink_strokes_in_view(main.world->drawProg);
+                                menu_popup_text_button("flatten ink in view", "Flatten Layer (View)", [&] {
+                                    RasterFlatten::flatten_layer_in_view(main.world->drawProg);
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {
@@ -2181,6 +2181,13 @@ void Toolbar::general_settings_inner_gui() {
                             checkbox_boolean_field(gui, "disable graphics driver workarounds", "Disable graphics driver workarounds (enabling or disabling this might fix some graphical glitches, requires restart)", &main.conf.disableGraphicsDriverWorkarounds);
                         #endif
                         input_scalar_field(gui, "jump transition time", "Jump transition time", &main.conf.jumpTransitionTime, 0.01f, 1000.0f, {.decimalPrecision = 2});
+                        // PHASE4 §10 M0: per-axis bake cap for Flatten Layer
+                        // (View). Production setting (not Debug) — it
+                        // directly controls how much detail survives a
+                        // flatten. Memory is why the range is bounded:
+                        // 8192² is ~256 MB readback + up to ~512 MB
+                        // transient 16-bit tiles; 16384² quadruples that.
+                        input_scalar_field<int>(gui, "maximum flatten size", "Maximum flatten size (px per axis)", &RasterFlatten::MAXIMUM_FLATTEN_SIZE_PX, 2048, 16384);
                         input_scalar_field(gui, "Max GUI Scale", "Max GUI Scale", &main.conf.guiScale, 0.5f, 5.0f, {
                             .decimalPrecision = 1,
                             .onEdit = [&] { main.g.window_update(); }

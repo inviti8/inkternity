@@ -3,6 +3,7 @@
 #include "Helpers/StringHelpers.hpp"
 #include "ResourceDisplay/ImageResourceDisplay.hpp"
 #include "DrawingProgram/DrawingProgramCache.hpp"
+#include "DrawingProgram/RasterFlatten.hpp"
 #include <SDL3/SDL_time.h>
 #include <cstdlib>
 #include <fstream>
@@ -67,6 +68,7 @@ nlohmann::json GlobalConfig::get_config_json(const InputManager& input) const {
     debugJson["componentCountToForceCacheRebuild"] = DrawingProgramCache::MINIMUM_COMPONENTS_TO_START_REBUILD;
     debugJson["maximumFrameTimeToForceCacheRebuild"] = DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH;
     debugJson["millisecondMinimumTimeToCheckForCacheRebuild"] = DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH;
+    debugJson["maximumFlattenSizePx"] = RasterFlatten::MAXIMUM_FLATTEN_SIZE_PX;
     toRet["debug"] = debugJson;
 
     return toRet;
@@ -139,6 +141,7 @@ void GlobalConfig::set_config_json(InputManager& input, const nlohmann::json& j,
     try{j.at("debug").at("componentCountToForceCacheRebuild").get_to(DrawingProgramCache::MINIMUM_COMPONENTS_TO_START_REBUILD);} catch(...) {}
     try{j.at("debug").at("maximumFrameTimeToForceCacheRebuild").get_to(DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH);} catch(...) {}
     try{j.at("debug").at("millisecondMinimumTimeToCheckForCacheRebuild").get_to(DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH);} catch(...) {}
+    try{j.at("debug").at("maximumFlattenSizePx").get_to(RasterFlatten::MAXIMUM_FLATTEN_SIZE_PX);} catch(...) {}
 }
 
 void GlobalConfig::save_palettes() {
