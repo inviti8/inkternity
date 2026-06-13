@@ -260,11 +260,28 @@ effect (additive → `SkBlendMode::kPlus`, normal → `kSrcOver`).
 
 ## 10. Milestones
 
-- **M0 — runtime spike.** Vendor `timelinefxlib` (pinned). Hardcode one
-  test `.tfx` package; `tfx_UpdateParticleManager` off `deltaTime`;
-  `tfx_2d_instance_t` → `drawAtlas`; CPU color-ramp sampling; draw a fixed
-  emitter at a fixed canvas point, **outside the cache**. Proves the
-  render path end-to-end.
+- **M0 — runtime spike. ✅ DONE (2026-06-13).** Vendored `timelinefxlib`
+  (pinned `a5f323d`); `tools/tfx_render_spike.cpp` loads a `.tfx`, runs
+  `tfx_UpdateEffectManager` for N frames, and renders the
+  `tfx_GetInstanceBuffer` buffer to a PNG. Proven with zest's `effects.tfx`
+  (Star Burst Flash / Vader Explosion / Player Bullet).
+  - **API drift from this doc's original §5 sketch (a5f323d is GPU-first):**
+    the instance is `tfx_instance_t` (not `tfx_2d_instance_t`); position is
+    plain float, but size is scaled-u16 (`tfx_GetSpriteScale`), rotation a
+    16-bit snorm **quaternion**, and **color lives nowhere in the instance**
+    — it's gradient-mapped per-texel in the fragment shader.
+  - **Render primitive = `SkRuntimeEffect`, NOT `drawAtlas`** (zynx chose
+    faithful). The harness ports `timelinefx.frag` to SkSL: per particle it
+    binds the shape `SkImage` + the color-ramp `SkImage` and drives uniforms
+    from CPU-read `tfx_gpu_particle_properties_t`
+    (`tfx_ParticlePropertiesBuffer`) + the unpacked
+    `intensity_gradient_map` (u16·128/32767) and `curved_alpha_life`
+    (unorm8). drawAtlas is structurally insufficient (per-sprite tint can't
+    do per-texel ramp indexing). §5/§6 below describe the older assumption.
+  - **Deferred fidelity refinements (M1):** per-emitter blend mode (M0
+    hardcodes additive `kPlus`); motion stretch + vector alignment; frame
+    interpolation (`captured_index` lerp); and a side-by-side color check
+    against the editor's own preview once an export is in hand.
 - **M1 — `ParticleCanvasComponent`.** Real component on a layer:
   emitter-local sim → `CoordSpaceHelper` → world; live preview; embedded
   package; **drop-a-`.tfx`-on-canvas** ingestion via the existing

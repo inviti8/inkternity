@@ -564,6 +564,21 @@ if(NOT EMSCRIPTEN)
     # the main render path. Build explicitly with `--target tfx_spike`.
     add_executable(tfx_spike EXCLUDE_FROM_ALL "tools/tfx_spike.cpp")
     target_link_libraries(tfx_spike timelinefx)
+
+    # M0 render proof (docs/design/PHASE5.md). Loads a .tfx package, runs the
+    # CPU sim, and renders the particle instance buffer with a faithful
+    # SkRuntimeEffect port of timelinefx.frag (per-texel color ramp / gradient
+    # mapping) — the fidelity path chosen over plain drawAtlas. Links Skia +
+    # the C++17 timelinefx lib; writes PNGs. EXCLUDE_FROM_ALL; build with
+    # `--target tfx_render_spike`. Conan builds only (needs skia-infinipaint).
+    if(NOT NO_CONAN_BUILD)
+        add_executable(tfx_render_spike EXCLUDE_FROM_ALL "tools/tfx_render_spike.cpp")
+        target_link_libraries(tfx_render_spike timelinefx skia-infinipaint::skia-infinipaint)
+        target_compile_definitions(tfx_render_spike PRIVATE USE_SKIA_BACKEND_GANESH)
+        if(WIN32)
+            target_compile_definitions(tfx_render_spike PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        endif()
+    endif()
 endif()
 if(ANDROID)
     target_include_directories(main PRIVATE "android-project/SDL/include")
