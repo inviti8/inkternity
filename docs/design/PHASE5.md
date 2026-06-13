@@ -235,7 +235,14 @@ effect (additive → `SkBlendMode::kPlus`, normal → `kSrcOver`).
 - **Library is early-alpha** (author: "still very much a work in
   progress… give feedback on the interface"). Mitigation: **vendor it and
   pin a specific commit**; wrap the C API behind a thin Inkternity
-  adapter so churn is contained to one file.
+  adapter so churn is contained to one file. M0 finding: the effect
+  package format is **not** version-compatible across the library's
+  history — `master` HEAD partially-loads (`some_data_not_loaded`)
+  packages authored with newer code. We therefore pin the commit the
+  author's `zest` renderer uses (`a5f323d`, the reference-integration +
+  sample-asset revision), which loads them cleanly. Re-validate the
+  artist's actual editor export against the pin; bump the pin to match the
+  editor if a newer skew appears.
 - **Editor cost/license to reconfirm.** The C++ lib pairs with a *new
   alpha editor* (rigzsoft "timelinefx-alpha-version"), which is **not**
   necessarily the £29.99 BlitzMax-era editor first cited. Confirm the

@@ -539,7 +539,7 @@ if(NOT EMSCRIPTEN)
                 "$<TARGET_FILE_DIR:c2pa_repro>/${C2PA_RS_SHLIB}")
 
     # PHASE5 (docs/design/PHASE5.md). Vendored TimelineFX particle runtime
-    # (deps/timelinefx, pinned commit a96a36fb6f5e9d9a51ba4c28321cb86360b4c317
+    # (deps/timelinefx, pinned commit a5f323d826fa0d6e7ccb481961c518c56aa59285
     # — see deps/timelinefx/VENDORING.md). Self-contained: own allocator +
     # SIMD + threads, no deps.
     #

@@ -6,13 +6,29 @@ License:  MIT (see `License.txt`, © 2021 Peter Rigby) — registered at
 
 ## Pinned revision
 
-    commit a96a36fb6f5e9d9a51ba4c28321cb86360b4c317
-    date   2024-12-13
-    msg    "Make sure flags are set to 0"
+    commit a5f323d826fa0d6e7ccb481961c518c56aa59285
+    date   2026-05-14
+    msg    "Fixed some memory leaks"
+
+This is the exact commit the author's own renderer `zest`
+(github.com/peterigz/zest) pins as its `submodules/timelinefxlib` — i.e.
+the revision the reference integration (`zest/implementations/
+impl_timelinefx.c`) and the sample effect packages (`zest/examples/
+assets/*.tfx`) are authored against. We deliberately pin THIS rather than
+timelinefxlib's `master` HEAD:
+
+- master HEAD (`a96a36f`, Dec 2024) is ~294 commits OLDER and only
+  *partially* loads those samples — `tfx_GetLibraryErrorStatus` returns
+  `tfxErrorCode_some_data_not_loaded` (0x10): newer effect-schema fields it
+  doesn't recognise are silently dropped.
+- At `a5f323d` the same `effects.tfx` loads with `error_status == 0x0` (all
+  4 shapes + 6 effects). Verified with the `tfx_spike` load harness.
+- `a5f323d` (May 2026) is also the newest reference point, so it's the
+  closest match to the current TimelineFX editor's export format.
 
 Vendored files are an exact copy of the upstream blobs at that commit
 (verified: `git hash-object timelinefx.h` ==
-`9edc5f24d9db3e6e9bdb2b0d84ec8533f95a9f9f`, the GitHub blob SHA at the pin).
+`3082e891319b243be03b32d1207593cc9350bb3e`, the GitHub blob SHA at the pin).
 
 Only `timelinefx.h` + `timelinefx.cpp` are needed — the library is
 self-contained (its own pocket allocator, SIMD intrinsics, and
