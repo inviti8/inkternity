@@ -537,6 +537,33 @@ if(NOT EMSCRIPTEN)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${C2PA_RS_SHLIB_PATH}"
                 "$<TARGET_FILE_DIR:c2pa_repro>/${C2PA_RS_SHLIB}")
+
+    # PHASE5 (docs/design/PHASE5.md). Vendored TimelineFX particle runtime
+    # (deps/timelinefx, pinned commit a96a36fb6f5e9d9a51ba4c28321cb86360b4c317
+    # — see deps/timelinefx/VENDORING.md). Self-contained: own allocator +
+    # SIMD + threads, no deps.
+    #
+    # Compiled as an isolated C++17 static library. The upstream (alpha) TU
+    # trips MSVC's C++20 rewritten-comparison-operator ambiguity
+    # (tfx_attribute_node_s::operator== gains a synthesized reversed
+    # candidate) at our project-wide C++23. Building the vendored TU at
+    # C++17 sidesteps that rule and keeps the pinned source pristine — no
+    # upstream fork. Consumers (main at M1, tfx_spike now) include the
+    # header only for the extern "C" tfxAPI surface, which does not
+    # instantiate the offending internal templates, so they stay at C++23.
+    # EXCLUDE_FROM_ALL so it is built only when something links it (today
+    # just tfx_spike); the shipping `main` binary picks it up at M1.
+    add_library(timelinefx STATIC EXCLUDE_FROM_ALL "deps/timelinefx/timelinefx.cpp")
+    target_include_directories(timelinefx PUBLIC "deps/timelinefx")
+    set_target_properties(timelinefx PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    if(WIN32)
+        target_compile_definitions(timelinefx PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    endif()
+
+    # M0 spike: compile+link proof for the vendored runtime, decoupled from
+    # the main render path. Build explicitly with `--target tfx_spike`.
+    add_executable(tfx_spike EXCLUDE_FROM_ALL "tools/tfx_spike.cpp")
+    target_link_libraries(tfx_spike timelinefx)
 endif()
 if(ANDROID)
     target_include_directories(main PRIVATE "android-project/SDL/include")
