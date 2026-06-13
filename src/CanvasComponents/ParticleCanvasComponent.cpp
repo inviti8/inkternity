@@ -243,7 +243,11 @@ void ParticleCanvasComponent::draw(SkCanvas* canvas, const DrawData& drawData,
 
         SkPaint paint;
         paint.setShader(b.makeShader());
-        paint.setBlendMode(SkBlendMode::kPlus);  // additive (M1: per-emitter blend mode TODO)
+        // Premultiplied-over — matches zest's PreMultiplyBlendState (the
+        // reference renderer). TimelineFX bakes the additive<->alpha spectrum
+        // into the per-particle premultiplied output, so one blend mode
+        // covers both (and matches the editor preview).
+        paint.setBlendMode(SkBlendMode::kSrcOver);
 
         float hx = pr.image_handle.x, hy = pr.image_handle.y;
         SkMatrix m = SkMatrix::Translate(in.position.x * s, in.position.y * s);

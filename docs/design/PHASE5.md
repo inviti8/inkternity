@@ -1,6 +1,9 @@
 # PHASE5 — Particle Systems (TimelineFX runtime + editor)
 
-Status: DESIGN (not started)
+Status: M0 + M1 SHIPPED (2026-06-13). Drop-a-.tfx particle effects render
+live in-app via a faithful SkRuntimeEffect port; premultiplied blend
+(matches the editor); animate in reader mode; host-authored. Remaining
+M1.x/M2/M3 polish tracked in the milestones below.
 Prereqs: PHASE4 layer system (parallax depth, "live-outside-cache" draw
 bypass), `ResourceManager` (embedded assets), the file-drop ingestion
 pipeline, animated-GIF playback (`ImageResourceDisplay`, the existing
@@ -294,11 +297,22 @@ effect (additive → `SkBlendMode::kPlus`, normal → `kSrcOver`).
   spawns the component (intercepts before image-drop, mirroring audio
   attach); package bytes embedded verbatim; first effect auto-selected.
   Save-format bumped `INFPNT000014` / `0.13.0`.
-  - **Deferred (M1.x):** NetObj single-writer host-gating (currently any
-    client could author); undo polish; a local-scale / effect-select / blend
-    -mode UI (M1 hardcodes scale 20, first effect, additive); true
-    outside-the-cache draw (M1 uses in-cache + per-frame invalidate); the
-    deterministic seed isn't wired to `tfx` yet.
+  - **Wrap (2026-06-13):** blend mode corrected to premultiplied `kSrcOver`
+    (matches zest's `PreMultiplyBlendState` + the editor — one mode, the
+    additive↔alpha spectrum is baked per-particle); **host-gating** added
+    (a connected non-server client is refused; solo + host pass);
+    **reader-mode animation confirmed** (works for free — `focus_update`
+    runs `drawProg.update` → `check_updateable_components` in both modes);
+    **flatten** bakes the current frame via the generic raster path;
+    move/scale/rotate via the Edit tool works for free (the component has a
+    collider). README + MANUAL documented.
+  - **Still deferred (M2/M3):** an in-app effect-select / scale / loop panel
+    (place/size via the Edit tool covers the basics; effect auto-picks the
+    first); undo polish; true outside-the-cache draw (M1 uses in-cache +
+    per-frame invalidate — fine for bounded effects); wiring the
+    deterministic seed into `tfx`; reader-clock binding (effects free-run
+    rather than syncing to playback time); per-layer parallax-depth interplay
+    verification.
 - **M2 — persistence / sync / undo.** Definition serialization + format
   bump (`INFPNT000014` / `0.13.0`); NetObj definition sync (single-writer,
   viewers simulate locally); undoable definition edits.

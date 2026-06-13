@@ -904,6 +904,15 @@ bool DrawingProgram::try_add_particle_effect(const std::filesystem::path& filePa
     if (!layerMan.is_a_layer_being_edited())
         return false;
 
+    // PHASE5: particle effects are host-authored. In a collab session a
+    // joined client (connected but not the server/host) may not add them;
+    // solo (not connected) and the host both pass. Return true so a refused
+    // drop doesn't fall through and embed as an image.
+    if (world.netObjMan.is_connected() && !world.netObjMan.is_server()) {
+        Logger::get().log("WORLDFATAL", "[Particle] only the host can add particle effects");
+        return true;
+    }
+
     std::ifstream f(filePath, std::ios::binary);
     if (!f) {
         Logger::get().log("WORLDFATAL", "[Particle] could not open " + filePath.string());

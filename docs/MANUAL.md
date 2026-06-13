@@ -227,6 +227,13 @@
 - The bake is at least as sharp as your current view, and never coarser than the finest ink stroke's own pixels — **zoom in before flattening to preserve more detail**. Very large regions are capped by **Settings->General->Maximum flatten size (px per axis)** (default 8192; raising it costs memory) and a notice appears if the result had to be downsampled
 - Costs to know about: the merged result is a single raster object — the individual strokes can no longer be selected, vectorized, or deleted one-by-one; flattened text is no longer editable; flattened vector content no longer stays sharp under infinite zoom-in. The pixel eraser still works on the result
 - Undo restores the originals (it takes two undo steps: one for the merged object, one for the removed originals)
+## Particle Effects (TimelineFX)
+- Author particle effects in the external **[TimelineFX editor](https://www.rigzsoft.co.uk/)** (rain, snow, embers, dust, magic, fire, explosions), then **drag the exported `.tfx` file onto the canvas** — it becomes a live, animated particle component on the layer you're editing
+- The effect plays continuously in author mode and **animates in reader mode** too, so atmospheric effects breathe while a reader sits on a panel. Move, scale, and rotate it with the Edit tool like any other object
+- The whole effect package — including its textures — is **embedded in your `.inkternity` save**, so the file stays self-contained and the effect travels with it
+- Colour is rendered faithfully (a Skia runtime-shader port of the TimelineFX fragment shader does the per-pixel colour-ramp gradient mapping), so what you see should match the editor's preview
+- In a collaboration session, particle effects are **host-authored**: only the host can add them, but everyone — including read-only viewers — sees them play
+- Notes: the `.tfx` must come from a recent TimelineFX editor (the runtime is pinned to a 2026 build; a much newer export may not load, in which case the app logs a load error rather than showing the effect). Flattening a layer (above) bakes the effect's current frame to a still raster
 ## Color Palettes
 - Click the color button on the left toolbar to open the color picker. The top color button, initially white, is for the brush color and outlines. The bottom color button, initially black, is for fill color (if applicable)
 - In the color picker window, you can use, create, and edit color palettes
