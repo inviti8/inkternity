@@ -560,6 +560,19 @@ if(NOT EMSCRIPTEN)
     if(WIN32)
         target_compile_definitions(timelinefx PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     endif()
+    # TimelineFX's default (non-AVX) SIMD path is SSE4.1: tfxWideMuli expands to
+    # _mm_mullo_epi32, plus _mm_blend_ps / _mm_blendv_ps / _mm_min_epi32 /
+    # _mm_packus_epi32. MSVC exposes every intrinsic regardless of /arch, so
+    # Windows builds clean; GCC/Clang refuse to inline an SSE4.1 always_inline
+    # intrinsic unless the TU is compiled with -msse4.1 ("target specific option
+    # mismatch"). Raise the ISA baseline for THIS isolated x86 target only
+    # (SSE4.1 is x86-64-v2, universal since ~2008 — matches TimelineFX's own
+    # default assumption). SSE41 also switches tfxWideFloor to the hardware
+    # _mm_floor_ps. ARM (NEON) and Emscripten don't link this lib.
+    if(NOT MSVC AND (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64|i[3-6]86" OR NOT CMAKE_SYSTEM_PROCESSOR))
+        target_compile_options(timelinefx PRIVATE -msse4.1)
+        target_compile_definitions(timelinefx PRIVATE SSE41)
+    endif()
 
     # M0 spike: compile+link proof for the vendored runtime, decoupled from
     # the main render path. Build explicitly with `--target tfx_spike`.
