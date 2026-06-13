@@ -174,6 +174,7 @@ set(sources "src/main.cpp"
             "src/CanvasComponents/TextBoxCanvasComponent.cpp"
             "src/CanvasComponents/EllipseCanvasComponent.cpp"
             "src/CanvasComponents/ImageCanvasComponent.cpp"
+            "src/CanvasComponents/ParticleCanvasComponent.cpp"
             "src/CanvasComponents/CanvasComponent.cpp"
             "src/Brushes/BrushPresets.cpp"
             "src/Brushes/LibMyPaintBridgeTest.cpp"
@@ -646,6 +647,17 @@ if(NOT EMSCRIPTEN)
     add_subdirectory(cmake/libmypaint)
     target_link_libraries(main mypaint)
     target_compile_definitions(main PRIVATE HVYM_HAS_LIBMYPAINT)
+endif()
+
+# PHASE5 (docs/design/PHASE5.md): link the TimelineFX particle runtime into
+# the app on desktop. timelinefx is the C++17-isolated static lib defined
+# above (deps/timelinefx); linking it propagates its PUBLIC include dir so
+# ParticleCanvasComponent.cpp can include timelinefx.h. HVYM_HAS_TIMELINEFX
+# gates that component's timelinefx usage (web builds get a no-op stub),
+# mirroring HVYM_HAS_LIBMYPAINT.
+if(NOT EMSCRIPTEN)
+    target_link_libraries(main timelinefx)
+    target_compile_definitions(main PRIVATE HVYM_HAS_TIMELINEFX)
 endif()
 
 if(EMSCRIPTEN)

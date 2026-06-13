@@ -30,6 +30,8 @@
 #include <include/effects/SkDashPathEffect.h>
 #include <chrono>
 #include "../CanvasComponents/ImageCanvasComponent.hpp"
+#include "../CanvasComponents/ParticleCanvasComponent.hpp"
+#include <fstream>
 #include "Layers/DrawingProgramLayer.hpp"
 #include "Layers/DrawingProgramLayerListItem.hpp"
 #include <Helpers/Parallel.hpp>
@@ -794,6 +796,11 @@ void DrawingProgram::add_file_to_canvas_by_path(const std::filesystem::path& fil
     if (try_attach_audio_to_selected_waypoint(filePath))
         return;
 
+    // PHASE5 — a dropped .tfx particle package spawns a ParticleCanvasComponent
+    // rather than embedding as an image.
+    if (try_add_particle_effect(filePath, dropPos))
+        return;
+
     if(layerMan.is_a_layer_being_edited()) {
         NetworkingObjects::NetObjTemporaryPtr<ResourceData> imageTempPtr = world.rMan.add_resource_file(filePath);
         if(imageTempPtr) {
@@ -885,6 +892,43 @@ bool DrawingProgram::try_attach_audio_to_selected_waypoint(const std::filesystem
     wpRef->set_audio_id(audioResourceId);
     Waypoint::publish_audio_id_update(wpRef);
     return true;
+}
+
+bool DrawingProgram::try_add_particle_effect(const std::filesystem::path& filePath, Vector2f dropPos) {
+#ifdef HVYM_HAS_TIMELINEFX
+    std::string ext = filePath.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext != ".tfx")
+        return false;
+    if (!layerMan.is_a_layer_being_edited())
+        return false;
+
+    std::ifstream f(filePath, std::ios::binary);
+    if (!f) {
+        Logger::get().log("WORLDFATAL", "[Particle] could not open " + filePath.string());
+        return true;  // it was a .tfx — don't fall through to image-drop
+    }
+    std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (bytes.empty()) {
+        Logger::get().log("WORLDFATAL", "[Particle] empty package " + filePath.string());
+        return true;
+    }
+
+    CanvasComponentContainer* newContainer = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::PARTICLE);
+    ParticleCanvasComponent& pc = static_cast<ParticleCanvasComponent&>(newContainer->get_comp());
+    newContainer->coords = world.drawData.cam.c;
+    pc.d.packageBytes = std::move(bytes);
+    pc.d.effectName.clear();        // play the first effect in the package
+    pc.d.localScale = 20.0f;        // M1: fixed; a scale control comes with the editor UI
+    auto newObjInfo = layerMan.add_component_to_layer_being_edited(newContainer);
+    layerMan.add_undo_place_component(newObjInfo);
+    Logger::get().log("INFO", "[Particle] spawned effect from " + filePath.filename().string());
+    return true;
+#else
+    (void)filePath; (void)dropPos;
+    return false;
+#endif
 }
 
 CanvasComponentContainer::ObjInfo* DrawingProgram::add_file_to_canvas_by_data(const std::string& fileName, std::string_view fileBuffer, Vector2f dropPos) {

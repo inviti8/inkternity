@@ -52,6 +52,10 @@ class DrawingProgram {
         // through to image-creation); false if the caller should
         // handle the file the normal way.
         bool try_attach_audio_to_selected_waypoint(const std::filesystem::path& filePath);
+        // PHASE5 — drop a .tfx particle package onto the canvas to spawn a
+        // ParticleCanvasComponent. Intercepts before the image-drop path;
+        // returns true if it consumed the file.
+        bool try_add_particle_effect(const std::filesystem::path& filePath, Vector2f dropPos);
         void get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet);
 
         void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version);

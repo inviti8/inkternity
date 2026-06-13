@@ -31,7 +31,10 @@ void DrawingProgramLayer::set_component_list_callbacks(DrawingProgramLayerListIt
             c->obj->commit_update(layerMan.drawP); // Run commit update on insert so that world bounds are calculated
         if(layerMan.addToCacheOnComponentInsert)
             layerMan.drawP.drawCache.add_component(&(*c));
-        if(c->obj->get_comp().get_type() == CanvasComponentType::IMAGE)
+        // IMAGE (animated GIFs) and PARTICLE (TimelineFX effects) tick every
+        // frame via update(); register them as updateable.
+        if(c->obj->get_comp().get_type() == CanvasComponentType::IMAGE ||
+           c->obj->get_comp().get_type() == CanvasComponentType::PARTICLE)
             layerMan.drawP.updateableComponents.emplace(&(*c));
     };
     eraseCallback = [&](const CanvasComponentContainer::ObjInfoIterator& c) {

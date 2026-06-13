@@ -282,10 +282,23 @@ effect (additive → `SkBlendMode::kPlus`, normal → `kSrcOver`).
     hardcodes additive `kPlus`); motion stretch + vector alignment; frame
     interpolation (`captured_index` lerp); and a side-by-side color check
     against the editor's own preview once an export is in hand.
-- **M1 — `ParticleCanvasComponent`.** Real component on a layer:
-  emitter-local sim → `CoordSpaceHelper` → world; live preview; embedded
-  package; **drop-a-`.tfx`-on-canvas** ingestion via the existing
-  file-drop pipeline; host-gated authoring.
+- **M1 — `ParticleCanvasComponent`. 🚧 M1.0 built (2026-06-13).** A real
+  `CanvasComponentType::PARTICLE` on a layer, compiled into `main` with the
+  `timelinefx` lib linked (`HVYM_HAS_TIMELINEFX`; web gets a no-op stub).
+  PIMPL keeps `timelinefx.h` in the one `.cpp`. Ported the M0 render/tick:
+  `update()` ticks `tfx_UpdateEffectManager` off `world.main.deltaTime` and
+  invalidates its cache region each frame (registered as updateable
+  alongside IMAGE — the animated-GIF path); `draw()` renders in local space
+  via the SkSL `timelinefx.frag` port (camera transform applied by the
+  container, so it pans/zooms for free). **Drop a `.tfx` on the canvas** →
+  spawns the component (intercepts before image-drop, mirroring audio
+  attach); package bytes embedded verbatim; first effect auto-selected.
+  Save-format bumped `INFPNT000014` / `0.13.0`.
+  - **Deferred (M1.x):** NetObj single-writer host-gating (currently any
+    client could author); undo polish; a local-scale / effect-select / blend
+    -mode UI (M1 hardcodes scale 20, first effect, additive); true
+    outside-the-cache draw (M1 uses in-cache + per-frame invalidate); the
+    deterministic seed isn't wired to `tfx` yet.
 - **M2 — persistence / sync / undo.** Definition serialization + format
   bump (`INFPNT000014` / `0.13.0`); NetObj definition sync (single-writer,
   viewers simulate locally); undoable definition edits.
