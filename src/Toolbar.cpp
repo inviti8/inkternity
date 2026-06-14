@@ -1294,15 +1294,31 @@ void Toolbar::fx_library_menu(Element* triggerButton) {
                             } else {
                                 const auto& entries = store->entries();
                                 for(int li = 0; li < static_cast<int>(entries.size()); ++li) {
-                                    text_button(gui, "fx lib header", entries[li].name,
-                                        TextButtonOptions{ .drawType = SelectableButton::DrawType::TRANSPARENT_ALL, .wide = true, .centered = false, .onClick = []{} });
-                                    for(const std::string& eff : entries[li].lib->topLevelEffectNames()) {
+                                    // Each row wrapped in a unique gui.new_id so the
+                                    // reused "fx ..." ids don't collide (the fix the
+                                    // brush menu needed — sibling buttons sharing an
+                                    // id all resolve to one Clay element, killing
+                                    // per-row click detection).
+                                    gui.new_id(7000 + li, [&] {
+                                        text_button(gui, "fx lib header", entries[li].name,
+                                            TextButtonOptions{ .drawType = SelectableButton::DrawType::TRANSPARENT_ALL, .wide = true, .centered = false, .onClick = []{} });
+                                    });
+                                    const std::vector<std::string> names = entries[li].lib->topLevelEffectNames();
+                                    for(const std::string& eff : names) {
                                         const bool active = store->isActive(li, eff);
-                                        // U+25CF (●) active / U+25CB (○) inactive
-                                        std::string label = (active ? "  \xE2\x97\x8F " : "  \xE2\x97\x8B ") + eff;
-                                        text_button(gui, "fx effect row", label,
-                                            TextButtonOptions{ .drawType = SelectableButton::DrawType::TRANSPARENT_ALL, .wide = true, .centered = false,
-                                                .onClick = [store, li, eff]{ store->setActive(li, eff); } });
+                                        const int64_t rowId = 1000000 + static_cast<int64_t>(li) * 1000000 +
+                                            static_cast<int64_t>(std::hash<std::string>{}(eff) & 0x7fffffff);
+                                        gui.new_id(rowId, [&] {
+                                            text_button(gui, "fx effect row", eff, TextButtonOptions{
+                                                .isSelected = active,
+                                                .wide = true,
+                                                .centered = false,
+                                                .onClick = [store, li, eff, &gui] {
+                                                    store->setActive(li, eff);
+                                                    gui.set_to_layout();
+                                                }
+                                            });
+                                        });
                                     }
                                 }
                             }
