@@ -1,9 +1,13 @@
 # PHASE5.1 — Particle Systems, take 2: the legacy `.eff` path
 
-Status: **DESIGN LOCKED** (2026-06-14). All §4 decisions resolved; implementation
-starting at M0. License resolved: the runtime is **MIT** (vendored from
-`damucz/timelinefx`, the MIT root that `peterigz/timelinefx` forked) — clear to
-ship; a courtesy confirm with Peter Rigby is prudent but not a blocker (§1). Supersedes the runtime + ingestion
+Status: **M0–M3 SHIPPED (2026-06-14) — in polish.** End-to-end works in-app:
+File ▸ Import FX Library (.eff) (or drag-drop) → embedded asset + parsed library
+→ FX Library panel picks the active effect → particle brush (Size/Rate sliders,
+drag-stamping) places it → legacy-backed ParticleCanvasComponent renders + loops
+live (honoring Continuous/Finite), host-gated, save format INFPNT000015. Smoke-
+tested: size + clipping + sliders confirmed good. License = **MIT** (vendored
+from `damucz/timelinefx`; courtesy confirm with Peter pending, not a blocker).
+Remaining = polish (see §7). Supersedes the runtime + ingestion
 decisions in PHASE5.md (which targeted the modern `.tfx` runtime); the rest of
 PHASE5.md's intent — atmospheric particles that animate in reader mode — still
 holds.
@@ -162,17 +166,17 @@ established convention.
 
 ---
 
-## 5. Milestones (provisional — finalized once §4.1 is decided)
-- **M0 — Import + asset**: `File ▸ Import .eff`, in-memory zip read, embed as
-  `ResourceManager` asset, parse into `SkiaLibrary`.
-- **M1 — FX Library panel**: top-bar button + panel; effects by name + checkbox;
-  thumbnails (ICONS or rendered).
-- **M2 — Particle brush + placement**: tool, magic-wand icon, rate slider,
-  deposit placed effects (per §4.1), host-gated.
-- **M3 — Component + playback**: legacy-backed `ParticleCanvasComponent`, save/
-  load, Edit-tool transform, reader-mode animation, outside-cache draw.
-- **M4 — Polish**: scale/zoom/parallax, determinism/seed, one-shot vs persistent.
-- **Gate — License**: flip `EXCLUDE_FROM_ALL` only after Peter's grant.
+## 5. Milestones
+- ✅ **M0 — Import + asset**: `File ▸ Import .eff` (+ drag-drop), in-memory zip
+  read (miniz), embed as `ResourceManager` asset, parse into `LegacyFxLibrary`.
+- ✅ **M1 — FX Library panel**: top-bar button + floating panel; effects by name
+  + single-active radio. (Thumbnails deferred → §7.)
+- ✅ **M2 — Particle brush + placement**: tool (magic-wand), Size/Rate sliders,
+  rate-based drag-stamping, host-gated.
+- ✅ **M3 — Component + playback**: legacy-backed `ParticleCanvasComponent`,
+  save/load (INFPNT000015), Edit-tool transform, live author + reader animation,
+  Continuous/Finite honored.
+- ✅ **License** — MIT via `damucz/timelinefx`; no `EXCLUDE_FROM_ALL` gate needed.
 
 ## 6. Risks
 - **License** (§1) — hard gate on shipping.
@@ -181,3 +185,26 @@ established convention.
   existing dep) for in-memory `.eff` reading.
 - **Performance** — many placed emitters × many particles; reuse the
   outside-cache path and cap total live particles.
+
+## 7. Polish backlog (post-M3)
+Ordered roughly by value / risk:
+1. **Save/load round-trip verify** — a placed effect must survive save → reopen
+   (the component re-resolves its library from the embedded `.eff` resource via
+   `resolve_fx_library`). Correctness check, do first.
+2. **Collab/sync verify** — host-authored placements + the library resource reach
+   read-only viewers; each client re-resolves + simulates locally.
+3. **Reader-clock binding + deterministic `seed`** (§4.6) — stable, peer-matched
+   playback; Finite effects fire on waypoint/panel arrival. (Today: real-dt sim,
+   seed stored but unused.)
+4. **Effect thumbnails/icons** in the panel — headless-render each effect (the
+   M3 renderer can do it) into `MemoryImageDisplay`, or decode the `.eff` `ICONS`
+   entry. (Panel is name-only today.)
+5. **Unclipped live draw** — the square-crop fix is scale-proportional bounds
+   (mitigation); render outside the cache for guaranteed no-clip at any size.
+6. **Parallax-depth interplay** (§4.5) — confirm placements inherit their layer's
+   PHASE4 depth and pan correctly.
+7. **Undo grouping** — a drag deposits many components → many undo entries; group
+   per stroke.
+8. **Phone UI** — `gui_phone_toolbox` is empty.
+9. **Docs** — README feature bullet + MANUAL section; remove the now-unused modern
+   `timelinefx` link from `main` (legacy path superseded it).
