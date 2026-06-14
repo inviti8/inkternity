@@ -1,6 +1,10 @@
 #include "Toolbar.hpp"
 #include "AvatarStore.hpp"
 #include "CustomEvents.hpp"
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+#include "CanvasComponents/Particles/FxLibraryStore.hpp"
+#include "CanvasComponents/Particles/LegacyFxLibrary.hpp"
+#endif
 #include "DrawingProgram/Tools/DrawingProgramToolBase.hpp"
 #include "DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
 #include "DrawingProgram/RasterFlatten.hpp"
@@ -543,6 +547,9 @@ void Toolbar::top_toolbar() {
                 // tool there's nothing to surface.
                 Element* brushCustomizationMenuButton = nullptr;
                 Element* savedPresetsMenuButton = nullptr;
+                #ifdef HVYM_HAS_TIMELINEFX_LEGACY
+                Element* fxLibraryMenuButton = nullptr;
+                #endif
                 if(showEditButtons && main.world && main.world->drawProg.drawTool
                    && main.world->drawProg.drawTool->get_type() == DrawingProgramToolType::MYPAINTBRUSH) {
                     brushCustomizationMenuButton = icon_button_top_toolbar(
@@ -572,6 +579,18 @@ void Toolbar::top_toolbar() {
                     if(savedPresetsMenuPopupOpen)       savedPresetsMenuPopupOpen       = false;
                 }
 
+                // PHASE5.1 M1 -- FX Library button (imported .eff effect picker).
+                // Not tool-gated: it's a library browser, available whenever the
+                // legacy particle path is compiled in.
+                #ifdef HVYM_HAS_TIMELINEFX_LEGACY
+                fxLibraryMenuButton = icon_button_top_toolbar(
+                    "FX Library Button", "data/icons/fx-library.svg",
+                    fxLibraryMenuPopupOpen, [&] {
+                        if(fxLibraryMenuPopupOpen) stop_displaying_fx_library_menu();
+                        else                       fxLibraryMenuPopupOpen = true;
+                    });
+                #endif
+
                 // PHASE3 §4 B.M2 -- avatar tile (always visible; not
                 // tool-gated since the avatar is a per-artist identity
                 // surface, not a tool-specific control).
@@ -585,6 +604,10 @@ void Toolbar::top_toolbar() {
                     brush_customization_menu(brushCustomizationMenuButton);
                 if(savedPresetsMenuPopupOpen && savedPresetsMenuButton)
                     saved_presets_menu(savedPresetsMenuButton);
+                #ifdef HVYM_HAS_TIMELINEFX_LEGACY
+                if(fxLibraryMenuPopupOpen && fxLibraryMenuButton)
+                    fx_library_menu(fxLibraryMenuButton);
+                #endif
                 if(avatarPopoverOpen && avatarTile)
                     avatar_popover(avatarTile);
             }
@@ -1219,6 +1242,84 @@ void Toolbar::saved_presets_menu(Element* triggerButton) {
             }
         });
     });
+}
+
+void Toolbar::stop_displaying_fx_library_menu() {
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+    fxLibraryMenuPopupOpen = false;
+#endif
+}
+
+// PHASE5.1 M1 -- FX Library panel. Lists the imported .eff libraries' effects
+// by name with a single active selection (radio-like; ●=active, ○=inactive).
+// Mirrors saved_presets_menu's floating-popup structure. Thumbnails deferred
+// (matching the brush library's name-first approach).
+void Toolbar::fx_library_menu(Element* triggerButton) {
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+    auto& gui = main.g.gui;
+    auto& io = gui.io;
+
+    gui.set_z_index(gui.get_z_index() + 1, [&] {
+        gui.element<LayoutElement>("fx library menu", [&] (LayoutElement*, const Clay_ElementId& lId) {
+            CLAY(lId, {
+                .layout = {
+                    .sizing = {.width = CLAY_SIZING_FIXED(300), .height = CLAY_SIZING_FIXED(460) },
+                    .padding = CLAY_PADDING_ALL(io.theme->padding1),
+                    .childGap = io.theme->childGap1,
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_TOP},
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM
+                },
+                .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+                .cornerRadius = CLAY_CORNER_RADIUS(io.theme->windowCorners1),
+                .floating = {.offset = {.x = 0, .y = static_cast<float>(io.theme->padding1)}, .zIndex = gui.get_z_index(), .attachPoints = {.element = CLAY_ATTACH_POINT_RIGHT_TOP, .parent = CLAY_ATTACH_POINT_RIGHT_BOTTOM}, .attachTo = CLAY_ATTACH_TO_PARENT}
+            }) {
+                gui.clipping_element<ScrollArea>("fx library scroll area", ScrollArea::Options{
+                    .scrollVertical = true,
+                    .clipVertical = true,
+                    .scrollbarY = ScrollArea::ScrollbarType::NORMAL,
+                    .innerContent = [&](const ScrollArea::InnerContentParameters&) {
+                        CLAY_AUTO_ID({
+                            .layout = {
+                                .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0) },
+                                .childGap = io.theme->childGap1,
+                                .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP},
+                                .layoutDirection = CLAY_TOP_TO_BOTTOM
+                            }
+                        }) {
+                            FxLibraryStore* store = main.world->drawProg.fx_store();
+                            if(!store || store->empty()) {
+                                text_button(gui, "fx empty hint",
+                                    std::string("No FX libraries.  File > Import FX Library (.eff)"),
+                                    TextButtonOptions{ .drawType = SelectableButton::DrawType::TRANSPARENT_ALL, .wide = true, .centered = false, .onClick = []{} });
+                            } else {
+                                const auto& entries = store->entries();
+                                for(int li = 0; li < static_cast<int>(entries.size()); ++li) {
+                                    text_button(gui, "fx lib header", entries[li].name,
+                                        TextButtonOptions{ .drawType = SelectableButton::DrawType::TRANSPARENT_ALL, .wide = true, .centered = false, .onClick = []{} });
+                                    for(const std::string& eff : entries[li].lib->topLevelEffectNames()) {
+                                        const bool active = store->isActive(li, eff);
+                                        // U+25CF (●) active / U+25CB (○) inactive
+                                        std::string label = (active ? "  \xE2\x97\x8F " : "  \xE2\x97\x8B ") + eff;
+                                        text_button(gui, "fx effect row", label,
+                                            TextButtonOptions{ .drawType = SelectableButton::DrawType::TRANSPARENT_ALL, .wide = true, .centered = false,
+                                                .onClick = [store, li, eff]{ store->setActive(li, eff); } });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }, LayoutElement::Callbacks {
+            .onClick = [&, triggerButton] (LayoutElement* l, const InputManager::MouseButtonCallbackArgs& button) {
+                if(!l->mouseHovering && !l->childMouseHovering && !triggerButton->mouseHovering && button.down)
+                    stop_displaying_fx_library_menu();
+            }
+        });
+    });
+#else
+    (void)triggerButton;
+#endif
 }
 
 void Toolbar::brush_customization_menu(Element* triggerButton) {

@@ -20,6 +20,7 @@
 #include "../MainProgram.hpp"
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 #include "../CanvasComponents/Particles/LegacyFxLibrary.hpp"
+#include "../CanvasComponents/Particles/FxLibraryStore.hpp"
 #include <include/core/SkData.h>
 #endif
 #include <Helpers/FileDownloader.hpp>
@@ -944,6 +945,8 @@ bool DrawingProgram::try_add_particle_effect(const std::filesystem::path& filePa
 #endif
 }
 
+DrawingProgram::~DrawingProgram() = default;   // here FxLibraryStore is complete
+
 void DrawingProgram::import_fx_library(const std::filesystem::path& filePath) {
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
     // Host-authored, like dropped effects: a joined (non-server) client may not import.
@@ -957,15 +960,23 @@ void DrawingProgram::import_fx_library(const std::filesystem::path& filePath) {
         return;
     }
     // Parse + validate before embedding so we never store a junk asset.
-    LegacyFxLibrary lib;
-    if (!lib.loadFromEff(bytes->data(), bytes->size())) {
+    auto lib = std::make_unique<LegacyFxLibrary>();
+    if (!lib->loadFromEff(bytes->data(), bytes->size())) {
         Logger::get().log("WORLDFATAL",
                           "[FxLibrary] not a valid .eff library: " + filePath.filename().string());
         return;
     }
-    std::vector<std::string> names = lib.topLevelEffectNames();
-    // Embed the .eff bytes as a canvas asset (dedup-aware; persists in the save).
-    world.rMan.add_resource_file(filePath);
+    std::vector<std::string> names = lib->topLevelEffectNames();
+    // Embed the bytes as a canvas asset (dedup-aware; persists in the save).
+    auto res = world.rMan.add_resource_file(filePath);
+    if (!res) {
+        Logger::get().log("WORLDFATAL", "[FxLibrary] could not embed " + filePath.filename().string());
+        return;
+    }
+    if (!fxStore) fxStore = std::make_unique<FxLibraryStore>();
+    int idx = fxStore->add(res.get_net_id(), filePath.filename().string(), std::move(lib));
+    // Default the active selection to the first effect of the first import.
+    if (!fxStore->hasActive() && !names.empty()) fxStore->setActive(idx, names.front());
     std::string list;
     for (size_t i = 0; i < names.size(); ++i) list += (i ? ", " : "") + names[i];
     Logger::get().log("INFO", "[FxLibrary] imported " + std::to_string(names.size()) +

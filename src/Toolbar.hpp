@@ -106,10 +106,12 @@ class Toolbar {
         void stop_displaying_layer_menu();
         void stop_displaying_brush_customization_menu();
         void stop_displaying_saved_presets_menu();
+        void stop_displaying_fx_library_menu();
         void bookmark_menu(GUIStuff::Element* bookmarkMenuButton);
         void layer_menu(GUIStuff::Element* layerMenuButton);
         void brush_customization_menu(GUIStuff::Element* triggerButton);
         void saved_presets_menu(GUIStuff::Element* triggerButton);
+        void fx_library_menu(GUIStuff::Element* triggerButton);   // PHASE5.1 M1
         // PHASE3 §4 B.M2 -- avatar tile (clickable image) lives in the
         // top toolbar; popover is its on-click submenu with capture /
         // clear controls. tile() returns the trigger Element so the
@@ -220,6 +222,8 @@ class Toolbar {
         // customization drawer.
         bool savedPresetsMenuPopupOpen = false;
         SavedPresetsDrawer savedPresetsDrawer{*this};
+        // PHASE5.1 M1 -- FX Library panel toggle (imported .eff effect picker).
+        bool fxLibraryMenuPopupOpen = false;
 
         // PHASE3 §4 B.M2 -- in-memory copy of the master avatar PNG.
         // Loaded from disk on first render (avatarLoaded_=false until

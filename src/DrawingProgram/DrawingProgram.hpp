@@ -18,8 +18,10 @@
 #include <Helpers/NetworkingObjects/NetObjOrderedList.hpp>
 #include "Layers/DrawingProgramLayerManager.hpp"
 #include "DrawingProgramSelection.hpp"
+#include <memory>
 
 class World;
+class FxLibraryStore;
 class PhoneDrawingProgramScreen;
 class DrawingProgram;
 namespace RasterFlatten { void flatten_layer_in_view(DrawingProgram& drawP); }
@@ -27,6 +29,7 @@ namespace RasterFlatten { void flatten_layer_in_view(DrawingProgram& drawP); }
 class DrawingProgram {
     public:
         DrawingProgram(World& initWorld);
+        ~DrawingProgram();   // out-of-line for unique_ptr<FxLibraryStore>
         void server_init_no_file();
         void toolbar_gui(Toolbar& t);
         void tool_options_gui(Toolbar& t);
@@ -60,6 +63,11 @@ class DrawingProgram {
         // then embed its bytes as a canvas asset (ResourceManager). Host-gated.
         // No-op unless HVYM_HAS_TIMELINEFX_LEGACY.
         void import_fx_library(const std::filesystem::path& filePath);
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+        // Imported FX libraries (M1). null until the first successful import.
+        FxLibraryStore* fx_store() { return fxStore.get(); }
+        std::unique_ptr<FxLibraryStore> fxStore;
+#endif
         void get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet);
 
         void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version);
