@@ -18,6 +18,9 @@
 #include "WaypointTool.hpp"
 #include "ButtonSelectTool.hpp"
 #include "StrokeVectorizeTool.hpp"
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+#include "ParticleBrushTool.hpp"
+#endif
 
 DrawingProgramToolBase::DrawingProgramToolBase(DrawingProgram& initDrawP):
     drawP(initDrawP)
@@ -63,6 +66,10 @@ std::unique_ptr<DrawingProgramToolBase> DrawingProgramToolBase::allocate_tool_ty
             return std::make_unique<ButtonSelectTool>(drawP);
         case DrawingProgramToolType::STROKEVECTORIZE:
             return std::make_unique<StrokeVectorizeTool>(drawP);
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+        case DrawingProgramToolType::PARTICLEBRUSH:
+            return std::make_unique<ParticleBrushTool>(drawP);
+#endif
         case DrawingProgramToolType::SQUARECANVASCAPTURE:
             // PHASE3.md Shared.M1 — this tool is always constructed
             // directly with (targetSize, previousToolType, callback)

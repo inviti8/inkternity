@@ -28,6 +28,7 @@ enum class DrawingProgramToolType : int {
     WAYPOINT,
     BUTTONSELECT,
     STROKEVECTORIZE,
+    PARTICLEBRUSH,   // PHASE5.1 M2 — stamp FX Library effects onto the canvas
     // PHASE3.md Shared.M1 — short-lived capture tool, constructed
     // directly with target-size + callback args via switch_to_tool_ptr.
     // Never reached through allocate_tool_type (the by-type path has no
