@@ -593,6 +593,30 @@ if(NOT EMSCRIPTEN)
             target_compile_definitions(tfx_render_spike PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         endif()
     endif()
+
+    # PHASE5 legacy path spike: the classic, render-agnostic TimelineFX C++
+    # runtime (deps/timelinefx_legacy = peterigz/timelinefx) reads the STABLE
+    # legacy .eff/data.xml format. Isolated C++17 static lib (+ vendored pugixml).
+    # We drive it with Skia in tools/tfx_legacy_spike.cpp. EXCLUDE_FROM_ALL.
+    file(GLOB TFX_LEGACY_SRC "deps/timelinefx_legacy/source/*.cpp")
+    add_library(timelinefx_legacy STATIC EXCLUDE_FROM_ALL
+        ${TFX_LEGACY_SRC} "deps/timelinefx_legacy/pugixml/pugixml.cpp")
+    target_include_directories(timelinefx_legacy PUBLIC
+        "deps/timelinefx_legacy/source" "deps/timelinefx_legacy/pugixml")
+    set_target_properties(timelinefx_legacy PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    target_compile_definitions(timelinefx_legacy PRIVATE _USE_MATH_DEFINES)  # MSVC: M_PI
+    if(WIN32)
+        target_compile_definitions(timelinefx_legacy PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    endif()
+
+    if(NOT NO_CONAN_BUILD)
+        add_executable(tfx_legacy_spike EXCLUDE_FROM_ALL "tools/tfx_legacy_spike.cpp")
+        target_link_libraries(tfx_legacy_spike timelinefx_legacy skia-infinipaint::skia-infinipaint)
+        target_compile_definitions(tfx_legacy_spike PRIVATE USE_SKIA_BACKEND_GANESH)
+        if(WIN32)
+            target_compile_definitions(tfx_legacy_spike PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        endif()
+    endif()
 endif()
 if(ANDROID)
     target_include_directories(main PRIVATE "android-project/SDL/include")

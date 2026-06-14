@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 
 #include "../DrawingProgram/DrawingProgram.hpp"
 #include "../World.hpp"
@@ -124,11 +125,32 @@ void ParticleCanvasComponent::ensure_runtime() const {
     rt->lib = tfx_LoadEffectLibraryFromMemory(
         d.packageBytes.data(), static_cast<tfxU32>(d.packageBytes.size()),
         &Runtime::shape_loader, &Runtime::uv_lookup, rt.get());
-    if (!rt->lib || tfx_GetLibraryErrorStatus(rt->lib) != 0) {
-        Logger::get().log("WORLDFATAL", "[Particle] effect package failed to load (error 0x" +
-            std::to_string(rt->lib ? tfx_GetLibraryErrorStatus(rt->lib) : 0xFFFFFFFFu) + ")");
+    // The library returns a bitmask of tfxErrorFlags. some_data_not_loaded
+    // (0x10) is NON-fatal: the parser skipped property lines whose keys it did
+    // not recognise — e.g. newer alpha-editor fields (is_3d, sort_passes,
+    // noise_base_offset_range, keyframe_translate_*, global_pitch/yaw_spin) that
+    // our pinned 2D runtime does not consume. Shapes and the core effect still
+    // load, so we render anyway. library_loaded_without_shape_loader is likewise
+    // harmless here (we always supply a shape loader). Everything else — bad
+    // package format, data/inventory failures, file errors — is a real failure.
+    // NOTE: format as real hex; the previous code printed std::to_string()
+    // (decimal) behind a "0x" prefix, so "error 0x16" actually meant decimal 16
+    // == 0x10 == some_data_not_loaded alone.
+    const tfxErrorFlags kNonFatalMask =
+        tfxErrorCode_some_data_not_loaded |
+        tfxErrorCode_library_loaded_without_shape_loader;
+    const tfxErrorFlags errs = rt->lib ? tfx_GetLibraryErrorStatus(rt->lib) : 0xFFFFFFFFu;
+    char errHex[16];
+    std::snprintf(errHex, sizeof(errHex), "0x%X", errs);
+    if (!rt->lib || (errs & ~kNonFatalMask)) {
+        Logger::get().log("WORLDFATAL",
+            std::string("[Particle] effect package failed to load (error_flags ") + errHex + ")");
         return;
     }
+    if (errs)
+        Logger::get().log("INFO",
+            std::string("[Particle] loaded with skipped fields (error_flags ") + errHex +
+            ") — newer editor properties ignored by the pinned runtime");
     for (tfxU32 i = 0, n = tfx_GetColorRampBitmapCount(rt->lib); i < n; ++i) {
         tfx_bitmap_t* b = tfx_GetColorRampBitmap(rt->lib, i);
         if (!b || !b->data) { rt->ramps.push_back(nullptr); continue; }
