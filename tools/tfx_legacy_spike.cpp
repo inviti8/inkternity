@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -135,6 +136,12 @@ int main(int argc, char** argv) {
     for (auto& n : names) std::printf("  - %s\n", n.c_str());
 
     const bool sweep = (want == "__all__");
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(
+            sweep ? std::filesystem::path(outArg)
+                  : std::filesystem::path(outArg).parent_path(), ec);
+    }
     std::vector<std::string> targets;
     if (sweep) targets = names;
     else if (want == "__first__") { if (!names.empty()) targets.push_back(names.front()); }
@@ -148,27 +155,46 @@ int main(int argc, char** argv) {
         // manager/effect ownership question on teardown.
         SkiaPM* pm = new SkiaPM(10000, 1);
         pm->SetScreenSize(canvas_px, canvas_px);
-        pm->SetOrigin(canvas_px / 2.0f, canvas_px / 2.0f);
+        // _camtx = -originX, so origin (0,0) maps world (0,0) -> screen center
+        // (centerX/Y). The effect sits at world 0,0, so it renders centered.
+        pm->SetOrigin(0.0f, 0.0f, 1.0f);
 
         TLFX::Effect* eff = new TLFX::Effect(*tmpl, pm, true);
         pm->AddEffect(eff);
-        for (int f = 0; f < frames; ++f) pm->Update();
 
         sk_sp<SkSurface> surface =
             SkSurfaces::Raster(SkImageInfo::MakeN32Premul(canvas_px, canvas_px));
         SkCanvas* canvas = surface->getCanvas();
-        canvas->clear(SK_ColorBLACK);
         pm->canvas = canvas;
-        pm->drawn = 0;
-        pm->DrawParticles();
+
+        // Capture the peak-population frame: one-shot bursts (explosions, muzzle
+        // flashes) die within a few frames, while continuous emitters ramp up and
+        // plateau. Snapshotting the frame with the most live particles catches
+        // both at their fullest instead of a fixed frame that misses one-shots.
+        int bestInUse = -1, bestFrame = 0, bestDrawn = 0;
+        sk_sp<SkImage> best;
+        for (int f = 0; f < frames; ++f) {
+            pm->Update();
+            int inUse = pm->GetParticlesInUse();
+            if (inUse > bestInUse) {
+                canvas->clear(SK_ColorBLACK);
+                pm->drawn = 0;
+                pm->DrawParticles();
+                bestInUse = inUse;
+                bestFrame = f;
+                bestDrawn = pm->drawn;
+                best = surface->makeImageSnapshot();   // raster surface is COW-safe
+            }
+        }
+        if (!best) { canvas->clear(SK_ColorBLACK); best = surface->makeImageSnapshot(); }
 
         const std::string out = sweep ? (outArg + "/" + sanitize(name) + ".png") : outArg;
-        sk_sp<SkImage> raster = surface->makeImageSnapshot()->makeRasterImage();
+        sk_sp<SkImage> raster = best->makeRasterImage();
         SkPixmap px;
         bool ok = raster && raster->peekPixels(&px);
         if (ok) { SkFILEWStream s(out.c_str()); ok = s.isValid() && SkPngEncoder::Encode(&s, px, {}); }
-        std::printf("[legacy] %-24s inUse=%4d drawn=%4d -> %s (%s)\n",
-                    name.c_str(), pm->GetParticlesInUse(), pm->drawn, out.c_str(),
+        std::printf("[legacy] %-24s peakFrame=%2d inUse=%4d drawn=%4d -> %s (%s)\n",
+                    name.c_str(), bestFrame, bestInUse, bestDrawn, out.c_str(),
                     ok ? "ok" : "FAIL");
     }
     return 0;
