@@ -609,9 +609,13 @@ if(NOT EMSCRIPTEN)
         target_compile_definitions(timelinefx_legacy PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
     endif()
 
+    # miniz (Unlicense / public-domain) — in-memory .eff (zip) reader.
+    add_library(miniz STATIC EXCLUDE_FROM_ALL "deps/miniz/miniz.c")
+    target_include_directories(miniz PUBLIC "deps/miniz")
+
     if(NOT NO_CONAN_BUILD)
         add_executable(tfx_legacy_spike EXCLUDE_FROM_ALL "tools/tfx_legacy_spike.cpp")
-        target_link_libraries(tfx_legacy_spike timelinefx_legacy skia-infinipaint::skia-infinipaint)
+        target_link_libraries(tfx_legacy_spike timelinefx_legacy miniz skia-infinipaint::skia-infinipaint)
         target_compile_definitions(tfx_legacy_spike PRIVATE USE_SKIA_BACKEND_GANESH)
         if(WIN32)
             target_compile_definitions(tfx_legacy_spike PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
