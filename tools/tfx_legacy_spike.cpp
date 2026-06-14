@@ -14,6 +14,7 @@
 // Build: cmake --build build --config Release --target tfx_legacy_spike
 // Run:   tfx_legacy_spike <assetDir> <data.xml> <out.png|out_dir> [effect|__all__|__first__] [frames] [canvas_px]
 //        (assetDir = folder holding data.xml + the shape PNGs, i.e. the unzipped .eff)
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -80,7 +81,7 @@ public:
     int drawn = 0;
     SkiaPM(int particles, int layers) : TLFX::ParticleManager(particles, layers) {}
 
-    void DrawSprite(TLFX::AnimImage* sprite, float px, float py, float /*frame*/,
+    void DrawSprite(TLFX::AnimImage* sprite, float px, float py, float frame,
                     float x, float y, float rotation, float scaleX, float scaleY,
                     unsigned char r, unsigned char g, unsigned char b, float a,
                     bool additive) override {
@@ -94,13 +95,25 @@ public:
         paint.setAlphaf(a < 0.f ? 0.f : (a > 1.f ? 1.f : a));
         paint.setBlendMode(additive ? SkBlendMode::kPlus : SkBlendMode::kSrcOver);
 
-        const float w = (float)si->img->width(), h = (float)si->img->height();
+        // Animated shapes are grid sprite-sheets: GetWidth/Height are the FRAME
+        // size (from the <IMAGE> WIDTH/HEIGHT attrs); si->img is the whole sheet.
+        // Frames are laid out row-major, columns = sheetWidth / frameWidth.
+        float fw = sprite->GetWidth(), fh = sprite->GetHeight();
+        const float sheetW = (float)si->img->width(), sheetH = (float)si->img->height();
+        if (fw <= 0.f || fh <= 0.f) { fw = sheetW; fh = sheetH; }      // single-frame fallback
+        const int cols  = std::max(1, (int)(sheetW / fw + 0.5f));
+        const int count = std::max(1, sprite->GetFramesCount());
+        int fi = (int)frame;
+        fi = ((fi % count) + count) % count;                          // wrap (handles <0)
+        const float srcX = (fi % cols) * fw, srcY = (fi / cols) * fh;
+
         canvas->save();
         canvas->translate(px, py);
         canvas->rotate(rotation);              // DrawSprite rotation is in degrees
         canvas->scale(scaleX, scaleY);
-        // x,y = image handle in pixels -> pivot the quad there.
-        canvas->drawImageRect(si->img, SkRect::MakeWH(w, h), SkRect::MakeXYWH(-x, -y, w, h),
+        // x,y = image handle in frame pixels -> pivot the quad there.
+        canvas->drawImageRect(si->img, SkRect::MakeXYWH(srcX, srcY, fw, fh),
+                              SkRect::MakeXYWH(-x, -y, fw, fh),
                               SkSamplingOptions(SkFilterMode::kLinear), &paint,
                               SkCanvas::kStrict_SrcRectConstraint);
         canvas->restore();
