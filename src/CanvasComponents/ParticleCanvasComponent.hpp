@@ -33,8 +33,8 @@ class ParticleCanvasComponent : public CanvasComponent {
             NetworkingObjects::NetObjID libraryResourceId;  // embedded .eff asset
             std::string effectName;                         // which effect to play
             uint32_t seed = 12345;                          // deterministic replay seed
-            float localScale = 12.0f;                       // effect world-unit -> canvas local-unit
-            float radius = 600.0f;                          // local half-extent for bounds / collision
+            float localScale = 3.0f;                        // effect world-unit -> canvas local-unit
+            float radius = 600.0f;                          // local half-extent (derived from scale in create_collider)
         } d;
 
     private:

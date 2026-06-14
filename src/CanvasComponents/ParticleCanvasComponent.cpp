@@ -11,6 +11,7 @@
 #include "TLFXEffectsLibrary.h"
 #endif
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <string>
@@ -116,6 +117,11 @@ void ParticleCanvasComponent::initialize_draw_data(DrawingProgram& drawP) {
 void ParticleCanvasComponent::create_collider() {
     using namespace SCollision;
     ColliderCollection<float> objs;
+    // Bounds drive the draw-cache clip region; particles that spill past them get
+    // cropped to a square. Size the half-extent to the placement scale so the
+    // effect fits (effect world spread x localScale, with margin). Stored so
+    // selection/BVH stay consistent.
+    d.radius = std::max(400.0f, d.localScale * 250.0f);
     float r = d.radius;
     std::array<Vector2f, 4> t = triangle_from_rect_points(Vector2f{-r, -r}, Vector2f{r, r});
     objs.triangle.emplace_back(t[0], t[1], t[2]);
