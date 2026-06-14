@@ -2,16 +2,18 @@
 #include "CanvasComponent.hpp"
 #include "../CoordSpaceHelper.hpp"
 #include <Helpers/SCollision.hpp>
+#include <Helpers/NetworkingObjects/NetObjID.hpp>
 #include <memory>
 #include <string>
 
-// PHASE5 (docs/design/PHASE5.md): a TimelineFX particle effect as a canvas
-// component. The authored effect *package* is embedded verbatim in `d` (saved,
-// synced, host-authored); all runtime state — the TimelineFX library + effect
-// manager, the decoded shape/ramp SkImages, and the SkRuntimeEffect port of
-// timelinefx.frag — lives behind a PIMPL so timelinefx.h stays out of the rest
-// of the C++23 app. Renders live, outside the cache, ticked off deltaTime
-// (the animated-GIF pattern: invalidate the cache region each frame).
+// PHASE5.1 (docs/design/PHASE5.1.md): a placed legacy TimelineFX (.eff) effect
+// as a canvas component. References an imported library by ResourceManager id +
+// an effect name; the parsed library lives in the DrawingProgram's FxLibraryStore
+// (or is re-parsed from the embedded resource on load). Runtime state — the
+// TLFX particle manager + spawned effect — lives behind a PIMPL so the legacy
+// headers stay out of the rest of the app. Renders live, outside the cache,
+// centered at the component's local origin (the GIF pattern: invalidate the
+// cache region each frame). 2D-only; honors each effect's Continuous/Finite flag.
 class ParticleCanvasComponent : public CanvasComponent {
     public:
         ParticleCanvasComponent();
@@ -28,11 +30,11 @@ class ParticleCanvasComponent : public CanvasComponent {
 
         // Serialized authoring data.
         struct Data {
-            std::string packageBytes;   // the .tfx effect package, embedded verbatim
-            std::string effectName;     // which effect within the package to play
-            uint32_t seed = 12345;      // deterministic replay seed
-            float localScale = 1.0f;    // tfx world-unit -> canvas local-unit
-            float radius = 600.0f;      // local half-extent for bounds / collision
+            NetworkingObjects::NetObjID libraryResourceId;  // embedded .eff asset
+            std::string effectName;                         // which effect to play
+            uint32_t seed = 12345;                          // deterministic replay seed
+            float localScale = 12.0f;                       // effect world-unit -> canvas local-unit
+            float radius = 600.0f;                          // local half-extent for bounds / collision
         } d;
 
     private:
@@ -42,7 +44,10 @@ class ParticleCanvasComponent : public CanvasComponent {
         virtual SCollision::AABB<float> get_obj_coord_bounds() const override;
 
         void create_collider();
-        void ensure_runtime() const;  // lazily builds the PIMPL runtime from d
+        // Builds the PIMPL runtime: resolves the library (needs drawP), spawns
+        // the effect. draw() passes nullptr and relies on update()/init having
+        // built it first (focus_update runs update before draw each frame).
+        void ensure_runtime(DrawingProgram* drawP) const;
 
         struct Runtime;
         mutable std::unique_ptr<Runtime> rt;

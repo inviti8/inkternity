@@ -900,52 +900,43 @@ bool DrawingProgram::try_attach_audio_to_selected_waypoint(const std::filesystem
 }
 
 bool DrawingProgram::try_add_particle_effect(const std::filesystem::path& filePath, Vector2f dropPos) {
-#ifdef HVYM_HAS_TIMELINEFX
+    (void)dropPos;
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+    // PHASE5.1: dropping a .eff imports it as an FX library (same as
+    // File > Import FX Library). Effects are then placed with the particle
+    // brush, not dropped directly — so we consume the drop here.
     std::string ext = filePath.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (ext != ".tfx")
+    if (ext != ".eff")
         return false;
-    if (!layerMan.is_a_layer_being_edited())
-        return false;
-
-    // PHASE5: particle effects are host-authored. In a collab session a
-    // joined client (connected but not the server/host) may not add them;
-    // solo (not connected) and the host both pass. Return true so a refused
-    // drop doesn't fall through and embed as an image.
-    if (world.netObjMan.is_connected() && !world.netObjMan.is_server()) {
-        Logger::get().log("WORLDFATAL", "[Particle] only the host can add particle effects");
-        return true;
-    }
-
-    std::ifstream f(filePath, std::ios::binary);
-    if (!f) {
-        Logger::get().log("WORLDFATAL", "[Particle] could not open " + filePath.string());
-        return true;  // it was a .tfx — don't fall through to image-drop
-    }
-    std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (bytes.empty()) {
-        Logger::get().log("WORLDFATAL", "[Particle] empty package " + filePath.string());
-        return true;
-    }
-
-    CanvasComponentContainer* newContainer = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::PARTICLE);
-    ParticleCanvasComponent& pc = static_cast<ParticleCanvasComponent&>(newContainer->get_comp());
-    newContainer->coords = world.drawData.cam.c;
-    pc.d.packageBytes = std::move(bytes);
-    pc.d.effectName.clear();        // play the first effect in the package
-    pc.d.localScale = 20.0f;        // M1: fixed; a scale control comes with the editor UI
-    auto newObjInfo = layerMan.add_component_to_layer_being_edited(newContainer);
-    layerMan.add_undo_place_component(newObjInfo);
-    Logger::get().log("INFO", "[Particle] spawned effect from " + filePath.filename().string());
+    import_fx_library(filePath);   // host-gated inside
     return true;
 #else
-    (void)filePath; (void)dropPos;
+    (void)filePath;
     return false;
 #endif
 }
 
 DrawingProgram::~DrawingProgram() = default;   // here FxLibraryStore is complete
+
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+LegacyFxLibrary* DrawingProgram::resolve_fx_library(const NetworkingObjects::NetObjID& rid) {
+    if (!fxStore) fxStore = std::make_unique<FxLibraryStore>();
+    for (const auto& e : fxStore->entries())
+        if (e.resourceId == rid) return e.lib.get();
+    // Not imported this session — parse from the embedded resource + cache it.
+    auto resPtr = world.netObjMan.get_obj_temporary_ref_from_id<ResourceData>(rid);
+    if (!resPtr) return nullptr;
+    const ResourceData& res = *resPtr;
+    if (!res.data || res.data->empty()) return nullptr;
+    auto lib = std::make_unique<LegacyFxLibrary>();
+    if (!lib->loadFromEff(res.data->data(), res.data->size())) return nullptr;
+    LegacyFxLibrary* raw = lib.get();
+    fxStore->add(rid, res.name, std::move(lib));
+    return raw;
+}
+#endif
 
 void DrawingProgram::import_fx_library(const std::filesystem::path& filePath) {
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY

@@ -22,6 +22,7 @@
 
 class World;
 class FxLibraryStore;
+class LegacyFxLibrary;
 class PhoneDrawingProgramScreen;
 class DrawingProgram;
 namespace RasterFlatten { void flatten_layer_in_view(DrawingProgram& drawP); }
@@ -67,6 +68,9 @@ class DrawingProgram {
         // Imported FX libraries (M1). null until the first successful import.
         FxLibraryStore* fx_store() { return fxStore.get(); }
         std::unique_ptr<FxLibraryStore> fxStore;
+        // M3 — resolve a parsed library by its embedded-resource id: from the
+        // store, else parsed from the ResourceManager asset (cached in store).
+        LegacyFxLibrary* resolve_fx_library(const NetworkingObjects::NetObjID& resourceId);
 #endif
         void get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet);
 
