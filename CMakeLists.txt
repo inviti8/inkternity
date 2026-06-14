@@ -175,6 +175,7 @@ set(sources "src/main.cpp"
             "src/CanvasComponents/EllipseCanvasComponent.cpp"
             "src/CanvasComponents/ImageCanvasComponent.cpp"
             "src/CanvasComponents/ParticleCanvasComponent.cpp"
+            "src/CanvasComponents/Particles/LegacyFxLibrary.cpp"
             "src/CanvasComponents/CanvasComponent.cpp"
             "src/Brushes/BrushPresets.cpp"
             "src/Brushes/LibMyPaintBridgeTest.cpp"
@@ -699,6 +700,15 @@ endif()
 if(NOT EMSCRIPTEN)
     target_link_libraries(main timelinefx)
     target_compile_definitions(main PRIVATE HVYM_HAS_TIMELINEFX)
+endif()
+
+# PHASE5.1: legacy .eff particle path (deps/timelinefx_legacy = damucz/timelinefx,
+# MIT + miniz for in-memory .eff zip reading). Desktop-only; HVYM_HAS_TIMELINEFX_LEGACY
+# gates src/CanvasComponents/Particles/* (web gets the no-op paths). Linking the
+# libs propagates their PUBLIC include dirs (TLFX* headers + miniz.h).
+if(NOT EMSCRIPTEN)
+    target_link_libraries(main timelinefx_legacy miniz)
+    target_compile_definitions(main PRIVATE HVYM_HAS_TIMELINEFX_LEGACY)
 endif()
 
 if(EMSCRIPTEN)

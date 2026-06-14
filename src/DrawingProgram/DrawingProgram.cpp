@@ -18,6 +18,10 @@
 #include <include/core/SkSurface.h>
 #include "../World.hpp"
 #include "../MainProgram.hpp"
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+#include "../CanvasComponents/Particles/LegacyFxLibrary.hpp"
+#include <include/core/SkData.h>
+#endif
 #include <Helpers/FileDownloader.hpp>
 #include <Helpers/NetworkingObjects/NetObjID.hpp>
 #include <Helpers/StringHelpers.hpp>
@@ -937,6 +941,37 @@ bool DrawingProgram::try_add_particle_effect(const std::filesystem::path& filePa
 #else
     (void)filePath; (void)dropPos;
     return false;
+#endif
+}
+
+void DrawingProgram::import_fx_library(const std::filesystem::path& filePath) {
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+    // Host-authored, like dropped effects: a joined (non-server) client may not import.
+    if (world.netObjMan.is_connected() && !world.netObjMan.is_server()) {
+        Logger::get().log("WORLDFATAL", "[FxLibrary] only the host can import particle libraries");
+        return;
+    }
+    sk_sp<SkData> bytes = SkData::MakeFromFileName(filePath.string().c_str());
+    if (!bytes || bytes->isEmpty()) {
+        Logger::get().log("WORLDFATAL", "[FxLibrary] could not read " + filePath.string());
+        return;
+    }
+    // Parse + validate before embedding so we never store a junk asset.
+    LegacyFxLibrary lib;
+    if (!lib.loadFromEff(bytes->data(), bytes->size())) {
+        Logger::get().log("WORLDFATAL",
+                          "[FxLibrary] not a valid .eff library: " + filePath.filename().string());
+        return;
+    }
+    std::vector<std::string> names = lib.topLevelEffectNames();
+    // Embed the .eff bytes as a canvas asset (dedup-aware; persists in the save).
+    world.rMan.add_resource_file(filePath);
+    std::string list;
+    for (size_t i = 0; i < names.size(); ++i) list += (i ? ", " : "") + names[i];
+    Logger::get().log("INFO", "[FxLibrary] imported " + std::to_string(names.size()) +
+                      " effects from " + filePath.filename().string() + ": " + list);
+#else
+    (void)filePath;
 #endif
 }
 

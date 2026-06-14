@@ -56,6 +56,10 @@ class DrawingProgram {
         // ParticleCanvasComponent. Intercepts before the image-drop path;
         // returns true if it consumed the file.
         bool try_add_particle_effect(const std::filesystem::path& filePath, Vector2f dropPos);
+        // PHASE5.1 M0 — import a legacy TimelineFX .eff library: parse + validate,
+        // then embed its bytes as a canvas asset (ResourceManager). Host-gated.
+        // No-op unless HVYM_HAS_TIMELINEFX_LEGACY.
+        void import_fx_library(const std::filesystem::path& filePath);
         void get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet);
 
         void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version);

@@ -645,6 +645,13 @@ void Toolbar::top_toolbar() {
                                         });
                                     #endif
                                 });
+                                #ifdef HVYM_HAS_TIMELINEFX_LEGACY
+                                menu_popup_text_button("import fx library", "Import FX Library (.eff)", [&] {
+                                    open_file_selector("Import FX Library", {{"TimelineFX Library", "eff"}}, [&](const std::filesystem::path& p, const auto& e) {
+                                        main.world->drawProg.import_fx_library(p);
+                                    });
+                                });
+                                #endif
                                 if(main.world->netObjMan.is_connected()) {
                                     menu_popup_text_button("lobby info", "Lobby Info", [&] {
                                         optionsMenuOpen = true;
