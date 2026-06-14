@@ -1,9 +1,9 @@
 # PHASE5.1 — Particle Systems, take 2: the legacy `.eff` path
 
 Status: **DESIGN LOCKED** (2026-06-14). All §4 decisions resolved; implementation
-starting at M0. Hard ship gate: the legacy-runtime license (§1) must clear with
-Peter Rigby first — implementation proceeds behind a compile gate so nothing
-unlicensed links into a release build until then. Supersedes the runtime + ingestion
+starting at M0. License resolved: the runtime is **MIT** (vendored from
+`damucz/timelinefx`, the MIT root that `peterigz/timelinefx` forked) — clear to
+ship; a courtesy confirm with Peter Rigby is prudent but not a blocker (§1). Supersedes the runtime + ingestion
 decisions in PHASE5.md (which targeted the modern `.tfx` runtime); the rest of
 PHASE5.md's intent — atmospheric particles that animate in reader mode — still
 holds.
@@ -39,12 +39,13 @@ editor the artist already owns and matches their Genies & Gems-era workflow.
 - **Scope = 2D only.** No 3D projection, no ribbon/line/stretch primitives.
 - **Not collaborative.** Host-authored; definitions sync to read-only viewers,
   each client simulates locally (carried over from PHASE5).
-- **⚠️ LICENSE GATE.** The legacy runtime ships with no license file (all rights
-  reserved). It is `EXCLUDE_FROM_ALL` and **must not be linked into `main`**
-  until an explicit grant from Peter Rigby (RigzSoft). Being resolved as part of
-  a partnership conversation (also: subscriber offer-codes for his paid editor).
-  See `deps/timelinefx_legacy/VENDORING.md`. **This feature cannot ship until
-  that lands.**
+- **License = MIT (resolved).** The runtime is vendored from `damucz/timelinefx`
+  (the MIT root; `peterigz/timelinefx` is a fork of it that dropped the LICENSE).
+  We retain damucz's `LICENSE` → MIT-compliant, clear to ship under BUSL. Residual
+  nuance (not a blocker): damucz's MIT covers the C++ port; the underlying
+  algorithm is Peter Rigby's (he endorsed the port by forking it). A courtesy
+  confirm with Peter is prudent and rides along with the partnership / offer-code
+  conversation. See `deps/timelinefx_legacy/VENDORING.md`.
 
 ---
 

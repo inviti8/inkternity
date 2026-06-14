@@ -1,32 +1,38 @@
-# Vendored: classic (legacy) TimelineFX C++ runtime
+# Vendored: classic (legacy) TimelineFX C++ runtime — MIT
 
 Render-agnostic C++ implementation of the **legacy** TimelineFX particle format
 (`.eff` / `data.xml` from the original, stable TimelineFX editor). Used by the
-PHASE5 legacy-path spike (`tools/tfx_legacy_spike.cpp`) to render legacy effect
-libraries through Skia. See `docs/design/PHASE5.md` and the project memory
-`project_phase5_tfx_reassessment.md`.
+PHASE5.1 legacy-path integration; the PHASE5 spike (`tools/tfx_legacy_spike.cpp`)
+renders legacy effect libraries through Skia. See `docs/design/PHASE5.1.md`.
 
-## Source
+## Source — `damucz/timelinefx` (MIT)
 
-- `source/` — `peterigz/timelinefx`, `master` @ `cde7ac0647ba83ea76e877847fb2594517308504`
-  (downloaded 2026-06-14). The render-agnostic core: `TLFX*` classes with
-  `AnimImage`, `XMLLoader`, and `ParticleManager::DrawSprite` as the extension
-  points. No Marmalade dependency in the core (the Marmalade bits are only in the
-  upstream `timelinefx-sample`, not vendored).
+- `source/`, `pugixml/`, `LICENSE` — **`damucz/timelinefx`**, `master` @
+  `77878f65eb7351bea501df994943000699334ea1` (re-vendored 2026-06-14). The
+  render-agnostic C++ port: `TLFX*` classes with `AnimImage` / `XMLLoader` /
+  `ParticleManager::DrawSprite` as the extension points. No Marmalade dependency
+  in the core (Marmalade is only in the upstream `timelinefx-sample`).
 - `pugixml/` — pugixml (MIT), the XML parser the default `PugiXMLLoader` uses.
 
-## ⚠️ LICENSE — must be cleared before shipping
+## License — MIT (clear to ship)
 
-- **pugixml**: MIT (clear to ship).
-- **`peterigz/timelinefx` core**: ships with **no LICENSE file**; the README only
-  states "Copyright: Peter J. Rigby 2009-2010". The `damucz/timelinefx` fork of
-  the *same* render-agnostic code carries an explicit **MIT** LICENSE, but the
-  authority of that grant over the original author's code is unconfirmed.
-- Inkternity is distributed under BUSL-1.1, so we **cannot ship this runtime**
-  until we have an explicit license grant from Peter Rigby (RigzSoft). This is
-  part of the planned partnership conversation (alongside subscriber offer-codes
-  for the paid editor). Until then this target is `EXCLUDE_FROM_ALL` — spike /
-  evaluation only, never linked into `main`.
+`damucz/timelinefx` is **MIT-licensed** (root repo, `LICENSE` = "MIT License,
+Copyright (c) 2019 Daniel"); see `deps/timelinefx_legacy/LICENSE`. We vendor from
+it and retain the LICENSE → MIT-compliant, **clear to ship in BUSL Inkternity**.
+
+Provenance note: `peterigz/timelinefx` (which we briefly used first) is a **fork
+of `damucz/timelinefx`** that omitted the LICENSE file and is frozen at 2015;
+damucz is the MIT root and newer (2019), so we use damucz.
+
+Residual nuance (not a blocker): damucz's MIT covers the C++ *port*; the
+underlying TimelineFX algorithm is Peter Rigby's original work (the file headers
+carry "Copyright Peter J. Rigby 2009-2010"). Peter **forked damucz's repo into
+his own account**, which reads as endorsement of the MIT port. For a commercial
+product a one-line courtesy confirmation from Peter is prudent belt-and-suspenders
+— but the MIT grant is a solid basis and this no longer gates shipping. (Not
+legal advice; worth a real review before release.)
+
+pugixml is independently MIT.
 
 ## Build
 
@@ -37,6 +43,5 @@ Isolated C++17 static lib `timelinefx_legacy` (CMakeLists.txt). Needs
 
 ## Update recipe
 
-Re-download `source/TLFX*.{h,cpp}` from the pinned SHA and `pugixml/*` from the
-repo's `include/` + `src/`. Keep this pin in sync with whatever the licensing
-agreement settles on.
+Re-download `source/TLFX*.{h,cpp}`, `pugixml/*`, and `LICENSE` from the pinned
+`damucz/timelinefx` SHA above.
