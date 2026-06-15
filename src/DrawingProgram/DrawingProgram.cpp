@@ -491,17 +491,10 @@ void DrawingProgram::toolbar_gui(Toolbar& t) {
                 // on the eye-dropper. Labeled accordingly. Reported by zynx.
                 t.color_button_left("Fill color (secondary)", &world.main.toolConfig.globalConf.backgroundColor);
 
-                // Tree-view panel toggle (M6-a). Placeholder list.svg icon
-                // until a graph icon ships.
-                svg_icon_button(gui, "Tree View Toggle Button", "data/icons/list.svg", {
-                    .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
-                    .isSelected = world.treeView.is_visible(),
-                    .onClick = [this] { world.treeView.toggle(); }
-                });
-                // The reader-mode toggle used to live here next to the
-                // tree-view toggle, but desktop reader mode now hides this
-                // entire editor palette (matching phone behavior). To keep
-                // the toggle reachable when active, it lives in the top
+                // The tree-view toggle and the reader-mode toggle both used to
+                // live here in the editor palette. The palette had grown too
+                // full (a button was getting clipped), and desktop reader mode
+                // hides this palette entirely, so both now live in the top
                 // toolbar -- see Toolbar::top_toolbar.
             }
         });

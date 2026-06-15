@@ -525,6 +525,13 @@ void Toolbar::top_toolbar() {
                         else
                             layerMenuPopupOpen = true;
                     });
+                    // Tree-view (waypoint node graph) toggle. Moved here from the
+                    // editor palette, which had grown too full to fit it. Edit-mode
+                    // only (grouped with the other panel toggles).
+                    icon_button_top_toolbar("Tree View Toggle Button", "data/icons/list.svg",
+                                            main.world->treeView.is_visible(), [&] {
+                        main.world->treeView.toggle();
+                    });
                 } else {
                     // Tool button hidden mid-popup: auto-close so the
                     // popup body doesn't render attached to a vanished
