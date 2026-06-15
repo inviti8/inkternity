@@ -48,6 +48,10 @@ public:
     // effect is missing or produced nothing.
     sk_sp<SkImage> thumbnail(int libraryIndex, const std::string& effectName);
 
+    // Whether a thumbnail has already been generated+cached (so the caller can
+    // budget generation across frames — generating is ~tens of ms each).
+    bool thumbnail_cached(int libraryIndex, const std::string& effectName) const;
+
     // Single active (library, effect) selection — §4.4.
     void setActive(int libraryIndex, const std::string& effectName);
     int activeLibrary() const { return _activeLibrary; }

@@ -1259,6 +1259,16 @@ void Toolbar::fx_library_menu(Element* triggerButton) {
     auto& gui = main.g.gui;
     auto& io = gui.io;
 
+    // Progressive thumbnails: generating one is ~tens of ms, so cap how many we
+    // render per frame. This MUST live at fx_library_menu scope (called once per
+    // frame), not inside the ScrollArea innerContent lambda — Clay re-invokes that
+    // lambda several times per frame (measure + layout), and a counter declared
+    // there would reset each time, generating them all in the first frame (the
+    // stall we're avoiding). The app repaints continuously, so uncached tiles fill
+    // in over the next few frames instead of freezing the panel on open.
+    int thumbsThisFrame = 0;
+    constexpr int kThumbBudgetPerFrame = 3;
+
     gui.set_z_index(gui.get_z_index() + 1, [&] {
         gui.element<LayoutElement>("fx library menu", [&] (LayoutElement*, const Clay_ElementId& lId) {
             CLAY(lId, {
@@ -1309,9 +1319,17 @@ void Toolbar::fx_library_menu(Element* triggerButton) {
                                         const int64_t rowId = 1000000 + static_cast<int64_t>(li) * 1000000 +
                                             static_cast<int64_t>(std::hash<std::string>{}(eff) & 0x7fffffff);
                                         gui.new_id(rowId, [&] {
-                                            // Lazily headless-rendered effect thumbnail (cached in
-                                            // the store). Row = [thumbnail tile][name button].
-                                            sk_sp<SkImage> thumb = store->thumbnail(li, eff);
+                                            // Headless-rendered effect thumbnail (cached in the
+                                            // store). Already-cached tiles cost nothing; uncached
+                                            // ones are generated within a per-frame budget so the
+                                            // panel never stalls. Row = [thumbnail tile][name].
+                                            sk_sp<SkImage> thumb;
+                                            if(store->thumbnail_cached(li, eff))
+                                                thumb = store->thumbnail(li, eff);          // instant cache hit
+                                            else if(thumbsThisFrame < kThumbBudgetPerFrame) {
+                                                thumb = store->thumbnail(li, eff);          // generate now
+                                                ++thumbsThisFrame;
+                                            }                                               // else: fill in a later frame
                                             gui.element<LayoutElement>("fx row", [&](LayoutElement*, const Clay_ElementId& rId) {
                                                 CLAY(rId, {
                                                     .layout = {

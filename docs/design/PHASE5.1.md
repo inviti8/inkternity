@@ -213,9 +213,13 @@ Ordered roughly by value / risk:
 3. **Reader-clock binding + deterministic `seed`** (§4.6) — stable, peer-matched
    playback; Finite effects fire on waypoint/panel arrival. (Today: real-dt sim,
    seed stored but unused.)
-4. **Effect thumbnails/icons** in the panel — headless-render each effect (the
-   M3 renderer can do it) into `MemoryImageDisplay`, or decode the `.eff` `ICONS`
-   entry. (Panel is name-only today.)
+4. ✅ **Effect thumbnails** in the panel — `FxLibraryStore::thumbnail()`
+   headless-renders each effect at its peak-population frame into an `SkImage`,
+   cached per (library, effect) and shown via `MemoryImageDisplay`. Generated
+   progressively (a few per frame) so the panel opens without stalling. The
+   render manager is intentionally leaked (bounded, one-time) to sidestep the
+   legacy lib's unsound nested-effect teardown — see §8. (The `.eff` `ICONS`
+   entry was not needed.)
 5. **Unclipped live draw** — the square-crop fix is scale-proportional bounds
    (mitigation); render outside the cache for guaranteed no-clip at any size.
 6. ✅ **Parallax-depth interplay** (§4.5) — placements inherit their layer's
@@ -225,5 +229,24 @@ Ordered roughly by value / risk:
 7. **Undo grouping** — a drag deposits many components → many undo entries; group
    per stroke.
 8. **Phone UI** — `gui_phone_toolbox` is empty.
-9. **Docs** — README feature bullet + MANUAL section; remove the now-unused modern
-   `timelinefx` link from `main` (legacy path superseded it).
+9. ✅ **Docs** — README feature bullet + MANUAL section updated to the `.eff`
+   flow (2026-06-14). Still TODO: remove the now-unused modern `timelinefx` link
+   from `main` (legacy path superseded it).
+
+## 8. Known issue — legacy teardown is unsound for nested effects
+The vendored runtime's effect/particle teardown has ownership bugs (the upstream
+spike leaks rather than tearing down). Two found:
+- ✅ **Fixed:** `ParticleManager::ClearInUse` dereferenced
+  `GetEmitter()->GetParentEffect()` on the manager's non-pool particles — wrong
+  list, and a dangling effect pointer after a finite effect self-deleted
+  mid-update. Removed the spurious call (`Reset()` already nulls the emitter).
+  This hardened `ParticleCanvasComponent` teardown for finite effects.
+- ⚠️ **Open:** a parent/child particle double-free in `Effect::Destroy`
+  (`p->Reset()` → `ClearChildren`) crashes for some complex **nested** effects
+  (e.g. *Smokey Explosion*). Thumbnail rendering sidesteps it by leaking its
+  manager (never tears down). But it remains **latent in `ParticleCanvasComponent`**:
+  placing such a nested effect and then replaying it (Finite re-entry → `ClearAll`)
+  or closing the file could crash. Plain (non-nested) effects are unaffected.
+  Proper fix = untangle the entity parent/child + pool ownership in the vendored
+  lib (or adopt the leak strategy for placed components too). Tracked for
+  follow-up.

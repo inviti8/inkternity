@@ -74,6 +74,11 @@ sk_sp<SkImage> FxLibraryStore::thumbnail(int libraryIndex, const std::string& ef
     return img;
 }
 
+bool FxLibraryStore::thumbnail_cached(int libraryIndex, const std::string& effectName) const {
+    if (libraryIndex < 0 || libraryIndex >= static_cast<int>(_entries.size())) return false;
+    return _entries[libraryIndex].thumbs.count(effectName) > 0;
+}
+
 int FxLibraryStore::add(const NetworkingObjects::NetObjID& resourceId, const std::string& name,
                         std::unique_ptr<LegacyFxLibrary> lib) {
     for (size_t i = 0; i < _entries.size(); ++i)
