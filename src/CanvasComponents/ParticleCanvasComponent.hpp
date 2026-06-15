@@ -34,6 +34,11 @@ class ParticleCanvasComponent : public CanvasComponent {
         virtual std::unique_ptr<CanvasComponent> get_data_copy() const override;
         virtual void set_data_from(const CanvasComponent& other) override;
         virtual void update(DrawingProgram& drawP) override;
+        // Resource bookkeeping so the embedded .eff survives save/load + copy/paste
+        // (mirrors ImageCanvasComponent): declare the library resource as used, and
+        // remap its id when resources are reassigned on load.
+        virtual void get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet) const override;
+        virtual void remap_resource_ids(const std::unordered_map<NetworkingObjects::NetObjID, NetworkingObjects::NetObjID>& resourceOldToNewMap) override;
 
         // Request a play (ON_TOUCH effects, or replay any). Picked up next update.
         void trigger_touch();

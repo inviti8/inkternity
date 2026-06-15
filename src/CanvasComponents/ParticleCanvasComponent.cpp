@@ -136,6 +136,15 @@ ParticleCanvasComponent::~ParticleCanvasComponent() = default;
 
 void ParticleCanvasComponent::trigger_touch() { pendingTouch = true; }
 
+void ParticleCanvasComponent::get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet) const {
+    resourceSet.emplace(d.libraryResourceId);   // keep the embedded .eff from being pruned
+}
+
+void ParticleCanvasComponent::remap_resource_ids(const std::unordered_map<NetworkingObjects::NetObjID, NetworkingObjects::NetObjID>& resourceOldToNewMap) {
+    auto it = resourceOldToNewMap.find(d.libraryResourceId);
+    if (it != resourceOldToNewMap.end()) d.libraryResourceId = it->second;
+}
+
 CanvasComponentType ParticleCanvasComponent::get_type() const {
     return CanvasComponentType::PARTICLE;
 }
