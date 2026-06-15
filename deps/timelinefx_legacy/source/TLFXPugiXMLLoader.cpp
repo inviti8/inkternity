@@ -4,6 +4,7 @@
 #include "TLFXEmitter.h"
 
 #include <cassert>
+#include <cstdlib>   // atoi — not guaranteed transitively under GCC/Clang
 
 namespace TLFX
 {

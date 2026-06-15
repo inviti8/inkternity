@@ -4,6 +4,7 @@
 #include "TLFXAnimImage.h"
 
 #include <cassert>
+#include <cstring>   // strlen/strrchr — MSVC pulls these in transitively, GCC/Clang do not
 
 namespace TLFX
 {
