@@ -456,12 +456,15 @@ void DrawingProgram::toolbar_gui(Toolbar& t) {
                 }
 #endif // HVYM_HAS_LIBMYPAINT
 
-                tool_button("Waypoint Toolbar Button", "data/icons/bookmark.svg", DrawingProgramToolType::WAYPOINT);
-                tool_button("Button Select Toolbar Button", "data/icons/button-select.svg", DrawingProgramToolType::BUTTONSELECT);
-                tool_button("Stroke Vectorize Toolbar Button", "data/icons/pixel-to-vector.svg", DrawingProgramToolType::STROKEVECTORIZE);
+                // Particle (FX) brush -- grouped with the other brushes, just
+                // below the libmypaint brush category buttons.
                 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
                 tool_button("Particle Brush Toolbar Button", "data/icons/fx-wand.svg", DrawingProgramToolType::PARTICLEBRUSH);
                 #endif
+
+                tool_button("Waypoint Toolbar Button", "data/icons/bookmark.svg", DrawingProgramToolType::WAYPOINT);
+                tool_button("Button Select Toolbar Button", "data/icons/button-select.svg", DrawingProgramToolType::BUTTONSELECT);
+                tool_button("Stroke Vectorize Toolbar Button", "data/icons/pixel-to-vector.svg", DrawingProgramToolType::STROKEVECTORIZE);
                 tool_button("Eraser Toolbar Button", "data/icons/eraser.svg", DrawingProgramToolType::ERASER);
                 tool_button("Line Toolbar Button", "data/icons/line.svg", DrawingProgramToolType::LINE);
                 tool_button("Text Toolbar Button", "data/icons/text.svg", DrawingProgramToolType::TEXTBOX);
