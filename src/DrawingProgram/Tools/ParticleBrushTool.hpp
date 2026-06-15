@@ -24,6 +24,7 @@ class ParticleBrushTool : public DrawingProgramToolBase {
         void stamp(Vector2f camPos);   // place the active effect at a cam-space point
         float brushSize = 3.0f;        // -> placement localScale
         float rate = 3.0f;             // placements per second while held/dragging
+        bool playOnTouch = false;      // placements wait for a touch to play
         bool painting = false;
         float accum = 0.0f;            // time accumulator for rate-based stamping
         Vector2f lastCamPos{0.0f, 0.0f};

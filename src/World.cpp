@@ -380,8 +380,13 @@ void World::input_mouse_button_callback(const InputManager::MouseButtonCallbackA
         // also be picked up by e.g. WaypointTool's marker-focus logic
         // and silently navigate the camera without updating ReaderMode
         // state.
-        if(readerMode.is_active())
+        if(readerMode.is_active()) {
+            // Reader mode ignores canvas tools, but a tap can still trigger
+            // PARTICLE_PLAY_ON_TOUCH effects under the cursor (PHASE5.1 polish).
+            if(button.down)
+                drawProg.trigger_touch_particles(button.pos);
             return;
+        }
         drawProg.input_mouse_button_callback(button);
         drawData.cam.input_mouse_button_on_canvas_callback(*this, button);
     }

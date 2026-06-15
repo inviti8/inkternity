@@ -21,6 +21,7 @@ VersionNumber header_to_version_number(const std::string& header) {
         m["INFPNT000013"] = VersionNumber(0, 12, 0); // PHASE4: layer DisplayData gains parallaxDepth + parallaxAnchor
         m["INFPNT000014"] = VersionNumber(0, 13, 0); // PHASE5: CanvasComponentType::PARTICLE (embedded .tfx packages)
         m["INFPNT000015"] = VersionNumber(0, 14, 0); // PHASE5.1: PARTICLE -> legacy .eff (libraryResourceId + effectName)
+        m["INFPNT000016"] = VersionNumber(0, 15, 0); // PHASE5.1 polish: PARTICLE gains playMode (AUTO / on-touch)
     }
     auto it = m.find(header);
     if(it == m.end())

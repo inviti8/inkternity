@@ -40,9 +40,11 @@ constexpr float kVpHalf = kVp * 0.5f;
 struct ParticleCanvasComponent::Runtime {
     LegacyFxLibrary* lib = nullptr;          // non-owning (FxLibraryStore owns it)
     std::unique_ptr<LegacyFxRenderer> pm;    // owns the spawned effect (ClearAll deletes)
-    TLFX::Effect* effect = nullptr;
     float accum = 0.f;                        // real-time -> fixed-step accumulator
-    bool loaded = false;
+    bool started = false;                    // an effect instance has been spawned
+    int emptyFrames = 0;                      // consecutive frames with 0 particles
+    bool lastVisible = false;                 // for the became-visible edge
+    bool loaded = false;                      // lib resolved + pm built + effect exists
 };
 
 void ParticleCanvasComponent::ensure_runtime(DrawingProgram* drawP) const {
@@ -50,8 +52,7 @@ void ParticleCanvasComponent::ensure_runtime(DrawingProgram* drawP) const {
     if (!drawP) return;   // draw() can't resolve a library; update()/init build first
     LegacyFxLibrary* lib = drawP->resolve_fx_library(d.libraryResourceId);
     if (!lib) return;
-    TLFX::Effect* tmpl = lib->GetEffect(d.effectName.c_str());
-    if (!tmpl) {
+    if (!lib->GetEffect(d.effectName.c_str())) {
         Logger::get().log("WORLDFATAL", "[Particle] effect not in library: " + d.effectName);
         return;
     }
@@ -60,22 +61,49 @@ void ParticleCanvasComponent::ensure_runtime(DrawingProgram* drawP) const {
     rt->pm = std::make_unique<LegacyFxRenderer>(5000, 1);
     rt->pm->SetScreenSize(static_cast<int>(kVp), static_cast<int>(kVp));
     rt->pm->SetOrigin(0.f, 0.f, d.localScale);   // camtz = localScale -> positions + sizes scale
-    rt->effect = new TLFX::Effect(*tmpl, rt->pm.get(), true);
-    rt->pm->AddEffect(rt->effect);
     rt->loaded = true;
+    // No effect spawned yet — playback is triggered in update() (AUTO: on becoming
+    // visible; ON_TOUCH: on trigger_touch).
+}
+
+void ParticleCanvasComponent::play_effect() const {
+    if (!rt || !rt->lib || !rt->pm) return;
+    TLFX::Effect* tmpl = rt->lib->GetEffect(d.effectName.c_str());
+    if (!tmpl) return;
+    rt->pm->ClearAll();   // remove + delete any prior instance -> fresh play
+    TLFX::Effect* eff = new TLFX::Effect(*tmpl, rt->pm.get(), true);
+    rt->pm->AddEffect(eff);
+    rt->started = true;
+    rt->emptyFrames = 0;
 }
 
 void ParticleCanvasComponent::update(DrawingProgram& drawP) {
     ensure_runtime(&drawP);
     if (!rt || !rt->loaded || !rt->pm) return;
 
-    // Advance the fixed-step sim by real elapsed time (Update() = one
-    // updateFrequency tick; decouple sim speed from framerate).
-    const float step = 1.0f / TLFX::EffectsLibrary::GetUpdateFrequency();
-    rt->accum += static_cast<float>(drawP.world.main.deltaTime);
-    int steps = 0;
-    while (rt->accum >= step && steps < 4) { rt->pm->Update(); rt->accum -= step; ++steps; }
-    if (rt->accum > step) rt->accum = 0.f;       // drop backlog after a hitch
+    const bool visible = compContainer->should_draw(drawP.world.drawData);
+    const bool becameVisible = visible && !rt->lastVisible;
+    rt->lastVisible = visible;
+    const bool done = rt->started && rt->emptyFrames > 15;
+
+    if (pendingTouch) {
+        play_effect();          // a touch always (re)plays, regardless of mode
+        pendingTouch = false;
+    } else if (d.playMode == PARTICLE_PLAY_AUTO && becameVisible && (!rt->started || done)) {
+        // Finite effects play on first view and replay on each re-entry; Continuous
+        // effects play once on first view and run (never "done"), so never retrigger.
+        play_effect();
+    }
+
+    if (rt->started) {
+        // Advance the fixed-step sim by real elapsed time (decouple from framerate).
+        const float step = 1.0f / TLFX::EffectsLibrary::GetUpdateFrequency();
+        rt->accum += static_cast<float>(drawP.world.main.deltaTime);
+        int steps = 0;
+        while (rt->accum >= step && steps < 4) { rt->pm->Update(); rt->accum -= step; ++steps; }
+        if (rt->accum > step) rt->accum = 0.f;
+        rt->emptyFrames = (rt->pm->GetParticlesInUse() == 0) ? rt->emptyFrames + 1 : 0;
+    }
 
     // Animated like a GIF: invalidate this component's cache region each frame.
     drawP.invalidate_cache_at_component(&(*compContainer->objInfo));
@@ -83,7 +111,7 @@ void ParticleCanvasComponent::update(DrawingProgram& drawP) {
 
 void ParticleCanvasComponent::draw(SkCanvas* canvas, const DrawData&,
                                    const std::shared_ptr<void>&) const {
-    if (!rt || !rt->loaded || !rt->pm) return;
+    if (!rt || !rt->loaded || !rt->pm || !rt->started) return;
     rt->pm->set_canvas(canvas);
     rt->pm->drawn = 0;
     canvas->save();
@@ -96,6 +124,7 @@ void ParticleCanvasComponent::draw(SkCanvas* canvas, const DrawData&,
 
 struct ParticleCanvasComponent::Runtime {};
 void ParticleCanvasComponent::ensure_runtime(DrawingProgram*) const {}
+void ParticleCanvasComponent::play_effect() const {}
 void ParticleCanvasComponent::update(DrawingProgram&) {}
 void ParticleCanvasComponent::draw(SkCanvas*, const DrawData&, const std::shared_ptr<void>&) const {}
 
@@ -104,6 +133,8 @@ void ParticleCanvasComponent::draw(SkCanvas*, const DrawData&, const std::shared
 
 ParticleCanvasComponent::ParticleCanvasComponent() = default;
 ParticleCanvasComponent::~ParticleCanvasComponent() = default;
+
+void ParticleCanvasComponent::trigger_touch() { pendingTouch = true; }
 
 CanvasComponentType ParticleCanvasComponent::get_type() const {
     return CanvasComponentType::PARTICLE;
@@ -150,14 +181,14 @@ void ParticleCanvasComponent::set_data_from(const CanvasComponent& other) {
 }
 
 void ParticleCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius);
+    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode);
 }
 void ParticleCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
-    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius);
+    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode);
     rt.reset();
 }
 void ParticleCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius);
+    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode);
 }
 void ParticleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     if (version < VersionNumber(0, 14, 0)) {
@@ -171,6 +202,10 @@ void ParticleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, V
         d = Data{};
     } else {
         a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius);
+        if (version >= VersionNumber(0, 15, 0))   // playMode added in INFPNT000016
+            a(d.playMode);
+        else
+            d.playMode = PARTICLE_PLAY_AUTO;
     }
     rt.reset();
 }

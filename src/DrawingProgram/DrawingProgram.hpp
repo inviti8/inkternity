@@ -64,6 +64,9 @@ class DrawingProgram {
         // then embed its bytes as a canvas asset (ResourceManager). Host-gated.
         // No-op unless HVYM_HAS_TIMELINEFX_LEGACY.
         void import_fx_library(const std::filesystem::path& filePath);
+        // PHASE5.1 polish — trigger any PARTICLE_PLAY_ON_TOUCH effects under a
+        // cam-space point (reader-mode tap). No-op without the legacy path.
+        void trigger_touch_particles(Vector2f camPos);
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
         // Imported FX libraries (M1). null until the first successful import.
         FxLibraryStore* fx_store() { return fxStore.get(); }

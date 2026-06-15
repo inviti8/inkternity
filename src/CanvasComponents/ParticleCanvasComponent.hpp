@@ -3,8 +3,15 @@
 #include "../CoordSpaceHelper.hpp"
 #include <Helpers/SCollision.hpp>
 #include <Helpers/NetworkingObjects/NetObjID.hpp>
+#include <cstdint>
 #include <memory>
 #include <string>
+
+// Playback trigger for a placed effect (PHASE5.1 polish).
+enum ParticlePlayMode : uint8_t {
+    PARTICLE_PLAY_AUTO     = 0,   // Continuous loops; Finite (re)plays on becoming visible
+    PARTICLE_PLAY_ON_TOUCH = 1    // does not play until touched (then plays once)
+};
 
 // PHASE5.1 (docs/design/PHASE5.1.md): a placed legacy TimelineFX (.eff) effect
 // as a canvas component. References an imported library by ResourceManager id +
@@ -28,6 +35,9 @@ class ParticleCanvasComponent : public CanvasComponent {
         virtual void set_data_from(const CanvasComponent& other) override;
         virtual void update(DrawingProgram& drawP) override;
 
+        // Request a play (ON_TOUCH effects, or replay any). Picked up next update.
+        void trigger_touch();
+
         // Serialized authoring data.
         struct Data {
             NetworkingObjects::NetObjID libraryResourceId;  // embedded .eff asset
@@ -35,6 +45,7 @@ class ParticleCanvasComponent : public CanvasComponent {
             uint32_t seed = 12345;                          // deterministic replay seed
             float localScale = 3.0f;                        // effect world-unit -> canvas local-unit
             float radius = 600.0f;                          // local half-extent (derived from scale in create_collider)
+            uint8_t playMode = PARTICLE_PLAY_AUTO;          // ParticlePlayMode
         } d;
 
     private:
@@ -44,12 +55,14 @@ class ParticleCanvasComponent : public CanvasComponent {
         virtual SCollision::AABB<float> get_obj_coord_bounds() const override;
 
         void create_collider();
-        // Builds the PIMPL runtime: resolves the library (needs drawP), spawns
-        // the effect. draw() passes nullptr and relies on update()/init having
+        // Builds the PIMPL runtime: resolves the library + particle manager
+        // (needs drawP). draw() passes nullptr and relies on update()/init having
         // built it first (focus_update runs update before draw each frame).
         void ensure_runtime(DrawingProgram* drawP) const;
+        void play_effect() const;   // (re)spawn the effect instance — fresh play
 
         struct Runtime;
         mutable std::unique_ptr<Runtime> rt;
+        bool pendingTouch = false;  // a trigger_touch() awaiting the next update
         SCollision::BVHContainer<float> collisionTree;
 };

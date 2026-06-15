@@ -10,6 +10,7 @@
 
 #include "../../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
+#include "../../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 #include "../../CanvasComponents/Particles/FxLibraryStore.hpp"
@@ -31,6 +32,7 @@ void ParticleBrushTool::gui_toolbox(Toolbar& t) {
         text_label_centered(gui, "Particle Brush");
         slider_scalar_field(gui, "particle size", "Size", &brushSize, 0.5f, 30.0f);
         slider_scalar_field(gui, "particle rate", "Rate /s", &rate, 1.0f, 30.0f);
+        checkbox_boolean_field(gui, "particle play on touch", "Play on touch", &playOnTouch);
     });
 }
 
@@ -91,6 +93,7 @@ void ParticleBrushTool::stamp(Vector2f camPos) {
     pc.d.libraryResourceId = entry.resourceId;
     pc.d.effectName = store->activeEffect();
     pc.d.localScale = brushSize;
+    pc.d.playMode = playOnTouch ? PARTICLE_PLAY_ON_TOUCH : PARTICLE_PLAY_AUTO;
 
     // Place the component origin at the cursor's world position.
     auto& camc = drawP.world.drawData.cam.c;

@@ -21,7 +21,9 @@
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 #include "../CanvasComponents/Particles/LegacyFxLibrary.hpp"
 #include "../CanvasComponents/Particles/FxLibraryStore.hpp"
+#include "../CanvasComponents/ParticleCanvasComponent.hpp"
 #include <include/core/SkData.h>
+#include <array>
 #endif
 #include <Helpers/FileDownloader.hpp>
 #include <Helpers/NetworkingObjects/NetObjID.hpp>
@@ -940,6 +942,35 @@ LegacyFxLibrary* DrawingProgram::resolve_fx_library(const NetworkingObjects::Net
     return raw;
 }
 #endif
+
+void DrawingProgram::trigger_touch_particles(Vector2f camPos) {
+#ifdef HVYM_HAS_TIMELINEFX_LEGACY
+    using namespace SCollision;
+    // A small collider at the tap point (cam space) -> world.
+    ColliderCollection<float> cC;
+    const float r = 4.0f;
+    Vector2f lo = camPos - Vector2f{r, r};
+    Vector2f hi = camPos + Vector2f{r, r};
+    std::array<Vector2f, 4> t = triangle_from_rect_points(lo, hi);
+    cC.triangle.emplace_back(t[0], t[1], t[2]);
+    cC.triangle.emplace_back(t[2], t[3], t[0]);
+    auto cCWorld = world.drawData.cam.c.collider_to_world<ColliderCollection<WorldScalar>, ColliderCollection<float>>(cC);
+
+    // updateableComponents is the small set of animating components (particles +
+    // GIFs); only ON_TOUCH particles under the tap get triggered.
+    for (auto* info : updateableComponents) {
+        if (!info) continue;
+        CanvasComponent& comp = info->obj->get_comp();
+        if (comp.get_type() != CanvasComponentType::PARTICLE) continue;
+        ParticleCanvasComponent& pc = static_cast<ParticleCanvasComponent&>(comp);
+        if (pc.d.playMode != PARTICLE_PLAY_ON_TOUCH) continue;
+        if (info->obj->collides_with_world_coords(world.drawData.cam.c, cCWorld))
+            pc.trigger_touch();
+    }
+#else
+    (void)camPos;
+#endif
+}
 
 void DrawingProgram::import_fx_library(const std::filesystem::path& filePath) {
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
