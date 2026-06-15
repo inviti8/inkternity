@@ -1,9 +1,17 @@
 # PHASE5 — Particle Systems (TimelineFX runtime + editor)
 
-Status: M0 + M1 SHIPPED (2026-06-13). Drop-a-.tfx particle effects render
-live in-app via a faithful SkRuntimeEffect port; premultiplied blend
-(matches the editor); animate in reader mode; host-authored. Remaining
-M1.x/M2/M3 polish tracked in the milestones below.
+> **⚠️ SUPERSEDED (2026-06-14) by [PHASE5.1.md](PHASE5.1.md).** This document
+> describes the **modern `.tfx` runtime** path, which was **parked**: the current
+> Alpha editor is ahead of every public library commit and its exports render
+> black (color-ramp/version skew). The shipped feature uses the **legacy `.eff`**
+> path instead (import a library → FX Library panel → particle brush). The `.tfx`
+> "drop on canvas" flow below is **not** what ships. Kept for historical rationale
+> and the Skia render research. See PHASE5.1.md §1 for the pivot.
+
+Status (historical): M0 + M1 SHIPPED (2026-06-13). Drop-a-.tfx particle effects
+render live in-app via a faithful SkRuntimeEffect port; premultiplied blend
+(matches the editor); animate in reader mode; host-authored. **This path is now
+parked — see the banner above.**
 Prereqs: PHASE4 layer system (parallax depth, "live-outside-cache" draw
 bypass), `ResourceManager` (embedded assets), the file-drop ingestion
 pipeline, animated-GIF playback (`ImageResourceDisplay`, the existing
