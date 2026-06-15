@@ -62,6 +62,13 @@ namespace TLFX
         void SetGroupParticles(bool value);
         bool IsGroupParticles() const;
 
+        // LOCAL FIX (Inkternity): "currently in the manager's free pool (_unused)".
+        // A group particle lives in both the effect's in-use list and its emitter's
+        // child list, so teardown can call ReleaseParticle() on it twice; this flag
+        // makes ReleaseParticle idempotent (set on release, cleared on grab).
+        void SetPooled(bool value) { _pooled = value; }
+        bool IsPooled() const { return _pooled; }
+
         void SetLayer(int layer);
         int GetLayer() const;
 
@@ -126,6 +133,7 @@ namespace TLFX
         ParticleManager*            _particleManager;               // link to the particle manager
         int                         _layer;                         // layer the particle belongs to
         bool                        _groupParticles;                // whether the particle is added the PM pool or kept in the emitter's pool
+        bool                        _pooled;                        // LOCAL FIX: true while in the manager's _unused free pool (idempotent release)
         int                         _effectLayer;
 		
 		ParticleList::iterator      _listIter;                      // for quick deletes from ParticleList

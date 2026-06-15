@@ -29,6 +29,7 @@ namespace TLFX
         , _particleManager(NULL)
         , _layer(0)
         , _groupParticles(false)
+        , _pooled(false)
         , _effectLayer(0)
 		// can't initialize _listIter without knowing what list this particle will be put into
     {

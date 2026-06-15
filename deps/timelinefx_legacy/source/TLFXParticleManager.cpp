@@ -75,6 +75,7 @@ namespace TLFX
         {
             Particle* p = new Particle();
             p->SetOKtoRender(false);                // @todo dan ?
+            p->SetPooled(true);                     // LOCAL FIX: starts in the free pool
             _unused.push(p);
         }
     }
@@ -155,6 +156,7 @@ namespace TLFX
 
 		if(p)
 		{
+            p->SetPooled(false);   // LOCAL FIX: now in use, not in the free pool
             p->SetLayer(layer);
             p->SetGroupParticles(pool);
 
@@ -177,6 +179,14 @@ namespace TLFX
 
     void ParticleManager::ReleaseParticle( Particle *p )
     {
+        // LOCAL FIX (Inkternity): idempotent. A group particle is referenced by
+        // both its effect's in-use list and its emitter's child list, so teardown
+        // releases it twice (Effect::Destroy, then the emitter's particle Destroy).
+        // Without this guard the second call double-pushes to _unused (double-free
+        // on dtor) and, for non-group particles, double-erases the _inUse iterator.
+        if (p->IsPooled())
+            return;
+        p->SetPooled(true);
         --_inUseCount;
         _unused.push(p);
         if (!p->IsGroupParticles())
@@ -449,6 +459,9 @@ namespace TLFX
                 // Particle
                 for (auto it = plist.begin(); it != plist.end(); ++it)
                 {
+                    if ((*it)->IsPooled())   // LOCAL FIX: already released elsewhere in teardown
+                        continue;
+                    (*it)->SetPooled(true);
                     _unused.push(*it);
                     --_inUseCount;
                     // LOCAL FIX (Inkternity): dropped a spurious

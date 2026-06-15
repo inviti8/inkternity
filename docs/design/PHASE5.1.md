@@ -233,20 +233,24 @@ Ordered roughly by value / risk:
    flow (2026-06-14). Still TODO: remove the now-unused modern `timelinefx` link
    from `main` (legacy path superseded it).
 
-## 8. Known issue — legacy teardown is unsound for nested effects
-The vendored runtime's effect/particle teardown has ownership bugs (the upstream
-spike leaks rather than tearing down). Two found:
-- ✅ **Fixed:** `ParticleManager::ClearInUse` dereferenced
+## 8. Legacy teardown ownership fixes (vendored)
+The vendored runtime's effect/particle teardown had ownership bugs (the upstream
+spike leaks rather than tearing down). Both are now fixed in our vendored copy;
+verified by sweeping all 24 effects of `test_eff.eff` through render **and**
+teardown (`tfx_legacy_spike` with a `delete pm` per effect) — all clean.
+- ✅ **`ClearInUse` use-after-free.** It dereferenced
   `GetEmitter()->GetParentEffect()` on the manager's non-pool particles — wrong
-  list, and a dangling effect pointer after a finite effect self-deleted
+  list (pool particles live in the effect's in-use list; non-pool in the
+  manager's), and a dangling effect pointer after a finite effect self-deleted
   mid-update. Removed the spurious call (`Reset()` already nulls the emitter).
-  This hardened `ParticleCanvasComponent` teardown for finite effects.
-- ⚠️ **Open:** a parent/child particle double-free in `Effect::Destroy`
-  (`p->Reset()` → `ClearChildren`) crashes for some complex **nested** effects
-  (e.g. *Smokey Explosion*). Thumbnail rendering sidesteps it by leaking its
-  manager (never tears down). But it remains **latent in `ParticleCanvasComponent`**:
-  placing such a nested effect and then replaying it (Finite re-entry → `ClearAll`)
-  or closing the file could crash. Plain (non-nested) effects are unaffected.
-  Proper fix = untangle the entity parent/child + pool ownership in the vendored
-  lib (or adopt the leak strategy for placed components too). Tracked for
-  follow-up.
+- ✅ **Double `ReleaseParticle` double-free (nested effects, e.g. Smokey
+  Explosion).** A *group* particle is referenced by both its effect's in-use list
+  and its emitter's child list, so teardown released it twice (`Effect::Destroy`,
+  then the emitter's `particle->Destroy`) → pushed to `_unused` twice →
+  double-delete in `~ParticleManager`. Made `ParticleManager::ReleaseParticle`
+  **idempotent** via a per-particle `_pooled` flag (set on release, cleared on
+  grab; the emitter already correctly sets `_childrenOwner=false` so it never
+  *deletes* particles — the manager pool owns them). Normal-sim behaviour is
+  unchanged (the flag only guards a second release). This also hardens
+  `ParticleCanvasComponent` teardown/replay for arbitrary effects, and let the
+  thumbnail renderer drop its leak workaround and tear down normally.

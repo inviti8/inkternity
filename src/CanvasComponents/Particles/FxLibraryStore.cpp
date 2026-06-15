@@ -2,6 +2,8 @@
 
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 
+#include <memory>
+
 #include <include/core/SkCanvas.h>
 #include <include/core/SkSurface.h>
 
@@ -18,14 +20,10 @@ namespace {
 // effect in a 768px frame at camtz=1.0; we render smaller with a proportional
 // camtz so the framing matches, then let the panel scale the tile down.
 //
-// The manager + spawned effect are INTENTIONALLY LEAKED (as the spike does):
-// the legacy lib's effect/particle teardown is unsound for some complex nested
-// effects (e.g. Smokey Explosion — a parent/child particle ownership double-free
-// in Effect::Destroy that the upstream author dodged by leaking). Thumbnails are
-// generated once per effect and cached, and the manager is created with 0 pooled
-// particles + createParticlesAsNeeded, so the leak is just the effect's peak
-// particle count (~a few thousand per whole library, ~1 MB) — a bounded, one-time
-// cost in exchange for not crashing on arbitrary effects.
+// The manager tears down normally (unique_ptr): the legacy lib's particle
+// ownership double-free at teardown is fixed (idempotent ReleaseParticle in
+// TLFXParticleManager) — see PHASE5.1.md §8. 0 pooled particles +
+// createParticlesAsNeeded keeps it lean.
 sk_sp<SkImage> render_effect_thumbnail(LegacyFxLibrary& lib, const std::string& name) {
     TLFX::Effect* tmpl = lib.GetEffect(name.c_str());
     if (!tmpl) return nullptr;
@@ -34,10 +32,10 @@ sk_sp<SkImage> render_effect_thumbnail(LegacyFxLibrary& lib, const std::string& 
     constexpr int   FRAMES    = 50;
     constexpr float SPIKE_FIT = 768.0f;   // px the spike fits an effect into at camtz=1
 
-    LegacyFxRenderer* pm = new LegacyFxRenderer(0, 1);   // 0 pooled -> lazy alloc; leaked (see above)
+    auto pm = std::make_unique<LegacyFxRenderer>(0, 1);   // 0 pooled -> lazy alloc
     pm->SetScreenSize(PX, PX);
     pm->SetOrigin(0.f, 0.f, PX / SPIKE_FIT);   // camtz scales positions + sizes to fit
-    pm->AddEffect(new TLFX::Effect(*tmpl, pm, true));
+    pm->AddEffect(new TLFX::Effect(*tmpl, pm.get(), true));   // manager owns -> freed on teardown
 
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(PX, PX));
     SkCanvas* canvas = surface->getCanvas();
@@ -57,7 +55,7 @@ sk_sp<SkImage> render_effect_thumbnail(LegacyFxLibrary& lib, const std::string& 
         }
     }
     if (!best) { canvas->clear(SK_ColorBLACK); best = surface->makeImageSnapshot(); }
-    return best;   // pm intentionally not deleted (see note above)
+    return best;
 }
 } // namespace
 
