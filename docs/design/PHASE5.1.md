@@ -3,14 +3,28 @@
 Status: **M0–M3 SHIPPED (2026-06-14) — in polish.** End-to-end works in-app:
 File ▸ Import FX Library (.eff) (or drag-drop) → embedded asset + parsed library
 → FX Library panel picks the active effect → particle brush (Size/Rate sliders,
-drag-stamping) places it → legacy-backed ParticleCanvasComponent renders + loops
-live (honoring Continuous/Finite), host-gated, save format INFPNT000015. Smoke-
-tested: size + clipping + sliders confirmed good. License = **MIT** (vendored
-from `damucz/timelinefx`; courtesy confirm with Peter pending, not a blocker).
-Remaining = polish (see §7). Supersedes the runtime + ingestion
-decisions in PHASE5.md (which targeted the modern `.tfx` runtime); the rest of
-PHASE5.md's intent — atmospheric particles that animate in reader mode — still
-holds.
+Play-on-touch toggle, drag-stamping) places it → legacy-backed
+ParticleCanvasComponent renders + loops live (honoring Continuous/Finite),
+host-gated, save format INFPNT000016 (adds `playMode`). Smoke-tested: size +
+clipping + sliders + save/reopen + parallax + reader-mode waypoint navigation
+confirmed good. License = **MIT** (vendored from `damucz/timelinefx`; courtesy
+confirm with Peter pending, not a blocker). Remaining = polish (see §7).
+Supersedes the runtime + ingestion decisions in PHASE5.md (which targeted the
+modern `.tfx` runtime); the rest of PHASE5.md's intent — atmospheric particles
+that animate in reader mode — still holds.
+
+**Playback-visibility model (2026-06-14 fix).** The AUTO play trigger (Finite
+plays on becoming visible + replays on re-entry; Continuous runs while visible)
+gates on **ground-truth render visibility**, not a camera guess: `draw()` sets a
+`drawnSinceUpdate` flag (it only runs when the container's `should_draw` passed
+for the camera the component is *actually* rendered with — main, parallax-derived,
+or reader), and `update()` reads+resets it next frame. The earlier
+`should_draw(world.drawData)` (main camera) gate mistriggered on parallax layers,
+whose render camera differs — that was the "only the parallax-layer effect plays"
+bug. Screenshot passes are excluded so they can't retrigger playback. Note: the
+reserved **SKETCH** layer is hidden in reader mode (`LayerKind.hpp`), so a particle
+placed there correctly won't play when reading — the particle brush now warns
+(once per stroke) when the editing layer is SKETCH (Color/Ink/custom are fine).
 
 Prereqs: PHASE5 spike work (`deps/timelinefx_legacy`, `tools/tfx_legacy_spike.cpp`
 — faithful Skia render proven), PHASE4 layer system + "live-outside-cache" draw
@@ -136,9 +150,11 @@ Respect the `.eff`'s own `Continuous` vs `Finite` setting
 (`EffectsLibrary::Time`): snow/embers loop forever; explosions play once and
 fade. No extra UI.
 - **Follow-on (reader mode):** *when* does a `Finite` placement fire on
-  playback? Options: on waypoint/panel arrival, on first-view, or immediately at
-  scene load. Resolve with §4.6 (determinism + reader clock). `Continuous`
-  placements just animate whenever their layer is visible.
+  playback? **Resolved:** on becoming visible to the current (rendered) camera —
+  it plays on first view and replays on each re-entry; `Continuous` placements
+  animate whenever their layer is visible. A **Play-on-touch** brush toggle defers
+  the trigger until the placement is tapped. (Deterministic seed / reader-clock
+  binding is still pending — §4.6, §7.3.)
 
 ### 4.3 ✅ DECIDED — Effect icons (`ICONS`)
 Investigate the `.eff` `ICONS` entry (~14 KB, format TBD); use it if it yields
@@ -188,11 +204,12 @@ established convention.
 
 ## 7. Polish backlog (post-M3)
 Ordered roughly by value / risk:
-1. **Save/load round-trip verify** — a placed effect must survive save → reopen
+1. ✅ **Save/load round-trip verify** — placed effects survive save → reopen
    (the component re-resolves its library from the embedded `.eff` resource via
-   `resolve_fx_library`). Correctness check, do first.
-2. **Collab/sync verify** — host-authored placements + the library resource reach
-   read-only viewers; each client re-resolves + simulates locally.
+   `resolve_fx_library`; `get_used_resources` + `remap_resource_ids` keep the
+   asset from being pruned). Verified by zynx.
+2. **Collab/sync verify** (deferred) — host-authored placements + the library
+   resource reach read-only viewers; each client re-resolves + simulates locally.
 3. **Reader-clock binding + deterministic `seed`** (§4.6) — stable, peer-matched
    playback; Finite effects fire on waypoint/panel arrival. (Today: real-dt sim,
    seed stored but unused.)
@@ -201,8 +218,10 @@ Ordered roughly by value / risk:
    entry. (Panel is name-only today.)
 5. **Unclipped live draw** — the square-crop fix is scale-proportional bounds
    (mitigation); render outside the cache for guaranteed no-clip at any size.
-6. **Parallax-depth interplay** (§4.5) — confirm placements inherit their layer's
-   PHASE4 depth and pan correctly.
+6. ✅ **Parallax-depth interplay** (§4.5) — placements inherit their layer's
+   PHASE4 depth and pan correctly; playback triggers off real render visibility
+   so parallax-layer and base-layer effects both play (2026-06-14 fix, see the
+   playback-visibility note up top). Reader-mode waypoint navigation verified.
 7. **Undo grouping** — a drag deposits many components → many undo entries; group
    per stroke.
 8. **Phone UI** — `gui_phone_toolbox` is empty.

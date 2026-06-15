@@ -1,5 +1,8 @@
 #include "ParticleBrushTool.hpp"
 #include "../DrawingProgram.hpp"
+#include "../Layers/DrawingProgramLayerManager.hpp"
+#include "../Layers/DrawingProgramLayerListItem.hpp"
+#include "../Layers/LayerKind.hpp"
 #include "../../MainProgram.hpp"
 #include "../../World.hpp"
 #include "../../InputManager.hpp"
@@ -61,6 +64,7 @@ void ParticleBrushTool::input_mouse_button_on_canvas_callback(const InputManager
     if(button.down) {
         if(!drawP.layerMan.is_a_layer_being_edited()) return;
         if(drawP.world.main.g.gui.cursor_obstructed()) return;
+        warn_if_hidden_layer();        // once per stroke, before the first stamp
         painting = true;
         accum = 0.0f;
         lastCamPos = button.pos;
@@ -72,6 +76,18 @@ void ParticleBrushTool::input_mouse_button_on_canvas_callback(const InputManager
 
 void ParticleBrushTool::input_mouse_motion_callback(const InputManager::MouseMotionCallbackArgs& motion) {
     if(painting) lastCamPos = motion.pos;
+}
+
+void ParticleBrushTool::warn_if_hidden_layer() {
+    // The SKETCH layer is the rough draft surface and is hidden in reader mode
+    // (LayerKind.hpp), so a particle placed there won't play when reading. COLOR,
+    // INK, DEFAULT and custom layers all render, so they're fine. Warn (don't
+    // block) once per stroke so it's clear why the effect would seem to vanish.
+    auto layer = drawP.layerMan.get_editing_layer().lock();
+    if(layer && layer->get_kind() == LayerKind::SKETCH)
+        Logger::get().log("USERINFO",
+            "Heads up: the Sketch layer is hidden in reader mode, so particles placed "
+            "here won't play when reading. Use the Color, Ink, or a custom layer.");
 }
 
 void ParticleBrushTool::stamp(Vector2f camPos) {

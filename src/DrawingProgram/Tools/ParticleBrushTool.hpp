@@ -22,6 +22,7 @@ class ParticleBrushTool : public DrawingProgramToolBase {
 
     private:
         void stamp(Vector2f camPos);   // place the active effect at a cam-space point
+        void warn_if_hidden_layer();   // notify when the editing layer hides particles (e.g. SKETCH in reader mode)
         float brushSize = 3.0f;        // -> placement localScale
         float rate = 3.0f;             // placements per second while held/dragging
         bool playOnTouch = false;      // placements wait for a touch to play

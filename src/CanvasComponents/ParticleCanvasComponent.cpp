@@ -44,6 +44,8 @@ struct ParticleCanvasComponent::Runtime {
     bool started = false;                    // an effect instance has been spawned
     int emptyFrames = 0;                      // consecutive frames with 0 particles
     bool lastVisible = false;                 // for the became-visible edge
+    bool drawnSinceUpdate = false;            // set by draw() (true on-screen, real per-layer camera);
+                                              // read + reset by update() as the visibility signal
     bool loaded = false;                      // lib resolved + pm built + effect exists
 };
 
@@ -81,7 +83,13 @@ void ParticleCanvasComponent::update(DrawingProgram& drawP) {
     ensure_runtime(&drawP);
     if (!rt || !rt->loaded || !rt->pm) return;
 
-    const bool visible = compContainer->should_draw(drawP.world.drawData);
+    // Visibility for the play trigger is the ground truth from draw(): a component
+    // is drawn iff it's on-screen under the camera it's actually rendered with
+    // (main, parallax-derived, or reader). Using should_draw(main) here instead
+    // mistimes the trigger for parallax layers, whose render camera differs.
+    // draw() runs after update(), so this reflects the previous frame (1-frame lag).
+    const bool visible = rt->drawnSinceUpdate;
+    rt->drawnSinceUpdate = false;
     const bool becameVisible = visible && !rt->lastVisible;
     rt->lastVisible = visible;
     const bool done = rt->started && rt->emptyFrames > 15;
@@ -109,8 +117,14 @@ void ParticleCanvasComponent::update(DrawingProgram& drawP) {
     drawP.invalidate_cache_at_component(&(*compContainer->objInfo));
 }
 
-void ParticleCanvasComponent::draw(SkCanvas* canvas, const DrawData&,
+void ParticleCanvasComponent::draw(SkCanvas* canvas, const DrawData& drawData,
                                    const std::shared_ptr<void>&) const {
+    // Reaching draw() means the container's should_draw() passed for the camera
+    // this component is actually rendered with -> the ground-truth visibility the
+    // play trigger reads next update(). Set before the started early-return so a
+    // not-yet-played effect still registers as visible. Skip the screenshot pass
+    // (its own camera must not retrigger playback).
+    if (rt && !drawData.takingScreenshot) rt->drawnSinceUpdate = true;
     if (!rt || !rt->loaded || !rt->pm || !rt->started) return;
     rt->pm->set_canvas(canvas);
     rt->pm->drawn = 0;

@@ -16,3 +16,6 @@ debug-crash.ps1
 scripts/__pycache__/
 
 .env
+
+# Local research/scratch notes — not part of the source tree
+research/
