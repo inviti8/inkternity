@@ -451,7 +451,18 @@ namespace TLFX
                 {
                     _unused.push(*it);
                     --_inUseCount;
-                    (*it)->GetEmitter()->GetParentEffect()->RemoveInUse((*it)->GetLayer(), *it);
+                    // LOCAL FIX (Inkternity): dropped a spurious
+                    //   (*it)->GetEmitter()->GetParentEffect()->RemoveInUse(layer, *it);
+                    // here. These are NON-pool particles (GrabParticle routes pool
+                    // particles to the effect's own _inUse, non-pool to the manager's),
+                    // so they are not in any effect's in-use list to remove. Worse, a
+                    // finite effect that self-deleted mid-update (Update()'s `delete x`,
+                    // with RemoveEffect commented out) leaves its non-pool particles
+                    // here with a dangling GetParentEffect() -> use-after-free on
+                    // teardown (crashed when generating effect thumbnails, and latent
+                    // for any ParticleManager torn down after a finite effect ended).
+                    // Reset() below already nulls the particle's emitter; the effects
+                    // are deleted right after, so the removal was pointless anyway.
                     (*it)->Reset();
                 }
                 plist.clear();

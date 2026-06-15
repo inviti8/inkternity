@@ -1309,13 +1309,37 @@ void Toolbar::fx_library_menu(Element* triggerButton) {
                                         const int64_t rowId = 1000000 + static_cast<int64_t>(li) * 1000000 +
                                             static_cast<int64_t>(std::hash<std::string>{}(eff) & 0x7fffffff);
                                         gui.new_id(rowId, [&] {
-                                            text_button(gui, "fx effect row", eff, TextButtonOptions{
-                                                .isSelected = active,
-                                                .wide = true,
-                                                .centered = false,
-                                                .onClick = [store, li, eff, &gui] {
-                                                    store->setActive(li, eff);
-                                                    gui.set_to_layout();
+                                            // Lazily headless-rendered effect thumbnail (cached in
+                                            // the store). Row = [thumbnail tile][name button].
+                                            sk_sp<SkImage> thumb = store->thumbnail(li, eff);
+                                            gui.element<LayoutElement>("fx row", [&](LayoutElement*, const Clay_ElementId& rId) {
+                                                CLAY(rId, {
+                                                    .layout = {
+                                                        .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0) },
+                                                        .childGap = io.theme->childGap1,
+                                                        .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
+                                                        .layoutDirection = CLAY_LEFT_TO_RIGHT
+                                                    }
+                                                }) {
+                                                    gui.element<LayoutElement>("fx thumb", [&](LayoutElement*, const Clay_ElementId& tId) {
+                                                        CLAY(tId, {
+                                                            .layout = {.sizing = {.width = CLAY_SIZING_FIXED(36), .height = CLAY_SIZING_FIXED(36) } },
+                                                            .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor2),
+                                                            .cornerRadius = CLAY_CORNER_RADIUS(4.0f)
+                                                        }) {
+                                                            if(thumb)
+                                                                gui.element<MemoryImageDisplay>("img", MemoryImageDisplay::Data{ .img = thumb, .radius = 4.0f });
+                                                        }
+                                                    });
+                                                    text_button(gui, "fx effect row", eff, TextButtonOptions{
+                                                        .isSelected = active,
+                                                        .wide = true,
+                                                        .centered = false,
+                                                        .onClick = [store, li, eff, &gui] {
+                                                            store->setActive(li, eff);
+                                                            gui.set_to_layout();
+                                                        }
+                                                    });
                                                 }
                                             });
                                         });

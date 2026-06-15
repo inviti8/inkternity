@@ -10,7 +10,11 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
+
+#include <include/core/SkImage.h>
+#include <include/core/SkRefCnt.h>
 
 #include "Helpers/NetworkingObjects/NetObjID.hpp"
 
@@ -22,6 +26,9 @@ public:
         NetworkingObjects::NetObjID resourceId;     // the embedded .eff asset
         std::string name;                           // .eff filename (display)
         std::unique_ptr<LegacyFxLibrary> lib;       // parsed library
+        // Lazily headless-rendered panel thumbnails, keyed by effect name
+        // (a cached entry may be null = render failed/empty — don't retry).
+        std::unordered_map<std::string, sk_sp<SkImage>> thumbs;
     };
 
     FxLibraryStore();
@@ -34,6 +41,12 @@ public:
 
     const std::vector<Entry>& entries() const { return _entries; }
     bool empty() const { return _entries.empty(); }
+
+    // A small thumbnail of an effect at its peak-population frame (headless
+    // render via the M3 renderer, the proven spike approach). Generated on
+    // first request and cached per (library, effect). Returns null if the
+    // effect is missing or produced nothing.
+    sk_sp<SkImage> thumbnail(int libraryIndex, const std::string& effectName);
 
     // Single active (library, effect) selection — §4.4.
     void setActive(int libraryIndex, const std::string& effectName);
