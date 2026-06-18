@@ -1927,6 +1927,7 @@ void Toolbar::performance_metrics() {
             text_label(gui, lows.str());
             text_label(gui, std::string("Window cache rebuilt: ") + (rs.windowCacheRebuilt ? "YES (F1)" : "no"));
             text_label(gui, std::string("BVH rebuilt this frame: ") + (rs.bvhRebuiltThisFrame ? "YES (heavy)" : "no"));
+            text_label(gui, "Draw calls / tree walks: " + std::to_string(rs.drawCalls) + " / " + std::to_string(rs.treeWalks));
             text_label(gui, "Node blits / direct draws / rebuilds: " + std::to_string(rs.cachedNodeBlits) + " / " + std::to_string(rs.directComponentDraws) + " / " + std::to_string(rs.nodeRebuilds));
             text_label(gui, "saveLayers/frame: " + std::to_string(rs.saveLayersIssued));
             text_label(gui, "Layers visible / in-view: " + std::to_string(rs.visibleLayers) + " / " + std::to_string(rs.visibleLayersInView)

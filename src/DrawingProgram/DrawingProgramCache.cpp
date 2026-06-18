@@ -438,6 +438,7 @@ void DrawingProgramCache::update_and_draw_cached_canvas(SkCanvas* canvas, const 
 }
 
 void DrawingProgramCache::draw_components_to_canvas(SkCanvas* canvas, const DrawData& drawData, const std::optional<SCollision::AABB<WorldScalar>>& drawBounds) {
+    ++RenderStats::get().treeWalks;   // each call = one full layer-tree walk this frame
     if(drawP.layerMan.layer_tree_root_exists()) {
         std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>> cachedNodesToDraw;
         std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>> uncachedNodes;

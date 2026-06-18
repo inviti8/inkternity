@@ -56,6 +56,7 @@ extern "C" {
 #include <cereal/types/string.hpp>
 
 #include "MainProgram.hpp"
+#include "Diagnostics/RenderStats.hpp"
 
 #include <include/codec/SkPngDecoder.h>
 
@@ -921,6 +922,14 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
 
     MainStruct& mS = *((MainStruct*)appstate);
     mS.lastUpdateTimePoint = std::chrono::steady_clock::now();
+
+    // PHASE5.5 M0: reset per-frame render counters at the true frame boundary so
+    // they accumulate across every update/draw call in the frame (see RenderStats).
+    {
+        RenderStats& rs = RenderStats::get();
+        rs.push_frame_ms(std::chrono::duration<float, std::milli>(mS.m->window.lastFrameTime).count());
+        rs.begin_frame();
+    }
 
 #ifdef NDEBUG
     try {

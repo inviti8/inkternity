@@ -643,7 +643,6 @@ void DrawingProgram::modify_grid(const NetworkingObjects::NetObjWeakPtr<WorldGri
 
 void DrawingProgram::update() {
     RenderStats& stats = RenderStats::get();
-    stats.bvhRebuiltThisFrame = false;
     const auto updateStart = std::chrono::steady_clock::now();
 
     selection.update();
@@ -657,7 +656,7 @@ void DrawingProgram::update() {
         rebuild_cache();
     }
 
-    stats.updateMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - updateStart).count();
+    stats.updateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - updateStart).count();
 }
 
 void DrawingProgram::pen_tool_switch_check() {
@@ -1075,8 +1074,7 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
     }
 
     RenderStats& stats = RenderStats::get();
-    stats.begin_frame();
-    stats.push_frame_ms(std::chrono::duration<float, std::milli>(world.main.window.lastFrameTime).count());
+    ++stats.drawCalls;   // counters reset per real frame in SDL_AppIterate; accumulate here
     const auto drawStart = std::chrono::steady_clock::now();
 
     if(layerMan.any_visible_parallax_layer()) {
@@ -1137,7 +1135,7 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
         drawTool->draw(canvas, drawData);
     }
 
-    stats.drawMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
+    stats.drawMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
 }
 
 Vector4f* DrawingProgram::get_foreground_color_ptr() {

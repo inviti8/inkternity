@@ -20,19 +20,22 @@
 // Zero cost when the overlay is off (the increments are a handful of int adds on
 // the draw path; no allocation, no syscalls).
 struct RenderStats {
-    // ---- per-frame counters (reset each frame in begin_frame) ----
+    // ---- per-frame counters (reset once per real frame in begin_frame) ----
+    // begin_frame() is called at the top of SDL_AppIterate (the true frame
+    // boundary), so these accumulate across EVERY DrawingProgram::update/draw
+    // call in the frame — not just the last one. drawCalls/treeWalks expose how
+    // many times the work actually runs per frame.
     bool   windowCacheRebuilt   = false;  // F1: full-window recomposite happened this frame
+    int    drawCalls            = 0;      // DrawingProgram::draw invocations this frame
+    int    treeWalks            = 0;      // full layer-tree walks (draw_components_to_canvas) this frame
     int    cachedNodeBlits      = 0;      // BVH node-cache surfaces blitted (cheap, cached)
     int    directComponentDraws = 0;      // components rasterized directly (uncached/unsorted)
     int    saveLayersIssued     = 0;      // F7.1: layer isolation buffers opened this frame
-    int    visibleLayers        = 0;      // leaf layers with get_visible()==true that were walked
-    int    visibleLayersInView  = 0;      // ...of those, ones that actually had content on screen
+    int    visibleLayers        = 0;      // leaf-layer VISITS (a layer counts once per walk)
+    int    visibleLayersInView  = 0;      // ...of those visits, ones that had content on screen
     int    nodeRebuilds         = 0;      // BVH node-cache surfaces (re)rendered this frame (F2 / cache miss)
-    double drawMs               = 0.0;    // wall time spent in DrawingProgram::draw
-
-    // Set in DrawingProgram::update (runs before draw each frame) — NOT reset in
-    // begin_frame, since that runs in draw() after update() already wrote them.
-    double updateMs             = 0.0;    // wall time in DrawingProgram::update (incl. BVH rebuild)
+    double drawMs               = 0.0;    // total wall time in DrawingProgram::draw this frame
+    double updateMs             = 0.0;    // total wall time in DrawingProgram::update (incl. BVH rebuild)
     bool   bvhRebuiltThisFrame  = false;  // full BVH rebuild_cache() fired this frame (expensive)
 
     // ---- frame-time ring buffer for 1% / 0.1% lows ----
@@ -43,14 +46,17 @@ struct RenderStats {
 
     void begin_frame() {
         windowCacheRebuilt   = false;
+        drawCalls            = 0;
+        treeWalks            = 0;
         cachedNodeBlits      = 0;
         directComponentDraws = 0;
         saveLayersIssued     = 0;
         visibleLayers        = 0;
         visibleLayersInView  = 0;
         nodeRebuilds         = 0;
-        // drawMs is written at the end of the draw; updateMs / bvhRebuiltThisFrame
-        // are owned by update() (which runs before this) and reset there.
+        drawMs               = 0.0;
+        updateMs             = 0.0;
+        bvhRebuiltThisFrame  = false;
     }
 
     void push_frame_ms(float ms) {
