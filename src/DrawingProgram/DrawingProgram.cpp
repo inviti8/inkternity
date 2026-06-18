@@ -643,6 +643,13 @@ void DrawingProgram::modify_grid(const NetworkingObjects::NetObjWeakPtr<WorldGri
 
 void DrawingProgram::update() {
     RenderStats& stats = RenderStats::get();
+    // Reset per-frame counters here: update() runs after the GUI layout pass has
+    // already read last frame's (fully-populated) values, but before this frame's
+    // update/draw repopulate them. Resetting at the true frame top (SDL_AppIterate)
+    // instead made the overlay read freshly-zeroed counters. push the prior frame's
+    // total time for the 1%/0.1% ring before resetting.
+    stats.push_frame_ms(std::chrono::duration<float, std::milli>(world.main.window.lastFrameTime).count());
+    stats.begin_frame();
     const auto updateStart = std::chrono::steady_clock::now();
 
     selection.update();
