@@ -375,22 +375,26 @@ spikes track it. That validates F1 before we invest in anything beyond O1.
 
 ## 7. Sequenced milestones
 
-1. **M0 — Instrument.** Extend `performance_metrics()` (§6). Reproduce both the
-   waypoint stutter and the multi-scene drawing slowdown; confirm F1 dominates
-   transitions and F7 (visible-vs-in-view layer gap) dominates steady-state
-   drawing. *(~0.5 day)*
-2. **M1 — O1 + O5.** Bypass window cache during motion; defer mipmap upgrades
-   to settle. Re-measure. *(highest impact ÷ effort for transitions)*
-3. **M1b — O6.** Per-layer viewport cull + `saveLayer` elision. Self-contained
-   and high-impact for the artist's real multi-scene workflow; can land in
-   parallel with M1 since it touches the layer walk, not the window-cache key.
-   Re-measure the "draw while a big off-screen scene exists" case.
-4. **M2 — O3 / O4.** Only if zoom transitions still stutter after M1.
-5. **M3 — Particle budgeting (O-P1/2/3).** Land before particles go into real
+**Re-sequenced after the B-series (§9) — measurement flipped O6 ahead of O1.**
+
+1. **M0 — Instrument.** ✅ Done. Overlay extended; baseline captured (§9). The
+   B-series refuted the rebuild-loop guess, confirmed F1 as the transient cost,
+   and identified the 216 `saveLayer`s as the GPU killer.
+2. **M1 — O6 (folder-aware) *first*.** `saveLayer` elision for plain layers +
+   folders, and viewport-cull the layer/folder walk. Attacks the dominant GPU
+   cost (the 216 `saveLayer`s) *and* the steady-state off-screen-scene symptom.
+   Re-measure `saveLayers` / `draw ms` / `frame ms` on the transition repro.
+3. **M2 — O1.** Bypass the window-cache offscreen round-trip during motion.
+   Mops up the remaining full-window clear/alloc/blit once O6 has cut the
+   `saveLayer`s.
+4. **M3 — O5.** Defer mipmap upgrades until the camera settles (only if image
+   pop / decode contention is visible after M1–M2).
+5. **M4 — Particle budgeting (O-P1/2/3).** Land before particles go into real
    sequences, so the anticipated F5 hit never reaches the user.
-6. **M4 — O2 / per-layer world-space caches.** Only if M1–M3 leave transitions
-   or steady-state below target. Scoped pan-only, per-layer, with the
-   zoom/rotate caveat documented.
+6. **Demoted / parked:** O3, O4 (node-cache zoom reuse) — the B-series showed
+   direct draws are cheap cached blits, so F2 is not the killer; do these only
+   if a future zoom-heavy case proves otherwise. O2 (world-space window cache)
+   remains the last resort.
 
 ---
 
@@ -414,73 +418,70 @@ All numbers are **before any fix** — captured on `perf/phase5.5-render` with t
 M0 overlay, by zynx, against the real production file. Screenshot of record:
 `docs/design/phase5.5-baseline-transition.png`.
 
-### B1 — Section-to-section transition (the 60→2 fps drop)
+### B-series — full reader-mode progression (rest → motion → rest)
 
-Captured mid-transition (the worst frame), camera jumping from one detailed
-section to the next:
+Four captures across one section-to-section transition in reader mode
+(screenshots `phase5.5-section*.png`). All at item count 1423.
 
-| Metric | Value |
-|---|---|
-| FPS | **2** (~500 ms/frame) |
-| Item count | 1423 |
-| Zoom (inverseScale) | 1,030,221 |
-| **Draw ms** | **240.85** |
-| Frame ms 1% / 0.1% low | ~20 / ~200 |
-| **Window cache rebuilt** | **YES (F1 confirmed)** |
-| Node blits / direct draws | **9 / 216** |
-| saveLayers / frame | 216 |
-| Layers visible / in-view | 12 / 9 (**waste 3**) |
+| Capture | FPS | frame / draw / update / other (ms) | window rebuilt | BVH rebuilt | blits / direct / rebuilds | saveLayers | layers vis/in-view |
+|---|---|---|---|---|---|---|---|
+| `section1_start` (rest) | 60 | 16.8 / **0.2** / 0.0 / 16.5 | no | no | 0 / 0 / 0 | 0 | 0 / 0 |
+| `section1_before` (rest) | 62 | 16.8 / **0.2** / 0.1 / 16.5 | no | no | 0 / 0 / 0 | 0 | 0 / 0 |
+| **`section2_transition`** | **2** | **549 / 259 / 0.0 / 290** | **YES (F1)** | **no** | 9 / 216 / 2 | **216** | 12 / 9 (waste 3) |
+| `section2_settle` (rest) | 59 | 16.9 / **0.2** / 0.1 / 16.7 | no | no | 0 / 0 / 0 | 0 | 0 / 0 |
 
-### What the numbers actually say (revises the §3 ranking for *this* symptom)
+### What the progression proves
 
-1. **~260 ms of the ~500 ms frame is OUTSIDE `DrawingProgram::draw`** (frame
-   ≈500, Draw ms =240). This is the single biggest surprise and was not in the
-   original plan. The cost is in `update()` (BVH `rebuild_cache`,
-   `check_updateable_components`) and/or the GPU flush of the recorded command
-   stream (`flushAndSubmit`/swap, `main.cpp:879`). **O1 and O6 only touch the
-   draw path, so neither can address this half of the frame.** Localizing it is
-   the immediate next step (M0.1 instrumentation, below).
-2. **The draw cost is dominated by cache *bypass*, not the window cache.** Only
-   9 cached node blits vs **216 components rasterized directly** every frame.
-   The new section's content is not being served from node cache during the
-   zoom — this is **F2** (caches dropped/missed during the zoom-in), not F1.
-   F1 *is* confirmed firing (window rebuilt every frame) but is the smaller
-   term here.
-3. **F7 is NOT the transition culprit.** Waste = 3 (only 3 visible layers had
-   nothing on screen). So O6's per-layer cull will do little for transitions —
-   it remains the fix for the *separate* steady-state off-screen-scene symptom
-   (Trigger B), not this one. O6's `saveLayer` elision may still help the 216
-   `saveLayer`s if those layers are plain alpha/normal.
-4. **Open question — the `saveLayers (216)` vs `visibleLayers (12)` gap.** 216
-   `saveLayer`s but only 12 leaf-layer visits implies either deep folder
-   nesting or many `draw_components_to_canvas` walks per frame (one per node
-   rebuild). The M0.1 `node rebuilds/frame` counter disambiguates this.
+1. **The slowdown is 100% transient.** At rest — *both before and after* — the
+   draw is **0.2 ms** with the window cache served as a single blit (window
+   rebuilt = no, all counters 0), 60 fps vsync-capped. Section 2 is *not* a
+   heavier scene; arriving there is fine. The entire cost exists only while the
+   camera is moving. So the target is unambiguously the motion path, and any fix
+   that's free at rest costs us nothing.
+2. **The rebuild-loop hypothesis is dead.** `update = 0.0 ms` and
+   `BVH rebuilt = no` during the worst frame. The earlier B1 guess that ~260 ms
+   lived in `update()`/`rebuild_cache` is **refuted**.
+3. **The ~290 ms "other" is the GPU executing the recomposite**, not a separate
+   mystery cost. The frame splits 259 ms CPU (recording the draw) + 290 ms
+   "other" (GPU `flushAndSubmit` + swap of those commands). Both halves are the
+   *same* work: the full-window recomposite that fires every frame because the
+   window cache is keyed on exact camera pose (**F1 confirmed as the dominant
+   cost** — rest 0.2 ms → motion 259 ms CPU + ~290 ms GPU is entirely the
+   recomposite).
+4. **The GPU killer is the 216 `saveLayer`s.** `saveLayer` is among the most
+   expensive Skia GPU ops (allocate an offscreen render target + blend on
+   restore). 216/frame ≈ the 290 ms "other". By contrast the 216 direct draws
+   are cached-`SkImage` blits (≈one textured quad each) — cheap. So the lever is
+   **eliminating `saveLayer`s, not reducing direct draws.**
+5. **The 216 `saveLayer`s vs 12 visible leaf layers points back at F7 — at the
+   *folder* level.** `recursive_draw_layer_item_to_canvas` opens a `saveLayer`
+   for every visible folder *and* leaf, and it is **not viewport-culled** — it
+   descends through every visible folder in the whole tree regardless of whether
+   that folder's content is on screen. With the sections organized as folders,
+   the off-screen sections' folders each still pay a `saveLayer` during the
+   recomposite. (This is the same mechanism behind the earlier "hiding the old
+   layers fixed it" observation, now showing up during transitions too.) The
+   leaf-only `waste` metric (3) undercounts it because it doesn't count folder
+   `saveLayer`s.
 
-**Revised takeaway:** for the section-transition symptom, the original O1-first
-plan is wrong. The real targets are (a) whatever consumes the ~260 ms outside
-draw, and (b) node-cache reuse across the zoom (F2 / O4), **not** the window
-cache (O1). This is exactly the "results differ from expectations" outcome the
-branch + measurement gate existed to catch.
+### Revised fix order (grounded in the B-series)
 
-### M0.1 — follow-up instrumentation added (this commit)
+- **O6 first, extended to folders.** Cut the 216 `saveLayer`s via (a)
+  `saveLayer` elision for plain (alpha 1.0 + normal-blend) layers **and
+  folders**, and (b) viewport-cull the layer/folder walk so off-screen sections'
+  folders are skipped entirely. This attacks the dominant GPU cost (290 ms) and
+  the bulk of the CPU recording, and it also fixes the separate steady-state
+  symptom (Trigger B). Measure `saveLayers` and `draw ms` drop directly in the
+  existing overlay.
+- **O1 second.** Skip the window-cache offscreen round-trip during motion (draw
+  node caches + in-view layers straight to screen). Removes the remaining
+  full-window clear + alloc + blit. With O6 already cutting the `saveLayer`s,
+  this mops up the recomposite overhead.
+- **O4 (node-cache zoom reuse) demoted.** Direct draws are cheap (cached blits),
+  so F2 is *not* the killer here — O4 is no longer needed for this symptom.
 
-To localize the ~260 ms and the cache-bypass cause before building fixes, the
-overlay now also reports:
-
-- `ms frame/draw/update/other` — splits the frame into draw vs `update()` vs
-  everything else (GPU flush + GUI + swap). Tells us *which* of the three holds
-  the 260 ms.
-- `BVH rebuilt this frame: YES/no` — flags when the heavy
-  `rebuild_cache()` fires (suspected feedback loop: slow frame →
-  `check_rebuild_needed_from_framerate` → rebuild → slow frame).
-- `node rebuilds/frame` — actual node-cache surfaces (re)rendered, to confirm
-  whether the 216 direct draws come from per-frame node rebuilds (F2) and
-  explain the saveLayer count.
-
-**Next reading needed (B2):** repeat the transition and capture
-`ms frame/draw/update/other`, `BVH rebuilt this frame`, and `node rebuilds`.
-That decides whether the first fix targets the rebuild loop, the GPU flush, or
-node-cache zoom reuse.
+No further instrumentation round-trip is needed: O6 and O1 will show up as the
+`saveLayers`, `draw ms`, and `frame ms` numbers dropping on the same repro.
 - **Per-layer union-AABB correctness (O6)** — if the cached layer bounds drift
   out of sync with add/erase/move/flatten/undo, off-screen content could be
   wrongly culled (vanishing strokes). Maintain it incrementally with the same
