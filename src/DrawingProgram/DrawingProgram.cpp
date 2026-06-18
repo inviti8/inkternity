@@ -18,6 +18,8 @@
 #include <include/core/SkSurface.h>
 #include "../World.hpp"
 #include "../MainProgram.hpp"
+#include "../Diagnostics/RenderStats.hpp"
+#include <chrono>
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 #include "../CanvasComponents/Particles/LegacyFxLibrary.hpp"
 #include "../CanvasComponents/Particles/FxLibraryStore.hpp"
@@ -1059,9 +1061,17 @@ void DrawingProgram::get_used_resources(std::unordered_set<NetworkingObjects::Ne
 }
 
 void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
-    if(drawData.takingScreenshot)
-        layerMan.draw(canvas, drawData);
-    else if(layerMan.any_visible_parallax_layer()) {
+    if(drawData.takingScreenshot) {
+        layerMan.draw(canvas, drawData);   // screenshots/exports are not real frames; skip stats
+        return;
+    }
+
+    RenderStats& stats = RenderStats::get();
+    stats.begin_frame();
+    stats.push_frame_ms(std::chrono::duration<float, std::milli>(world.main.window.lastFrameTime).count());
+    const auto drawStart = std::chrono::steady_clock::now();
+
+    if(layerMan.any_visible_parallax_layer()) {
         // PHASE4 Part A M2: parallax bypass. The window/BVH caches bake
         // cross-layer composites under ONE camera; with per-layer derived
         // cameras those composites are wrong, so while any visible layer
@@ -1118,6 +1128,8 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
         selection.draw_gui(canvas, drawData);
         drawTool->draw(canvas, drawData);
     }
+
+    stats.drawMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
 }
 
 Vector4f* DrawingProgram::get_foreground_color_ptr() {

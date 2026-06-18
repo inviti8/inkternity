@@ -2,6 +2,7 @@
 #include "DrawingProgram.hpp"
 #include "../World.hpp"
 #include "../MainProgram.hpp"
+#include "../Diagnostics/RenderStats.hpp"
 #include "Helpers/Parallel.hpp"
 #include "Layers/DrawingProgramLayerManager.hpp"
 
@@ -407,6 +408,7 @@ void DrawingProgramCache::update_window_cache_invalid_bounds(const DrawData& dra
 }
 
 void DrawingProgramCache::window_cache_complete_refresh(const DrawData& drawData) {
+    RenderStats::get().windowCacheRebuilt = true;   // F1 signal: full-window recomposite this frame
     SkCanvas* cacheCanvas = windowCache.surface->getCanvas();
     cacheCanvas->save();
     cacheCanvas->clear(SkColor4f{0, 0, 0, 0});
@@ -469,6 +471,7 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
         layerPaint.setAlphaf(layerListItem.get_alpha());
         layerPaint.setBlendMode(serialized_blend_mode_to_sk_blend_mode(layerListItem.get_blend_mode()));
         canvas->saveLayer(nullptr, &layerPaint);
+        ++RenderStats::get().saveLayersIssued;   // F7.1 signal: isolation buffer opened per visible layer
         if(layerListItem.is_folder()) {
             for(auto& p : *layerListItem.get_folder().folderList | std::views::reverse)
                 recursive_draw_layer_item_to_canvas(*p.obj, canvas, drawData, drawBounds, nodesToDraw);
@@ -502,6 +505,13 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
             std::sort(compsToDraw.begin(), compsToDraw.end(), [](auto& a, auto& b) {
                 return a->pos < b->pos;
             });
+            // F7 signal: a visible leaf layer with nothing on screen still paid a
+            // saveLayer above (visibleLayers - visibleLayersInView == wasted buffers).
+            RenderStats& stats = RenderStats::get();
+            ++stats.visibleLayers;
+            if(!compsToDraw.empty())
+                ++stats.visibleLayersInView;
+            stats.directComponentDraws += static_cast<int>(compsToDraw.size());
             for(auto& c : compsToDraw)
                 c->obj->draw_with_predraw_data(canvas, drawData, c->obj->preDrawDataHolder.value());
         }
@@ -513,6 +523,7 @@ void DrawingProgramCache::draw_cache_image_to_canvas(SkCanvas* canvas, const Dra
     auto it = nodeCacheMap.find(bvhNode);
     if(it != nodeCacheMap.end()) {
         auto& nodeCache = it->second;
+        ++RenderStats::get().cachedNodeBlits;
         canvas->save();
         bvhNode->coords.transform_sk_canvas(canvas, drawData);
         nodeCache.lastRenderTime = std::chrono::steady_clock::now();
