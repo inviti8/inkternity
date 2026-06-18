@@ -489,3 +489,70 @@ No further instrumentation round-trip is needed: O6 and O1 will show up as the
 - **`saveLayer` elision (O6)** must test alpha *and* blend (and any future
   layer-level effect); never drop an isolation buffer that's load-bearing, or
   blend modes render wrong.
+
+---
+
+## 10. B-series CORRECTION — trustworthy capture (M0.6) overturns §9
+
+⚠️ **The §9 numbers above (216 `saveLayer`s, ~16 tree walks, F7-at-folder)
+were instrumentation artifacts**, from counters that reset mid-frame and were
+read by the GUI before the draw populated them (fixed in M0.3–M0.5:
+double-buffered counters, published once per real frame). The retest with
+trustworthy counters gives a *different* root cause. Treat §10 as authoritative;
+§9 is kept only as a record of the wrong turn.
+
+### Trustworthy transition capture (production file, worst frame)
+
+| metric | value | reading |
+|---|---|---|
+| FPS | 2 (~558 ms) | |
+| frame / draw / update | 558 / **247** / **0** | cost is in the draw, not update |
+| mainDraw / flush / **swap** | 200 / **300** / 0.09 | ~247 ms CPU record + **~300 ms GPU**; not vsync-bound |
+| gui / focus (cam/reader/rMan) | ~0 / ~0 (~0/~0/~0) | **not** image loading, GUI, or reader-mode |
+| **saveLayers** | **14** | normal (≈ layer count); no explosion |
+| tree walks / rebuilds | **1 / 0** | one walk, no rebuild thrash |
+| node blits / **direct draws** | 9 / **216** | only 9 from cache; 216 rasterized directly |
+| **unsorted / node caches** | **0 / 25** | everything IS in the BVH; 25 caches exist |
+| layers visible / in-view | 12 / 9 (waste 3) | F7 negligible here |
+
+### Actual root cause
+
+Rest (same zoom) is 0.2 ms — the window cache blits in one call. The transition
+is a **huge pan** (coord ≈ −4.9e9 → 1.3e10 at ~constant zoom ~1e6), and every
+motion frame invalidates the window cache (**F1**), forcing a full recomposite.
+That recomposite **re-rasterizes 216 components directly every frame**
+(~247 ms CPU + ~300 ms GPU); only 9 are served from node cache.
+
+Why 216 draw directly despite being in the BVH (0 unsorted): the cache gates in
+`refresh_all_draw_cache` (`:282`) and the blit path (`:453`) both require
+`node->coords.inverseScale <= cam.c.inverseScale` — a node is only built/blitted
+if it is **at least as fine as the current view**. Components that straddle BVH
+split centers are stored in **coarse upper nodes** (`build_bvh_node` `:245`);
+those nodes are coarser than the view during the pan, so they are **never cached
+and always direct-drawn** (`uncachedNodes`, `:460`). A detailed file with long
+strokes spanning regions produces many such straddling components → ~216 visible
+during the sweep. At rest the window cache hides this (one composite); in motion
+it re-renders them every frame.
+
+### Corrected fix direction (supersedes §9 / §7)
+
+- **O6 is OFF the table for transitions** — `saveLayer`s are normal (14). (O6
+  may still help the *separate* steady-state Trigger B; unproven, deprioritized.)
+- **Primary candidates, to decide with measurement:**
+  1. **Scrolling/reprojected window cache during motion (O2-lite).** Keep the
+     last window-cache composite and translate-blit it during a pan, rendering
+     only the newly-revealed edge; full crisp rebuild on settle. Directly kills
+     "re-rasterize the whole view every frame" regardless of which nodes are
+     cached. Caveat: a *fast* pan reveals a large edge per frame (less savings);
+     zoom needs scale-blit (transient blur) + rebuild on settle.
+  2. **Cache the coarse straddling-node content** (relax the
+     `inverseScale <= cam` build gate, cap resolution) so the 216 become
+     blittable. Caveat: blitting a coarse cache when zoomed in is blurry — likely
+     acceptable *during motion only*, crisp rebuild at rest.
+- **O1 alone is insufficient** — it removes the offscreen round-trip but keeps
+  the 216 direct draws (the ~300 ms GPU), so it can't fix this on its own.
+
+**Lesson logged:** trust counters only after the read/write ordering is proven;
+the double-buffer (M0.5) is what made these numbers believable. Three hypotheses
+(rebuild loop, `saveLayer`/folder explosion, unsorted components) were each
+killed by a capture — the measurement gate did its job.
