@@ -1940,6 +1940,7 @@ void Toolbar::performance_metrics() {
             text_label(gui, "Draw calls / tree walks: " + std::to_string(rs.drawCalls) + " / " + std::to_string(rs.treeWalks));
             text_label(gui, "Node blits / direct draws / rebuilds: " + std::to_string(rs.cachedNodeBlits) + " / " + std::to_string(rs.directComponentDraws) + " / " + std::to_string(rs.nodeRebuilds));
             text_label(gui, "saveLayers/frame: " + std::to_string(rs.saveLayersIssued));
+            text_label(gui, "Unsorted (not in BVH) / node caches: " + std::to_string(rs.unsortedCount) + " / " + std::to_string(rs.nodeCacheCount));
             text_label(gui, "Layers visible / in-view: " + std::to_string(rs.visibleLayers) + " / " + std::to_string(rs.visibleLayersInView)
                             + " (waste " + std::to_string(rs.visibleLayers - rs.visibleLayersInView) + ")");
         }

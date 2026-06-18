@@ -32,6 +32,8 @@ struct RenderStats {
         int    visibleLayers        = 0;      // leaf-layer VISITS (a layer counts once per walk)
         int    visibleLayersInView  = 0;      // ...of those visits, ones that had content on screen
         int    nodeRebuilds         = 0;      // BVH node-cache surfaces (re)rendered this frame (F2 / cache miss)
+        int    unsortedCount        = 0;      // components in unsortedComponents (NOT in BVH -> always direct-drawn)
+        int    nodeCacheCount       = 0;      // node-cache surfaces currently allocated (BVH coverage)
         double drawMs               = 0.0;    // total wall time in DrawingProgram::draw this frame
         double updateMs             = 0.0;    // total wall time in DrawingProgram::update (incl. BVH rebuild)
         bool   bvhRebuiltThisFrame  = false;  // full BVH rebuild_cache() fired this frame (expensive)

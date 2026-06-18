@@ -421,6 +421,8 @@ void DrawingProgramCache::window_cache_complete_refresh(const DrawData& drawData
 }
 
 void DrawingProgramCache::update_and_draw_cached_canvas(SkCanvas* canvas, const DrawData& drawData) {
+    RenderStats::get().live.unsortedCount = static_cast<int>(unsortedComponents.size());
+    RenderStats::get().live.nodeCacheCount = static_cast<int>(nodeCacheMap.size());
     if(windowCache.surface == nullptr) {
         allocate_window_cache_area();
         refresh_all_draw_cache(drawData);
