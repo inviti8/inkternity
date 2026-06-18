@@ -38,6 +38,14 @@ struct RenderStats {
     double updateMs             = 0.0;    // total wall time in DrawingProgram::update (incl. BVH rebuild)
     bool   bvhRebuiltThisFrame  = false;  // full BVH rebuild_cache() fired this frame (expensive)
 
+    // Top-level frame phases (set in main.cpp regular_draw) — localize cost when
+    // DrawingProgram's own timers read ~0. mainDraw = CPU command recording for
+    // the whole window (world + GUI); flush = GPU flushAndSubmit; swap = present
+    // (blocks on vsync / GPU backlog).
+    double mainDrawMs           = 0.0;
+    double flushMs              = 0.0;
+    double swapMs               = 0.0;
+
     // ---- frame-time ring buffer for 1% / 0.1% lows ----
     static constexpr size_t kRingSize = 240;  // ~2-4s of history
     std::array<float, kRingSize> frameMs{};
@@ -57,6 +65,9 @@ struct RenderStats {
         drawMs               = 0.0;
         updateMs             = 0.0;
         bvhRebuiltThisFrame  = false;
+        mainDrawMs           = 0.0;
+        flushMs              = 0.0;
+        swapMs               = 0.0;
     }
 
     void push_frame_ms(float ms) {

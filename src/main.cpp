@@ -56,6 +56,7 @@ extern "C" {
 #include <cereal/types/string.hpp>
 
 #include "MainProgram.hpp"
+#include "Diagnostics/RenderStats.hpp"
 
 #include <include/codec/SkPngDecoder.h>
 
@@ -879,35 +880,58 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 void regular_draw(MainStruct& mS) {
     mS.lastRenderTimePoint = std::chrono::steady_clock::now();
 
+    // PHASE5.5 M0: top-level frame-phase timing (mainDraw=CPU recording,
+    // flush=GPU flushAndSubmit, swap=present/vsync). Localizes cost when the
+    // DrawingProgram timers read ~0.
+    RenderStats& rs = RenderStats::get();
+    auto phaseClock = std::chrono::steady_clock::now();
+    auto markPhase = [&phaseClock]() {
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - phaseClock).count();
+        phaseClock = now;
+        return ms;
+    };
+
     if(mS.m->window.intermediateSurfaceMSAA) {
         SkCanvas* intermediateCanvas = mS.m->window.intermediateSurfaceMSAA->getCanvas();
         intermediateCanvas->save();
         intermediateCanvas->translate(mS.m->input.screenOffset.x(), mS.m->input.screenOffset.y());
         mS.m->draw(intermediateCanvas);
         intermediateCanvas->restore();
+        rs.mainDrawMs = markPhase();
 
         #ifdef USE_BACKEND_VULKAN
             mS.vulkanWindowContext->getBackbufferSurface()->getCanvas()->drawImage(mS.m->window.intermediateSurfaceMSAA->makeTemporaryImage(), 0, 0);
             mS.ctx->flushAndSubmit();
+            rs.flushMs = markPhase();
             mS.vulkanWindowContext->swapBuffers();
+            rs.swapMs = markPhase();
         #elif USE_BACKEND_OPENGL
             mS.canvas->drawImage(mS.m->window.intermediateSurfaceMSAA->makeTemporaryImage(), 0, 0);
             mS.ctx->flushAndSubmit();
+            rs.flushMs = markPhase();
             SDL_GL_SwapWindow(mS.window);
+            rs.swapMs = markPhase();
         #endif
     }
     else {
         #ifdef USE_BACKEND_VULKAN
             mS.m->draw(mS.vulkanWindowContext->getBackbufferSurface()->getCanvas());
+            rs.mainDrawMs = markPhase();
             mS.ctx->flushAndSubmit();
+            rs.flushMs = markPhase();
             mS.vulkanWindowContext->swapBuffers();
+            rs.swapMs = markPhase();
         #elif USE_BACKEND_OPENGL
             mS.canvas->save();
             mS.canvas->translate(mS.m->input.screenOffset.x(), mS.m->input.screenOffset.y());
             mS.m->draw(mS.canvas);
             mS.canvas->restore();
+            rs.mainDrawMs = markPhase();
             mS.ctx->flushAndSubmit();
+            rs.flushMs = markPhase();
             SDL_GL_SwapWindow(mS.window);
+            rs.swapMs = markPhase();
         #endif
     }
 }

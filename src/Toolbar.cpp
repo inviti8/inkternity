@@ -1921,6 +1921,10 @@ void Toolbar::performance_metrics() {
             tm << "ms frame/draw/update/other: " << std::fixed << std::setprecision(1)
                << frameMs << " / " << rs.drawMs << " / " << rs.updateMs << " / " << otherMs;
             text_label(gui, tm.str());
+            std::stringstream ph;
+            ph << "ms mainDraw/flush/swap: " << std::setprecision(1)
+               << rs.mainDrawMs << " / " << rs.flushMs << " / " << rs.swapMs;
+            text_label(gui, ph.str());
             std::stringstream lows;
             lows << "Frame ms 1%/0.1% low: " << std::setprecision(1)
                  << rs.percentile_high(0.99f) << " / " << rs.percentile_high(0.999f);
