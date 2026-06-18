@@ -643,13 +643,6 @@ void DrawingProgram::modify_grid(const NetworkingObjects::NetObjWeakPtr<WorldGri
 
 void DrawingProgram::update() {
     RenderStats& stats = RenderStats::get();
-    // Reset per-frame counters here: update() runs after the GUI layout pass has
-    // already read last frame's (fully-populated) values, but before this frame's
-    // update/draw repopulate them. Resetting at the true frame top (SDL_AppIterate)
-    // instead made the overlay read freshly-zeroed counters. push the prior frame's
-    // total time for the 1%/0.1% ring before resetting.
-    stats.push_frame_ms(std::chrono::duration<float, std::milli>(world.main.window.lastFrameTime).count());
-    stats.begin_frame();
     const auto updateStart = std::chrono::steady_clock::now();
 
     selection.update();
@@ -659,11 +652,11 @@ void DrawingProgram::update() {
     check_updateable_components();
 
     if(drawCache.check_rebuild_needed_from_framerate() || drawCache.should_rebuild()) {
-        stats.bvhRebuiltThisFrame = true;
+        stats.live.bvhRebuiltThisFrame = true;
         rebuild_cache();
     }
 
-    stats.updateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - updateStart).count();
+    stats.live.updateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - updateStart).count();
 }
 
 void DrawingProgram::pen_tool_switch_check() {
@@ -1081,7 +1074,7 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
     }
 
     RenderStats& stats = RenderStats::get();
-    ++stats.drawCalls;   // counters reset per real frame in SDL_AppIterate; accumulate here
+    ++stats.live.drawCalls;   // counters reset per real frame in SDL_AppIterate; accumulate here
     const auto drawStart = std::chrono::steady_clock::now();
 
     if(layerMan.any_visible_parallax_layer()) {
@@ -1142,7 +1135,7 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
         drawTool->draw(canvas, drawData);
     }
 
-    stats.drawMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
+    stats.live.drawMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
 }
 
 Vector4f* DrawingProgram::get_foreground_color_ptr() {

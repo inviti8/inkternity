@@ -1,4 +1,6 @@
 #include "MainProgram.hpp"
+#include "Diagnostics/RenderStats.hpp"
+#include <chrono>
 #include "C2PA/Verifier.hpp"
 #include "CustomEvents.hpp"
 #include "VersionConstants.hpp"
@@ -71,7 +73,9 @@ void MainProgram::update() {
     deltaTime.update_time_since();
     deltaTime.update_time_point();
     input.update();
+    const auto guiStart = std::chrono::steady_clock::now();
     g.update();
+    RenderStats::get().live.guiUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - guiStart).count();
     screen->update();
     for(auto& w : worlds)
         w->update();

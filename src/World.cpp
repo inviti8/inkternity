@@ -1,4 +1,6 @@
 #include "World.hpp"
+#include "Diagnostics/RenderStats.hpp"
+#include <chrono>
 // C2PA/PublishHook.hpp removed — .inkternity sidecar signing not supported
 #include <Helpers/CanvasShareId.hpp>
 #include <Helpers/HsvRgb.hpp>
@@ -218,6 +220,9 @@ void World::init_client(const std::string& serverFullID, const std::string& subs
 }
 
 void World::focus_update() {
+    RenderStats::Frame& rs = RenderStats::get().live;   // PHASE5.5 M0 phase timing
+    const auto focusStart = std::chrono::steady_clock::now();
+
     if(!clientStillConnecting) {
         delayedUpdateObjectManager.update(netObjMan);
         constexpr float SECONDS_TO_SEND_CAMERA_DATA = 0.5f;
@@ -234,15 +239,24 @@ void World::focus_update() {
         #endif
     }
 
+    const auto camStart = std::chrono::steady_clock::now();
     drawData.cam.update_main(*this);
+    rs.camUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - camStart).count();
+
     // TRANSITIONS.md T7 — drives the auto-advance state machine
     // for transition points. No-op when reader mode isn't active or
     // we aren't on a transition. Placed after the camera tick so the
     // local arrival-timer and the actual camera move use the same
     // deltaTime in the same frame ordering.
+    const auto readerStart = std::chrono::steady_clock::now();
     readerMode.update(main.deltaTime);
+    rs.readerUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readerStart).count();
 
+    const auto rManStart = std::chrono::steady_clock::now();
     rMan.update();
+    rs.rManUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - rManStart).count();
+
+    rs.focusUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - focusStart).count();
 }
 
 bool World::connection_update() {

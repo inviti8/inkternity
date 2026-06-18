@@ -898,40 +898,40 @@ void regular_draw(MainStruct& mS) {
         intermediateCanvas->translate(mS.m->input.screenOffset.x(), mS.m->input.screenOffset.y());
         mS.m->draw(intermediateCanvas);
         intermediateCanvas->restore();
-        rs.mainDrawMs = markPhase();
+        rs.live.mainDrawMs = markPhase();
 
         #ifdef USE_BACKEND_VULKAN
             mS.vulkanWindowContext->getBackbufferSurface()->getCanvas()->drawImage(mS.m->window.intermediateSurfaceMSAA->makeTemporaryImage(), 0, 0);
             mS.ctx->flushAndSubmit();
-            rs.flushMs = markPhase();
+            rs.live.flushMs = markPhase();
             mS.vulkanWindowContext->swapBuffers();
-            rs.swapMs = markPhase();
+            rs.live.swapMs = markPhase();
         #elif USE_BACKEND_OPENGL
             mS.canvas->drawImage(mS.m->window.intermediateSurfaceMSAA->makeTemporaryImage(), 0, 0);
             mS.ctx->flushAndSubmit();
-            rs.flushMs = markPhase();
+            rs.live.flushMs = markPhase();
             SDL_GL_SwapWindow(mS.window);
-            rs.swapMs = markPhase();
+            rs.live.swapMs = markPhase();
         #endif
     }
     else {
         #ifdef USE_BACKEND_VULKAN
             mS.m->draw(mS.vulkanWindowContext->getBackbufferSurface()->getCanvas());
-            rs.mainDrawMs = markPhase();
+            rs.live.mainDrawMs = markPhase();
             mS.ctx->flushAndSubmit();
-            rs.flushMs = markPhase();
+            rs.live.flushMs = markPhase();
             mS.vulkanWindowContext->swapBuffers();
-            rs.swapMs = markPhase();
+            rs.live.swapMs = markPhase();
         #elif USE_BACKEND_OPENGL
             mS.canvas->save();
             mS.canvas->translate(mS.m->input.screenOffset.x(), mS.m->input.screenOffset.y());
             mS.m->draw(mS.canvas);
             mS.canvas->restore();
-            rs.mainDrawMs = markPhase();
+            rs.live.mainDrawMs = markPhase();
             mS.ctx->flushAndSubmit();
-            rs.flushMs = markPhase();
+            rs.live.flushMs = markPhase();
             SDL_GL_SwapWindow(mS.window);
-            rs.swapMs = markPhase();
+            rs.live.swapMs = markPhase();
         #endif
     }
 }
@@ -945,6 +945,15 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
 
     MainStruct& mS = *((MainStruct*)appstate);
     mS.lastUpdateTimePoint = std::chrono::steady_clock::now();
+
+    // PHASE5.5 M0: publish the finished frame's counters and start a fresh one at
+    // the true frame boundary. Safe here because the overlay reads `shown`, not
+    // `live` (double-buffered) — reset placement no longer races the GUI read.
+    {
+        RenderStats& rs = RenderStats::get();
+        rs.push_frame_ms(std::chrono::duration<float, std::milli>(mS.m->window.lastFrameTime).count());
+        rs.begin_frame();
+    }
 
 #ifdef NDEBUG
     try {

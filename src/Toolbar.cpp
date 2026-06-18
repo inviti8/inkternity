@@ -1914,7 +1914,8 @@ void Toolbar::performance_metrics() {
             text_label(gui, d.str());
 
             // PHASE5.5 M0 render-perf counters (see docs/design/PHASE5.5.md).
-            const RenderStats& rs = RenderStats::get();
+            // Read the published (last-completed-frame) snapshot, never `live`.
+            const RenderStats::Frame& rs = RenderStats::get().shown;
             const double frameMs = main.deltaTime * 1000.0;
             const double otherMs = frameMs - rs.drawMs - rs.updateMs;   // GPU flush + GUI + input + swap
             std::stringstream tm;
@@ -1925,9 +1926,14 @@ void Toolbar::performance_metrics() {
             ph << "ms mainDraw/flush/swap: " << std::setprecision(1)
                << rs.mainDrawMs << " / " << rs.flushMs << " / " << rs.swapMs;
             text_label(gui, ph.str());
+            std::stringstream up;
+            up << "ms gui/focus(cam/reader/rMan): " << std::setprecision(1)
+               << rs.guiUpdateMs << " / " << rs.focusUpdateMs
+               << " (" << rs.camUpdateMs << "/" << rs.readerUpdateMs << "/" << rs.rManUpdateMs << ")";
+            text_label(gui, up.str());
             std::stringstream lows;
             lows << "Frame ms 1%/0.1% low: " << std::setprecision(1)
-                 << rs.percentile_high(0.99f) << " / " << rs.percentile_high(0.999f);
+                 << RenderStats::get().percentile_high(0.99f) << " / " << RenderStats::get().percentile_high(0.999f);
             text_label(gui, lows.str());
             text_label(gui, std::string("Window cache rebuilt: ") + (rs.windowCacheRebuilt ? "YES (F1)" : "no"));
             text_label(gui, std::string("BVH rebuilt this frame: ") + (rs.bvhRebuiltThisFrame ? "YES (heavy)" : "no"));
