@@ -27,7 +27,13 @@ struct RenderStats {
     int    saveLayersIssued     = 0;      // F7.1: layer isolation buffers opened this frame
     int    visibleLayers        = 0;      // leaf layers with get_visible()==true that were walked
     int    visibleLayersInView  = 0;      // ...of those, ones that actually had content on screen
+    int    nodeRebuilds         = 0;      // BVH node-cache surfaces (re)rendered this frame (F2 / cache miss)
     double drawMs               = 0.0;    // wall time spent in DrawingProgram::draw
+
+    // Set in DrawingProgram::update (runs before draw each frame) — NOT reset in
+    // begin_frame, since that runs in draw() after update() already wrote them.
+    double updateMs             = 0.0;    // wall time in DrawingProgram::update (incl. BVH rebuild)
+    bool   bvhRebuiltThisFrame  = false;  // full BVH rebuild_cache() fired this frame (expensive)
 
     // ---- frame-time ring buffer for 1% / 0.1% lows ----
     static constexpr size_t kRingSize = 240;  // ~2-4s of history
@@ -42,7 +48,9 @@ struct RenderStats {
         saveLayersIssued     = 0;
         visibleLayers        = 0;
         visibleLayersInView  = 0;
-        // drawMs is written at the end of the draw
+        nodeRebuilds         = 0;
+        // drawMs is written at the end of the draw; updateMs / bvhRebuiltThisFrame
+        // are owned by update() (which runs before this) and reset there.
     }
 
     void push_frame_ms(float ms) {

@@ -1915,15 +1915,19 @@ void Toolbar::performance_metrics() {
 
             // PHASE5.5 M0 render-perf counters (see docs/design/PHASE5.5.md).
             const RenderStats& rs = RenderStats::get();
-            std::stringstream dm;
-            dm << "Draw ms: " << std::fixed << std::setprecision(2) << rs.drawMs;
-            text_label(gui, dm.str());
+            const double frameMs = main.deltaTime * 1000.0;
+            const double otherMs = frameMs - rs.drawMs - rs.updateMs;   // GPU flush + GUI + input + swap
+            std::stringstream tm;
+            tm << "ms frame/draw/update/other: " << std::fixed << std::setprecision(1)
+               << frameMs << " / " << rs.drawMs << " / " << rs.updateMs << " / " << otherMs;
+            text_label(gui, tm.str());
             std::stringstream lows;
             lows << "Frame ms 1%/0.1% low: " << std::setprecision(1)
                  << rs.percentile_high(0.99f) << " / " << rs.percentile_high(0.999f);
             text_label(gui, lows.str());
             text_label(gui, std::string("Window cache rebuilt: ") + (rs.windowCacheRebuilt ? "YES (F1)" : "no"));
-            text_label(gui, "Node blits / direct draws: " + std::to_string(rs.cachedNodeBlits) + " / " + std::to_string(rs.directComponentDraws));
+            text_label(gui, std::string("BVH rebuilt this frame: ") + (rs.bvhRebuiltThisFrame ? "YES (heavy)" : "no"));
+            text_label(gui, "Node blits / direct draws / rebuilds: " + std::to_string(rs.cachedNodeBlits) + " / " + std::to_string(rs.directComponentDraws) + " / " + std::to_string(rs.nodeRebuilds));
             text_label(gui, "saveLayers/frame: " + std::to_string(rs.saveLayersIssued));
             text_label(gui, "Layers visible / in-view: " + std::to_string(rs.visibleLayers) + " / " + std::to_string(rs.visibleLayersInView)
                             + " (waste " + std::to_string(rs.visibleLayers - rs.visibleLayersInView) + ")");

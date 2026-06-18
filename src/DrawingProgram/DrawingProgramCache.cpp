@@ -322,6 +322,8 @@ void DrawingProgramCache::refresh_draw_cache(const std::shared_ptr<DrawingProgra
     else
         nodeCache.surface = drawP.world.main.create_native_surface(bvhNode->resolution, true);
 
+    ++RenderStats::get().nodeRebuilds;   // actual node-cache (re)render this frame (F2 / cache miss)
+
     SkCanvas* cacheCanvas = nodeCache.surface->getCanvas();
 
     DrawData cacheDrawData = drawData;

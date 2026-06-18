@@ -642,14 +642,22 @@ void DrawingProgram::modify_grid(const NetworkingObjects::NetObjWeakPtr<WorldGri
 }
 
 void DrawingProgram::update() {
+    RenderStats& stats = RenderStats::get();
+    stats.bvhRebuiltThisFrame = false;
+    const auto updateStart = std::chrono::steady_clock::now();
+
     selection.update();
     drawTool->tool_update();
 
     update_downloading_dropped_files();
     check_updateable_components();
 
-    if(drawCache.check_rebuild_needed_from_framerate() || drawCache.should_rebuild())
+    if(drawCache.check_rebuild_needed_from_framerate() || drawCache.should_rebuild()) {
+        stats.bvhRebuiltThisFrame = true;
         rebuild_cache();
+    }
+
+    stats.updateMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - updateStart).count();
 }
 
 void DrawingProgram::pen_tool_switch_check() {
