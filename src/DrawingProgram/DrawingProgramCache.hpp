@@ -21,6 +21,13 @@ class DrawingProgramCache {
         static size_t CACHE_NODE_RESOLUTION;
         static size_t MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH;
         static size_t MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH;
+        // PHASE5.5: while the camera is moving, relax the node-cache gate by this
+        // many powers of two so coarse upper BVH nodes (which hold "straddler"
+        // components) become cacheable+blittable instead of re-rasterized every
+        // frame. Blitting a coarse cache upscales (blurry) by up to 2^shift, which
+        // is acceptable in motion; the at-rest frame rebuilds crisp at shift 0.
+        // 0 disables (original behavior). Tunable live in Settings -> Debug.
+        static size_t MOTION_CACHE_COARSEN_SHIFT;
 
         DrawingProgramCache(DrawingProgram& initDrawP);
         void add_component(CanvasComponentContainer::ObjInfo* c);
@@ -64,6 +71,11 @@ class DrawingProgramCache {
         };
         static WindowCache windowCache;
 
+        // Effective node-cache gate scale: a node is cacheable/blittable when its
+        // coords.inverseScale <= this. Equals the camera scale at rest; coarsened
+        // by MOTION_CACHE_COARSEN_SHIFT while the camera is moving.
+        WorldScalar cache_gate_scale(const DrawData& drawData) const;
+
         void refresh_all_draw_cache(const DrawData& drawData);
         void update_window_cache_invalid_bounds(const DrawData& drawData);
         void window_cache_complete_refresh(const DrawData& drawData);
@@ -77,6 +89,12 @@ class DrawingProgramCache {
 
         std::optional<std::chrono::steady_clock::time_point> badFrametimeTimePoint;
         std::optional<std::chrono::steady_clock::time_point> unorderedObjectsExistTimePoint;
+
+        // PHASE5.5 motion tracking for the coarse-node-cache relaxation.
+        CoordSpaceHelper lastWindowCamCoords;
+        bool haveLastWindowCamCoords = false;
+        bool wasMovingLastFrame = false;
+        bool cameraMovingThisFrame = false;
 
         std::shared_ptr<DrawingProgramCacheBVHNode> bvhRoot;
         std::vector<CanvasComponentContainer::ObjInfo*> unsortedComponents;

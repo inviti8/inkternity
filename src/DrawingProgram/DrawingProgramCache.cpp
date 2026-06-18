@@ -64,6 +64,7 @@ size_t DrawingProgramCache::MAXIMUM_COMPONENTS_IN_SINGLE_NODE = 50;
 size_t DrawingProgramCache::CACHE_NODE_RESOLUTION = 2048;
 size_t DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH = 33; // Around 30FPS
 size_t DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH = 5000; // Should be a bit long to prevent objects that are being updated, like brush strokes, from constantly refreshing the cache.
+size_t DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT = 3; // PHASE5.5: coarse-node cache relaxation during camera motion (0 = off)
 
 std::unordered_map<std::shared_ptr<DrawingProgramCacheBVHNode>, DrawingProgramCache::NodeCache> DrawingProgramCache::nodeCacheMap;
 DrawingProgramCache::WindowCache DrawingProgramCache::windowCache;
@@ -279,8 +280,9 @@ void DrawingProgramCache::build_bvh_node_coords_and_resolution(DrawingProgramCac
 }
 
 void DrawingProgramCache::refresh_all_draw_cache(const DrawData& drawData) {
+    const WorldScalar gateScale = cache_gate_scale(drawData);
     traverse_bvh_run_function(drawData.cam.viewingAreaGenerousCollider, [&](std::shared_ptr<DrawingProgramCacheBVHNode> node) {
-        if(node && node->coords.inverseScale <= drawData.cam.c.inverseScale) {
+        if(node && node->coords.inverseScale <= gateScale) {
             refresh_draw_cache(node, drawData);
             return false;
         }
@@ -420,15 +422,32 @@ void DrawingProgramCache::window_cache_complete_refresh(const DrawData& drawData
     windowCache.coords = drawData.cam.c;
 }
 
+WorldScalar DrawingProgramCache::cache_gate_scale(const DrawData& drawData) const {
+    if(cameraMovingThisFrame && MOTION_CACHE_COARSEN_SHIFT > 0)
+        return drawData.cam.c.inverseScale << MOTION_CACHE_COARSEN_SHIFT;
+    return drawData.cam.c.inverseScale;
+}
+
 void DrawingProgramCache::update_and_draw_cached_canvas(SkCanvas* canvas, const DrawData& drawData) {
     RenderStats::get().live.unsortedCount = static_cast<int>(unsortedComponents.size());
     RenderStats::get().live.nodeCacheCount = static_cast<int>(nodeCacheMap.size());
+
+    // PHASE5.5: is the camera moving this frame? Drives the coarse-node cache
+    // relaxation (cheap blurry blits in motion) and the crisp rebuild on settle.
+    cameraMovingThisFrame = !haveLastWindowCamCoords || drawData.cam.c != lastWindowCamCoords;
+    const bool justSettled = !cameraMovingThisFrame && wasMovingLastFrame;
+    lastWindowCamCoords = drawData.cam.c;
+    haveLastWindowCamCoords = true;
+    wasMovingLastFrame = cameraMovingThisFrame;
+
     if(windowCache.surface == nullptr) {
         allocate_window_cache_area();
         refresh_all_draw_cache(drawData);
         window_cache_complete_refresh(drawData);
     }
-    else if(windowCache.attachedDrawingProgramCache != this || drawData.cam.c != windowCache.coords) {
+    // justSettled forces one crisp rebuild even though the camera pose now matches
+    // the (motion-built, blurry) window cache, replacing it with a sharp one.
+    else if(windowCache.attachedDrawingProgramCache != this || drawData.cam.c != windowCache.coords || justSettled) {
         refresh_all_draw_cache(drawData);
         window_cache_complete_refresh(drawData);
     }
@@ -445,12 +464,13 @@ void DrawingProgramCache::draw_components_to_canvas(SkCanvas* canvas, const Draw
         std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>> cachedNodesToDraw;
         std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>> uncachedNodes;
 
+        const WorldScalar gateScale = cache_gate_scale(drawData);
         traverse_bvh_run_function(drawData.cam.viewingAreaGenerousCollider, [&](const std::shared_ptr<DrawingProgramCacheBVHNode>& node) {
             if(node) {
                 auto it = nodeCacheMap.find(node);
                 if(it != nodeCacheMap.end()) {
                     auto& nodeCache = it->second;
-                    if(!nodeCache.invalidBounds.has_value() && node->coords.inverseScale <= drawData.cam.c.inverseScale) {
+                    if(!nodeCache.invalidBounds.has_value() && node->coords.inverseScale <= gateScale) {
                         cachedNodesToDraw.emplace_back(node);
                         return false;
                     }
