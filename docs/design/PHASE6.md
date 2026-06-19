@@ -2,9 +2,18 @@
 
 ## Status
 
-**Design / scoping, pre-implementation.** Requested by zynx for blocking in
-architectural, mechanical, and environmental elements in the graphic novel.
-Two additions to the existing shape tools:
+**SHIPPED.** Implemented across M1–M4 (M5 = docs + merge): rectangle Polygon
+mode (toggle, draggable corners, Add Point via selecting two adjacent vertices,
+stylus-friendly box-select of vertices) and ellipse shear/skew (affine
+center+axis-tips, convert-on-edit). Save format bumped to INFPNT000018 / 0.17.0
+with append-and-gate serialization — pre-PHASE6 files load unchanged
+(backward-compat is a hard requirement, see §"Backward compatibility"). A true
+pixel-transparency *mask* selection was scoped here and deferred: the app's
+selection is object-based with no mask consumers, so masking is its own future
+phase (a clipping-mask layer is the recommended approach).
+
+Original scope (Requested by zynx for blocking in architectural, mechanical, and
+environmental elements in the graphic novel) — two additions to the shape tools:
 
 1. **Rectangle → Polygon mode** — a toggle on the rect tool. On, the shape is a
    polygon that starts as the dragged rect's 4 corners; every corner is a

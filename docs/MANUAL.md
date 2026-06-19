@@ -47,10 +47,13 @@
     - Hold <kbd>LMB</kbd> and drag the mouse to place an ellipse
     - Hold <kbd>Shift</kbd> while creating the ellipse to create a circle
     - You can change the properties of the ellipse between "Fill Only", "Outline Only", and "Fill and Outline". Outlines will use the main/top color on the left toolbar, which is the same as the one used for the brush tool. Fills will use the secondary/bottom color on the left toolbar
+    - **Shear / skew**: double-click an ellipse with the Edit tool to edit it. Two handles appear at the ends of its horizontal and vertical radii — drag them to rotate, resize, and **skew** the ellipse (tilt the axes so they're no longer perpendicular). Useful for circles in perspective (wheels, arches, cylinders). To move the whole ellipse, exit edit and drag it with a selection tool
 - Rectangle tool
     - Hold <kbd>LMB</kbd> and drag the mouse to place a rectangle
     - Hold <kbd>Shift</kbd> while creating the rectangle to create a square
     - You can change the properties of the rectangle between "Fill Only", "Outline Only", and "Fill and Outline". Outlines will use the main/top color on the left toolbar, which is the same as the one used for the brush tool. Fills will use the secondary/bottom color on the left toolbar
+    - **Polygon mode**: toggle **Polygon mode** in the tool options to draw an editable polygon instead of a rectangle. It starts as a 4-corner quad; double-click it with the Edit tool and drag any corner (cyan handle) to make arbitrary quads/triangles — great for blocking in architectural, mechanical, and environmental shapes (corners can go concave). Polygon mode ignores corner radius
+    - **Add Point** (polygon): while editing a polygon, select **two adjacent vertices** (click them, or drag a box around them — they turn yellow), then press **Add Point** in the edit panel to insert a new vertex at the midpoint of that edge. Repeat to grow the polygon into any N-gon. Dragging on empty space while editing box-selects vertices (stylus-friendly); a single click on empty space exits editing
 - Rectangle Select Tool
     - Hold <kbd>LMB</kbd> and drag the mouse to select objects within a rectangle
     - Once <kbd>LMB</kbd> is released, the objects will be selected

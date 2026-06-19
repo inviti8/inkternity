@@ -59,13 +59,14 @@ Files saved by Inkternity use the `.inkternity` extension; existing `.infpnt` fi
 - Hide UI with Tab; remappable keybinds; custom UI themes
 - Square grids on the canvas as drawing guides
 - Rich-text textboxes (bold, italics, underline, fonts, color, alignment, direction)
-- Other tools: rectangle, ellipse, line, eye-dropper, edit cursor
+- Shape tools: rectangle (with **editable Polygon mode** — draggable corners + Add Point to grow N-gons, for architectural/mechanical blocking), ellipse (**shearable/skewable** for circles in perspective), line
+- Other tools: eye-dropper, edit cursor
 - Copy/paste between canvases and tabs
 - Drop arbitrary files onto the canvas
 
 ## Installation
 
-Inkternity is under active development. Phase 1 (waypoint graph, reader mode, tree view), Phase 2 (transitions + per-waypoint timing), Phase 3 (brush customization, saved-preset library, artist avatars), Phase 4 (parallax layers + generalized flatten), and Phase 5 (TimelineFX particle effects) have all landed; release-candidate installers are produced from each tagged build. Build from source via [BUILDING.md](docs/BUILDING.md).
+Inkternity is under active development. Phase 1 (waypoint graph, reader mode, tree view), Phase 2 (transitions + per-waypoint timing), Phase 3 (brush customization, saved-preset library, artist avatars), Phase 4 (parallax layers + generalized flatten), Phase 5 (TimelineFX particle effects), Phase 5.5 (render-performance pass for large multi-section projects), and Phase 6 (editable polygons + shearable ellipses) have all landed; release-candidate installers are produced from each tagged build. Build from source via [BUILDING.md](docs/BUILDING.md).
 
 ## Contribution
 
