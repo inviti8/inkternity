@@ -16,6 +16,9 @@ class RectangleCanvasComponent : public CanvasComponent {
         virtual CanvasComponentType get_type() const override;
         std::unique_ptr<CanvasComponent> get_data_copy() const override;
         virtual void set_data_from(const CanvasComponent& other) override;
+        virtual bool is_mask() const override { return d.isMask; }
+        virtual bool is_mask_inverted() const override { return d.maskInvert; }
+        virtual std::optional<SkPath> get_mask_path() const override;
 
         // User input data
         struct Data {
@@ -33,6 +36,11 @@ class RectangleCanvasComponent : public CanvasComponent {
             // load with polygonMode=false and are unchanged.
             bool polygonMode = false;
             std::vector<Vector2f> points;
+            // PHASE7: when isMask is true this shape is a clip mask for its layer
+            // (not drawn as artwork); maskInvert clips to the exterior instead of
+            // the interior. Old files default both false (normal shape).
+            bool isMask = false;
+            bool maskInvert = false;
             bool operator==(const Data& o) const = default;
         } d;
 

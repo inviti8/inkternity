@@ -24,6 +24,7 @@ VersionNumber header_to_version_number(const std::string& header) {
         m["INFPNT000016"] = VersionNumber(0, 15, 0); // PHASE5.1 polish: PARTICLE gains playMode (AUTO / on-touch)
         m["INFPNT000017"] = VersionNumber(0, 16, 0); // PHASE6: RECTANGLE gains polygonMode + points (editable polygons)
         m["INFPNT000018"] = VersionNumber(0, 17, 0); // PHASE6: ELLIPSE gains affineMode + center/tipA/tipB (shear/skew)
+        m["INFPNT000019"] = VersionNumber(0, 18, 0); // PHASE7: RECTANGLE/ELLIPSE gain isMask + maskInvert (shape masks)
     }
     auto it = m.find(header);
     if(it == m.end())

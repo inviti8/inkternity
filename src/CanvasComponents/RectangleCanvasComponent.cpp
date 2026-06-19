@@ -79,16 +79,16 @@ CanvasComponentType RectangleCanvasComponent::get_type() const {
 }
 
 void RectangleCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const {
-    // Wire payload — peers run the same build, so the PHASE6 fields are always present.
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points);
+    // Wire payload — peers run the same build, so all appended fields are present.
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert);
 }
 
 void RectangleCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points);
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert);
 }
 
 void RectangleCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points);
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert);
 }
 
 void RectangleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
@@ -97,6 +97,14 @@ void RectangleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, 
     // have none — they keep polygonMode=false (default) and load unchanged.
     if(version >= VersionNumber(0, 16, 0))
         a(d.polygonMode, d.points);
+    // PHASE7 (INFPNT000019 / 0.18.0): mask flags appended.
+    if(version >= VersionNumber(0, 18, 0))
+        a(d.isMask, d.maskInvert);
+}
+
+std::optional<SkPath> RectangleCanvasComponent::get_mask_path() const {
+    if(!d.isMask) return std::nullopt;
+    return rectPath;   // built in create_draw_data (component-local space)
 }
 
 void RectangleCanvasComponent::change_stroke_color(const Vector4f& newStrokeColor) {
