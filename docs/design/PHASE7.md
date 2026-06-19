@@ -2,8 +2,17 @@
 
 ## Status
 
-**Design / scoping, pre-implementation.** Grew out of the PHASE6 "Select
-Transparency" request. After scoping, the chosen model is a **shape mask**: a
+**SHIPPED.** Implemented M1–M5: data + serialization (INFPNT000019 / 0.18.0,
+append-and-gate, old files unchanged); per-layer mask clip in the compositor
+(union of non-inverted minus inverted); whole-layer cache invalidation on mask
+edits; Use-as-mask / Invert toggles + red-dashed overlay (active-layer only);
+Flatten collapses the mask into the raster. Post-merge fix: the direct draw path
+(screenshots / SVG export / parallax) now applies the clip too, not just the
+cached compositor. Bezier-curve polygon nodes (a natural extension) are scoped
+separately as PHASE8.
+
+Original design (kept below). Grew out of the PHASE6 "Select Transparency"
+request. The chosen model is a **shape mask**: a
 drawn shape (rect / ellipse / polygon) flagged as a *mask* clips the rest of its
 layer's content to the shape's interior — or, with **Invert**, to its exterior.
 This is the **Inkscape "Clip" paradigm** (a shape defines the clip region), as
