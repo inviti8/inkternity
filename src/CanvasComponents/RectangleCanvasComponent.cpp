@@ -5,8 +5,74 @@
 #include <include/core/SkPaint.h>
 #include <include/core/SkPathBuilder.h>
 #include <cereal/types/vector.hpp>
+#include <algorithm>
+#include <array>
 #include "../SharedTypes.hpp"
 #include "../DrawCollision.hpp"
+
+namespace {
+// PHASE6 M2: ear-clipping triangulation for the polygon fill collider. Handles
+// concave polygons (the M1 fan was only correct for the convex quad). O(n^2),
+// fine for the small vertex counts shapes have. Assumes a simple (non-self-
+// intersecting) polygon; on a degenerate/self-intersecting input it bails early
+// with a partial fan, which only softens hit-testing — it never crashes.
+float poly_signed_area(const std::vector<Vector2f>& p) {
+    float area = 0.0f;
+    const size_t n = p.size();
+    for(size_t i = 0; i < n; ++i) {
+        const Vector2f& c = p[i];
+        const Vector2f& d = p[(i + 1) % n];
+        area += c.x() * d.y() - d.x() * c.y();
+    }
+    return area * 0.5f;
+}
+float tri_cross(const Vector2f& a, const Vector2f& b, const Vector2f& c) {
+    return (b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x());
+}
+bool point_in_tri(const Vector2f& p, const Vector2f& a, const Vector2f& b, const Vector2f& c) {
+    const float d1 = tri_cross(a, b, p);
+    const float d2 = tri_cross(b, c, p);
+    const float d3 = tri_cross(c, a, p);
+    const bool hasNeg = (d1 < 0.0f) || (d2 < 0.0f) || (d3 < 0.0f);
+    const bool hasPos = (d1 > 0.0f) || (d2 > 0.0f) || (d3 > 0.0f);
+    return !(hasNeg && hasPos);
+}
+std::vector<std::array<Vector2f, 3>> triangulate_polygon(std::vector<Vector2f> poly) {
+    std::vector<std::array<Vector2f, 3>> tris;
+    if(poly.size() < 3) return tris;
+    if(poly_signed_area(poly) < 0.0f) std::reverse(poly.begin(), poly.end());   // make CCW
+    std::vector<size_t> idx(poly.size());
+    for(size_t i = 0; i < poly.size(); ++i) idx[i] = i;
+    size_t guard = 0;
+    const size_t maxGuard = poly.size() * poly.size() + 10;
+    while(idx.size() > 3 && guard++ < maxGuard) {
+        bool clipped = false;
+        const size_t n = idx.size();
+        for(size_t i = 0; i < n; ++i) {
+            const size_t pa = idx[(i + n - 1) % n], pb = idx[i], pc = idx[(i + 1) % n];
+            const Vector2f& a = poly[pa];
+            const Vector2f& b = poly[pb];
+            const Vector2f& c = poly[pc];
+            if(tri_cross(a, b, c) <= 0.0f) continue;   // reflex vertex (CCW) — not an ear
+            bool anyInside = false;
+            for(size_t j = 0; j < n && !anyInside; ++j) {
+                const size_t vj = idx[j];
+                if(vj == pa || vj == pb || vj == pc) continue;
+                if(point_in_tri(poly[vj], a, b, c)) anyInside = true;
+            }
+            if(anyInside) continue;
+            tris.push_back({a, b, c});
+            idx.erase(idx.begin() + static_cast<long>(i));
+            clipped = true;
+            break;
+        }
+        if(!clipped) break;   // degenerate — stop with what we have
+    }
+    if(idx.size() == 3)
+        tris.push_back({poly[idx[0]], poly[idx[1]], poly[idx[2]]});
+    return tris;
+}
+}
 
 CanvasComponentType RectangleCanvasComponent::get_type() const {
     return CanvasComponentType::RECTANGLE;
@@ -106,16 +172,15 @@ void RectangleCanvasComponent::create_collider() {
     using namespace SCollision;
     ColliderCollection<float> strokeObjects;
     if(d.polygonMode && d.points.size() >= 3) {
-        // PHASE6: outline -> closed polyline; fill (and fill+outline) -> fan
-        // triangulation. Fan is correct for the convex quad M1 produces;
-        // concave polygons (from M2/M3 vertex editing) need ear-clipping —
-        // tracked for M2.
+        // PHASE6: outline -> closed polyline; fill (and fill+outline) ->
+        // ear-clipping triangulation (concave-correct, since M2 vertex editing
+        // can make the polygon concave).
         if(d.fillStrokeMode == 1) {
             generate_polyline(strokeObjects, d.points, d.strokeWidth, true);
         }
         else {
-            for(size_t i = 1; i + 1 < d.points.size(); ++i)
-                strokeObjects.triangle.emplace_back(d.points[0], d.points[i], d.points[i + 1]);
+            for(const auto& t : triangulate_polygon(d.points))
+                strokeObjects.triangle.emplace_back(t[0], t[1], t[2]);
         }
         collisionTree.clear();
         collisionTree.calculate_bvh_recursive(strokeObjects);

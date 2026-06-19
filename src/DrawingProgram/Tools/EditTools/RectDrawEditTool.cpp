@@ -25,8 +25,9 @@ void RectDrawEditTool::edit_gui(Toolbar& t) {
 
     auto& gui = drawP.world.main.g.gui;
     gui.new_id("edit tool rectangle", [&] {
-        text_label_centered(gui, "Edit Rectangle");
-        slider_scalar_field(gui, "relradiuswidth", "Corner Radius", &a.d.cornerRadius, 0.0f, 40.0f, { .onEdit = commit_update_func });
+        text_label_centered(gui, a.d.polygonMode ? "Edit Polygon" : "Edit Rectangle");
+        if(!a.d.polygonMode)   // corner radius doesn't apply to polygons
+            slider_scalar_field(gui, "relradiuswidth", "Corner Radius", &a.d.cornerRadius, 0.0f, 40.0f, { .onEdit = commit_update_func });
         radio_button_selector(gui, "Fill selector", &a.d.fillStrokeMode, {
             {"Fill only", 0},
             {"Outline only", 1},
@@ -51,8 +52,17 @@ void RectDrawEditTool::edit_gui(Toolbar& t) {
 void RectDrawEditTool::edit_start(EditTool& editTool, std::any& prevData) {
     auto& a = static_cast<RectangleCanvasComponent&>(comp->obj->get_comp());
     prevData = a.d;
-    editTool.add_point_handle({&a.d.p1, nullptr, &a.d.p2});
-    editTool.add_point_handle({&a.d.p2, &a.d.p1, nullptr});
+    if(a.d.polygonMode) {
+        // PHASE6 M2: one free-moving handle per polygon vertex. Handles hold
+        // pointers into a.d.points; the vector is not resized during a drag
+        // session, so the pointers stay valid (M3's Add/Delete re-enters edit).
+        for(auto& pt : a.d.points)
+            editTool.add_point_handle({&pt, nullptr, nullptr});
+    }
+    else {
+        editTool.add_point_handle({&a.d.p1, nullptr, &a.d.p2});
+        editTool.add_point_handle({&a.d.p2, &a.d.p1, nullptr});
+    }
 }
 
 void RectDrawEditTool::commit_edit_updates(std::any& prevData) {
