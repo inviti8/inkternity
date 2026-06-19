@@ -59,7 +59,7 @@ Files saved by Inkternity use the `.inkternity` extension; existing `.infpnt` fi
 - Hide UI with Tab; remappable keybinds; custom UI themes
 - Square grids on the canvas as drawing guides
 - Rich-text textboxes (bold, italics, underline, fonts, color, alignment, direction)
-- Shape tools: rectangle (with **editable Polygon mode** — draggable corners + Add Point to grow N-gons, for architectural/mechanical blocking), ellipse (**shearable/skewable** for circles in perspective), line
+- Shape tools: rectangle (with **editable Polygon mode** — draggable corners, Add Point to grow N-gons, and **selective bezier curves** per node with smooth/cusp tangents), ellipse (**shearable/skewable** for circles in perspective), line
 - **Shape masks** — flag any shape (rect / polygon / ellipse) as a mask to clip a layer's content to it (or invert to knock holes); ideal for comic panels. Composes (union / donut), shows red-dashed on the active layer only, and bakes into the image on Flatten
 - Other tools: eye-dropper, edit cursor
 - Copy/paste between canvases and tabs
@@ -67,7 +67,7 @@ Files saved by Inkternity use the `.inkternity` extension; existing `.infpnt` fi
 
 ## Installation
 
-Inkternity is under active development. Phase 1 (waypoint graph, reader mode, tree view), Phase 2 (transitions + per-waypoint timing), Phase 3 (brush customization, saved-preset library, artist avatars), Phase 4 (parallax layers + generalized flatten), Phase 5 (TimelineFX particle effects), Phase 5.5 (render-performance pass for large multi-section projects), Phase 6 (editable polygons + shearable ellipses), and Phase 7 (shape masks) have all landed; release-candidate installers are produced from each tagged build. Build from source via [BUILDING.md](docs/BUILDING.md).
+Inkternity is under active development. Phase 1 (waypoint graph, reader mode, tree view), Phase 2 (transitions + per-waypoint timing), Phase 3 (brush customization, saved-preset library, artist avatars), Phase 4 (parallax layers + generalized flatten), Phase 5 (TimelineFX particle effects), Phase 5.5 (render-performance pass for large multi-section projects), Phase 6 (editable polygons + shearable ellipses), Phase 7 (shape masks), and Phase 8 (selective bezier curves on polygon nodes) have all landed; release-candidate installers are produced from each tagged build. Build from source via [BUILDING.md](docs/BUILDING.md).
 
 ## Contribution
 

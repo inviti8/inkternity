@@ -36,6 +36,15 @@ class RectangleCanvasComponent : public CanvasComponent {
             // load with polygonMode=false and are unchanged.
             bool polygonMode = false;
             std::vector<Vector2f> points;
+            // PHASE8: optional per-node bezier tangents (parallel to `points`,
+            // or empty == every node is a straight corner). controlIn/Out are
+            // offsets from the node; an edge A->B is a cubic when A.controlOut or
+            // B.controlIn is non-zero, else a straight line. nodeType: 0 corner,
+            // 1 smooth (mirrored tangents), 2 cusp (independent). Old polygons
+            // load with these empty -> identical straight-edge rendering.
+            std::vector<Vector2f> controlIn;
+            std::vector<Vector2f> controlOut;
+            std::vector<uint8_t> nodeType;
             // PHASE7: when isMask is true this shape is a clip mask for its layer
             // (not drawn as artwork); maskInvert clips to the exterior instead of
             // the interior. Old files default both false (normal shape).
@@ -50,6 +59,10 @@ class RectangleCanvasComponent : public CanvasComponent {
         virtual bool collides_within_coords(const SCollision::ColliderCollection<float>& checkAgainst) const override;
         void create_draw_data();
         void create_collider();
+        // PHASE8: sample the (possibly curved) polygon outline into a closed
+        // polyline for the collider. Straight edges contribute just their
+        // endpoints; curved edges insert interior samples.
+        std::vector<Vector2f> flatten_polygon_outline() const;
         virtual SCollision::AABB<float> get_obj_coord_bounds() const override;
 
         SkPath rectPath;

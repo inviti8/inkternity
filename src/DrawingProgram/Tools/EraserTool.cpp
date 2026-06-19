@@ -115,6 +115,11 @@ void EraserTool::erase_between_points(const Vector2f& start, const Vector2f& end
         // remain the explicit way to delete a waypoint.
         if (container.get_comp().get_type() == CanvasComponentType::WAYPOINT)
             return false;
+        // PHASE8: mask shapes are protected from the eraser. The eraser is meant
+        // to be used *inside* a masked area, so consuming the mask itself would
+        // be surprising. Delete a mask via the Edit/Select tools instead.
+        if (container.get_comp().is_mask())
+            return false;
 #ifdef HVYM_HAS_LIBMYPAINT
         if (container.get_comp().get_type() == CanvasComponentType::MYPAINTLAYER) {
             auto& layer = static_cast<MyPaintLayerCanvasComponent&>(container.get_comp());

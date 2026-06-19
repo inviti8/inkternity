@@ -11,6 +11,7 @@ class RectDrawEditTool : public DrawingProgramEditToolBase {
         RectDrawEditTool(DrawingProgram& initDrawP, CanvasComponentContainer::ObjInfo* initComp);
         virtual void edit_start(EditTool& editTool, std::any& prevData) override;
         virtual void register_handles(EditTool& editTool) override;
+        virtual bool wants_handle_refresh_on_drag() const override;   // PHASE8: tangent coordMatrices track nodes
         virtual void commit_edit_updates(std::any& prevData) override;
         virtual bool edit_update() override;
         virtual void edit_gui(Toolbar& t) override;

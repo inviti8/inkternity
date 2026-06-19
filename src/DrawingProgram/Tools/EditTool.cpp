@@ -177,10 +177,15 @@ void EditTool::input_mouse_button_on_canvas_callback(const InputManager::MouseBu
             // selection (used by polygon Add Point); a drag just moved the vertex.
             if(pointDragging && !pointDragMoved && pressedHandleIndex < pointHandles.size())
                 toggle_handle_selection(pressedHandleIndex);
+            // PHASE8: after dragging a node, bezier tangent handles' coordMatrix
+            // (which translates by the node) is stale — re-register to snap them.
+            const bool didDragHandle = pointDragging && pointDragMoved;
             if(objInfoBeingEdited)
                 compEditTool->input_mouse_button_on_canvas_callback(button, pointDragging);
             if(pointDragging)
                 pointDragging = nullptr;
+            if(didDragHandle && objInfoBeingEdited && compEditTool->wants_handle_refresh_on_drag())
+                refresh_point_handles(true);
         }
     }
 }
@@ -201,6 +206,10 @@ void EditTool::input_mouse_motion_callback(const InputManager::MouseMotionCallba
                 if(pointDragging->max)
                     newPos = cwise_vec_min((*pointDragging->max - Vector2f{pointDragging->minimumDistanceBetweenMaxAndPoint, pointDragging->minimumDistanceBetweenMaxAndPoint}).eval(), newPos);
                 *pointDragging->p = newPos;
+                // PHASE8: smooth node — mirror the opposite tangent (offsets, so
+                // negate). newPos is the dragged tangent's offset from its node.
+                if(pointDragging->mirror)
+                    *pointDragging->mirror = Vector2f{-newPos.x(), -newPos.y()};
                 objInfoBeingEdited->obj->commit_update(drawP);
             }
         }
@@ -295,12 +304,19 @@ void EditTool::select_handles_in_screen_rect(const Vector2f& a, const Vector2f& 
     }
 }
 
-void EditTool::refresh_point_handles() {
+void EditTool::refresh_point_handles(bool keepSelection) {
+    std::vector<size_t> savedSelection;
+    if(keepSelection)
+        savedSelection = selectedHandles;
     pointHandles.clear();
     selectedHandles.clear();
     pointDragging = nullptr;
     if(objInfoBeingEdited && compEditTool)
         compEditTool->register_handles(*this);
+    if(keepSelection)   // valid only if the handle set is the same size/order
+        for(size_t i : savedSelection)
+            if(i < pointHandles.size())
+                selectedHandles.push_back(i);
 }
 
 void EditTool::toggle_handle_selection(size_t handleIndex) {
@@ -369,10 +385,24 @@ void EditTool::draw(SkCanvas* canvas, const DrawData& drawData) {
     if(objInfoBeingEdited) {
         for(size_t hi = 0; hi < pointHandles.size(); ++hi) {
             HandleData& h = pointHandles[hi];
-            // PHASE6: selected vertices render yellow, the rest cyan.
             const bool selected = std::find(selectedHandles.begin(), selectedHandles.end(), hi) != selectedHandles.end();
-            const SkColor4f color = selected ? SkColor4f{0.95f, 0.85f, 0.1f, 1.0f} : SkColor4f{0.1f, 0.9f, 0.9f, 1.0f};
-            drawP.draw_drag_circle(canvas, drawData.cam.c.to_space((objInfoBeingEdited->obj->coords.from_space(h.coordMatrix * *h.p))), color, drawData);
+            const Vector2f tip = drawData.cam.c.to_space(objInfoBeingEdited->obj->coords.from_space(h.coordMatrix * *h.p));
+            // PHASE8: a tangent handle draws an "arm" from its node + a green dot.
+            if(h.armAnchor) {
+                const Vector2f anchor = drawData.cam.c.to_space(objInfoBeingEdited->obj->coords.from_space(*h.armAnchor));
+                SkPaint arm;
+                arm.setAntiAlias(true);
+                arm.setColor4f(SkColor4f{0.2f, 0.8f, 0.4f, 0.8f});
+                arm.setStrokeWidth(1.0f);
+                canvas->drawLine(anchor.x(), anchor.y(), tip.x(), tip.y(), arm);
+                const SkColor4f color = selected ? SkColor4f{0.95f, 0.85f, 0.1f, 1.0f} : SkColor4f{0.2f, 0.8f, 0.4f, 1.0f};
+                drawP.draw_drag_circle(canvas, tip, color, drawData);
+            }
+            else {
+                // PHASE6: selected vertices render yellow, the rest cyan.
+                const SkColor4f color = selected ? SkColor4f{0.95f, 0.85f, 0.1f, 1.0f} : SkColor4f{0.1f, 0.9f, 0.9f, 1.0f};
+                drawP.draw_drag_circle(canvas, tip, color, drawData);
+            }
         }
         // PHASE6: vertex marquee (screen space, like the edit handles above).
         if(marqueeActive) {
