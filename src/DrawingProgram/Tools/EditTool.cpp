@@ -6,6 +6,7 @@
 #include "Helpers/SCollision.hpp"
 #include "../../SharedTypes.hpp"
 #include <cereal/types/vector.hpp>
+#include <algorithm>
 #include <memory>
 
 #include "EditTools/TextBoxEditTool.hpp"
@@ -132,10 +133,16 @@ void EditTool::input_mouse_button_on_canvas_callback(const InputManager::MouseBu
                         clickedAway = true;
                 }
 
-                for(HandleData& h : pointHandles) {
+                for(size_t hi = 0; hi < pointHandles.size(); ++hi) {
+                    HandleData& h = pointHandles[hi];
                     if(SCollision::collide(mouseCircle, SCollision::Circle<float>(drawP.world.drawData.cam.c.to_space(objInfoBeingEdited->obj->coords.from_space(h.coordMatrix * (*h.p))), drawP.drag_point_radius()))) {
                         pointDragging = &h;
                         isMovingPoint = true;
+                        // PHASE6: remember which handle was pressed + where, to tell
+                        // a click (toggle selection) from a drag (move vertex) on release.
+                        pressedHandleIndex = hi;
+                        pointDownScreenPos = button.pos;
+                        pointDragMoved = false;
                         break;
                     }
                 }
@@ -150,6 +157,10 @@ void EditTool::input_mouse_button_on_canvas_callback(const InputManager::MouseBu
             }
         }
         else {
+            // PHASE6: a press+release on a handle without dragging toggles its
+            // selection (used by polygon Add Point); a drag just moved the vertex.
+            if(pointDragging && !pointDragMoved && pressedHandleIndex < pointHandles.size())
+                toggle_handle_selection(pressedHandleIndex);
             if(objInfoBeingEdited)
                 compEditTool->input_mouse_button_on_canvas_callback(button, pointDragging);
             if(pointDragging)
@@ -161,6 +172,10 @@ void EditTool::input_mouse_button_on_canvas_callback(const InputManager::MouseBu
 void EditTool::input_mouse_motion_callback(const InputManager::MouseMotionCallbackArgs& motion) {
     if(objInfoBeingEdited) {
         if(drawP.controls.leftClickHeld && pointDragging) {
+            // PHASE6: past a few screen px of movement this is a drag, not a click.
+            constexpr float CLICK_VS_DRAG_PX = 4.0f;
+            if((motion.pos - pointDownScreenPos).norm() > CLICK_VS_DRAG_PX)
+                pointDragMoved = true;
             Vector2f newPos = pointDragging->coordMatrix.inverse() * objInfoBeingEdited->obj->coords.get_mouse_pos(drawP.world);
             if(newPos != *pointDragging->p) {
                 if(pointDragging->min)
@@ -242,9 +257,26 @@ void EditTool::switch_tool(DrawingProgramToolType newTool) {
     }
     pointHandles.clear();
     pointDragging = nullptr;
+    selectedHandles.clear();
 
     if(!drawP.is_selection_allowing_tool(newTool))
         drawP.selection.deselect_all();
+}
+
+void EditTool::refresh_point_handles() {
+    pointHandles.clear();
+    selectedHandles.clear();
+    pointDragging = nullptr;
+    if(objInfoBeingEdited && compEditTool)
+        compEditTool->register_handles(*this);
+}
+
+void EditTool::toggle_handle_selection(size_t handleIndex) {
+    auto it = std::find(selectedHandles.begin(), selectedHandles.end(), handleIndex);
+    if(it != selectedHandles.end())
+        selectedHandles.erase(it);
+    else
+        selectedHandles.push_back(handleIndex);
 }
 
 void EditTool::edit_start(CanvasComponentContainer::ObjInfo* comp, bool initUndoAfterEditDone) {
@@ -303,8 +335,13 @@ bool EditTool::prevent_undo_or_redo() {
 
 void EditTool::draw(SkCanvas* canvas, const DrawData& drawData) {
     if(objInfoBeingEdited) {
-        for(HandleData& h : pointHandles)
-            drawP.draw_drag_circle(canvas, drawData.cam.c.to_space((objInfoBeingEdited->obj->coords.from_space(h.coordMatrix * *h.p))), {0.1f, 0.9f, 0.9f, 1.0f}, drawData);
+        for(size_t hi = 0; hi < pointHandles.size(); ++hi) {
+            HandleData& h = pointHandles[hi];
+            // PHASE6: selected vertices render yellow, the rest cyan.
+            const bool selected = std::find(selectedHandles.begin(), selectedHandles.end(), hi) != selectedHandles.end();
+            const SkColor4f color = selected ? SkColor4f{0.95f, 0.85f, 0.1f, 1.0f} : SkColor4f{0.1f, 0.9f, 0.9f, 1.0f};
+            drawP.draw_drag_circle(canvas, drawData.cam.c.to_space((objInfoBeingEdited->obj->coords.from_space(h.coordMatrix * *h.p))), color, drawData);
+        }
     }
 }
 

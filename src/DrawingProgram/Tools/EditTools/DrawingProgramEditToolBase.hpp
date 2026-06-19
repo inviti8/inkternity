@@ -10,6 +10,11 @@ class DrawingProgramEditToolBase {
     public:
         DrawingProgramEditToolBase(DrawingProgram& initDrawP, CanvasComponentContainer::ObjInfo* initComp);
         virtual void edit_start(EditTool& editTool, std::any& prevData) = 0;
+        // PHASE6: (re)register the draggable point handles. Called by edit_start,
+        // and again by EditTool::refresh_point_handles() after the editable point
+        // list changes size (e.g. polygon Add/Delete vertex), since handles hold
+        // pointers into that list. Default no-op for tools with fixed handles.
+        virtual void register_handles(EditTool& editTool) {}
         virtual void commit_edit_updates(std::any& prevData) = 0;
         virtual bool edit_update() = 0;
         virtual void edit_gui(Toolbar& t) = 0;
