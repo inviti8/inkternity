@@ -1941,6 +1941,7 @@ void Toolbar::performance_metrics() {
             text_label(gui, "Node blits / direct draws / rebuilds: " + std::to_string(rs.cachedNodeBlits) + " / " + std::to_string(rs.directComponentDraws) + " / " + std::to_string(rs.nodeRebuilds));
             text_label(gui, "saveLayers/frame: " + std::to_string(rs.saveLayersIssued));
             text_label(gui, "Unsorted (not in BVH) / node caches: " + std::to_string(rs.unsortedCount) + " / " + std::to_string(rs.nodeCacheCount));
+            text_label(gui, "Motion coarsen shift (0=crisp): " + std::to_string(rs.coarsenShift));
             text_label(gui, "Layers visible / in-view: " + std::to_string(rs.visibleLayers) + " / " + std::to_string(rs.visibleLayersInView)
                             + " (waste " + std::to_string(rs.visibleLayers - rs.visibleLayersInView) + ")");
         }
@@ -2555,7 +2556,8 @@ void Toolbar::general_settings_inner_gui() {
                         input_scalar_field<size_t>(gui, "components to force cache rebuild", "Number of components to force cache rebuild", &DrawingProgramCache::MINIMUM_COMPONENTS_TO_START_REBUILD, 1, 1000000);
                         input_scalar_field<size_t>(gui, "maximum frame time to force cache rebuild", "Maximum frame time to force cache rebuild (ms)", &DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH, 1, 1000000);
                         input_scalar_field<size_t>(gui, "minimum time to force cache rebuild", "Minimum time to check cache rebuild (ms)", &DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH, 1, 1000000);
-                        input_scalar_field<size_t>(gui, "motion cache coarsen shift", "Motion cache coarsen shift (0=off)", &DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT, 0, 16);
+                        input_scalar_field<size_t>(gui, "motion cache coarsen shift", "Motion cache coarsen shift MAX (0=off)", &DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT, 0, 16);
+                        input_scalar_field<size_t>(gui, "motion cache px per shift", "Motion coarsen px/frame per level (higher=stay crisp faster)", &DrawingProgramCache::MOTION_CACHE_PX_PER_SHIFT, 1, 100000);
                     });
                     break;
                 }
