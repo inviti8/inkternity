@@ -5,6 +5,9 @@
 #include "../Diagnostics/RenderStats.hpp"
 #include "Helpers/Parallel.hpp"
 #include "Layers/DrawingProgramLayerManager.hpp"
+#include "Layers/DrawingProgramLayer.hpp"
+#include <include/core/SkMatrix.h>
+#include <include/pathops/SkPathOps.h>
 
 #ifdef USE_SKIA_BACKEND_GRAPHITE
     #include <include/gpu/graphite/Surface.h>
@@ -211,6 +214,10 @@ void DrawingProgramCache::preupdate_component(CanvasComponentContainer::ObjInfo*
         c->obj->cacheParentBvhNode.reset();
     }
     invalidate_cache_at_optional_aabb(c->obj->get_world_bounds());
+    // PHASE7: a mask shape clips the whole layer, so moving/editing it must
+    // refresh the layer's entire footprint, not just the mask's own bounds.
+    if(c->obj->get_comp().is_mask())
+        invalidate_layer_footprint(c->obj->parentLayer);
 }
 
 void DrawingProgramCache::build_bvh_node(const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode, const std::vector<CanvasComponentContainer::ObjInfo*>& components) {
@@ -503,16 +510,18 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
         }
         else {
             std::vector<CanvasComponentContainer::ObjInfo*> compsToDraw;
+            // PHASE7: mask shapes are not drawn as content (is_mask) — they only
+            // define the clip applied below. Exclude them from the predraw set.
             parallel_loop_container(nodesToDraw, [&](auto& node) {
                 std::for_each(node->components.begin(), node->components.end(), [&](auto& c) {
-                    if(c->obj->parentLayer == &layerListItem && (!drawBounds.has_value() || SCollision::collide(drawBounds.value(), c->obj->get_world_bounds().value())) && c->obj->should_draw(drawData))
+                    if(c->obj->parentLayer == &layerListItem && !c->obj->get_comp().is_mask() && (!drawBounds.has_value() || SCollision::collide(drawBounds.value(), c->obj->get_world_bounds().value())) && c->obj->should_draw(drawData))
                         c->obj->preDrawDataHolder = c->obj->calculate_predraw_data(drawData);
                     else
                         c->obj->preDrawDataHolder = std::nullopt;
                 });
             });
             parallel_loop_container(unsortedComponents, [&](auto& c) {
-                if(c->obj->parentLayer == &layerListItem && c->obj->get_world_bounds().has_value() && (!drawBounds.has_value() || SCollision::collide(drawBounds.value(), c->obj->get_world_bounds().value())) && c->obj->should_draw(drawData))
+                if(c->obj->parentLayer == &layerListItem && !c->obj->get_comp().is_mask() && c->obj->get_world_bounds().has_value() && (!drawBounds.has_value() || SCollision::collide(drawBounds.value(), c->obj->get_world_bounds().value())) && c->obj->should_draw(drawData))
                     c->obj->preDrawDataHolder = c->obj->calculate_predraw_data(drawData);
                 else
                     c->obj->preDrawDataHolder = std::nullopt;
@@ -537,11 +546,70 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
             if(!compsToDraw.empty())
                 ++stats.visibleLayersInView;
             stats.directComponentDraws += static_cast<int>(compsToDraw.size());
+            // PHASE7: clip the layer's content to its mask shapes (scoped by the
+            // saveLayer above; restored with the canvas->restore() below).
+            apply_layer_mask_clip(layerListItem, canvas, drawData);
             for(auto& c : compsToDraw)
                 c->obj->draw_with_predraw_data(canvas, drawData, c->obj->preDrawDataHolder.value());
         }
         canvas->restore();
     }
+}
+
+void DrawingProgramCache::invalidate_layer_footprint(const DrawingProgramLayerListItem* layer) {
+    if(!layer || layer->is_folder()) return;
+    auto& components = layer->get_layer().components;
+    if(!components) return;
+    std::optional<SCollision::AABB<WorldScalar>> footprint;
+    for(auto& p : *components) {
+        const auto& wb = p.obj->get_world_bounds();
+        if(!wb.has_value()) continue;
+        if(!footprint) footprint = wb.value();
+        else footprint->include_aabb_in_bounds(wb.value());
+    }
+    if(footprint)
+        invalidate_cache_at_aabb(footprint.value());
+}
+
+void DrawingProgramCache::apply_layer_mask_clip(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData) {
+    auto& components = layerListItem.get_layer().components;
+    if(!components) return;
+
+    // Gather mask shapes across the WHOLE layer (an off-screen mask still clips
+    // on-screen content). Each shape's path is component-local; map it to draw
+    // space with the same scale->rotate->translate the normal draw uses.
+    std::vector<SkPath> normalMasks;
+    std::vector<SkPath> invMasks;
+    for(auto& p : *components) {
+        CanvasComponentContainer& container = *p.obj;
+        CanvasComponent& comp = container.get_comp();
+        if(!comp.is_mask()) continue;
+        std::optional<SkPath> localPath = comp.get_mask_path();
+        if(!localPath.has_value()) continue;
+        const CanvasComponentContainer::TransformData td = container.calculate_draw_transform(drawData);
+        SkMatrix m;
+        m.setScale(td.scale, td.scale);
+        m.preRotate(td.rotation);
+        m.preTranslate(td.translation.x(), td.translation.y());
+        SkPath worldPath = localPath->makeTransform(m);
+        if(comp.is_mask_inverted())
+            invMasks.emplace_back(std::move(worldPath));
+        else
+            normalMasks.emplace_back(std::move(worldPath));
+    }
+    if(normalMasks.empty() && invMasks.empty()) return;
+
+    // region = union(non-inverted) intersected with the canvas, then each
+    // inverted mask subtracted (knocks a hole). Only-inverted -> whole layer
+    // minus the holes. (See PHASE7.md composition rules.)
+    if(!normalMasks.empty()) {
+        SkPath unionPath = normalMasks[0];
+        for(size_t i = 1; i < normalMasks.size(); ++i)
+            Op(unionPath, normalMasks[i], kUnion_SkPathOp, &unionPath);
+        canvas->clipPath(unionPath, SkClipOp::kIntersect, true);
+    }
+    for(const SkPath& iv : invMasks)
+        canvas->clipPath(iv, SkClipOp::kDifference, true);
 }
 
 void DrawingProgramCache::draw_cache_image_to_canvas(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode) {

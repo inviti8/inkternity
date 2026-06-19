@@ -10,6 +10,7 @@
 #include "../../../GUIStuff/ElementHelpers/RadioButtonHelpers.hpp"
 #include "../../../GUIStuff/ElementHelpers/LayoutHelpers.hpp"
 #include "../../../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
+#include "../../../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 
 EllipseDrawEditTool::EllipseDrawEditTool(DrawingProgram& initDrawP, CanvasComponentContainer::ObjInfo* initComp):
     DrawingProgramEditToolBase(initDrawP, initComp)
@@ -27,8 +28,17 @@ void EllipseDrawEditTool::edit_gui(Toolbar& t) {
         drawP.world.main.g.gui.set_to_layout();
     };
 
+    auto mask_changed = [&] {
+        comp->obj->commit_update(drawP);
+        drawP.drawCache.invalidate_layer_footprint(comp->obj->parentLayer);   // mask affects whole layer
+        drawP.world.main.g.gui.set_to_layout();
+    };
+
     gui.new_id("edit tool ellipse", [&] {
         text_label_centered(gui, "Edit Ellipse");
+        checkbox_boolean_field(gui, "use as mask", "Use as mask", &a.d.isMask, mask_changed);
+        if(a.d.isMask)
+            checkbox_boolean_field(gui, "invert mask", "Invert mask (clip outside)", &a.d.maskInvert, mask_changed);
         radio_button_selector(gui, "Fill selector", &a.d.fillStrokeMode, {
             {"Fill only", 0},
             {"Outline only", 1},

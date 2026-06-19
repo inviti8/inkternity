@@ -11,16 +11,16 @@ CanvasComponentType EllipseCanvasComponent::get_type() const {
 }
 
 void EllipseCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const {
-    // Wire payload — same-build peers, so the PHASE6 affine fields are always present.
-    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB);
+    // Wire payload — same-build peers, so all appended fields are always present.
+    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB, d.isMask, d.maskInvert);
 }
 
 void EllipseCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
-    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB);
+    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB, d.isMask, d.maskInvert);
 }
 
 void EllipseCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB);
+    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB, d.isMask, d.maskInvert);
 }
 
 void EllipseCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
@@ -30,6 +30,14 @@ void EllipseCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, Ve
     // ellipse unchanged.
     if(version >= VersionNumber(0, 17, 0))
         a(d.affineMode, d.center, d.tipA, d.tipB);
+    // PHASE7 (INFPNT000019 / 0.18.0): mask flags appended.
+    if(version >= VersionNumber(0, 18, 0))
+        a(d.isMask, d.maskInvert);
+}
+
+std::optional<SkPath> EllipseCanvasComponent::get_mask_path() const {
+    if(!d.isMask) return std::nullopt;
+    return ellipsePath;   // built in create_draw_data (component-local space)
 }
 
 void EllipseCanvasComponent::change_stroke_color(const Vector4f& newStrokeColor) {

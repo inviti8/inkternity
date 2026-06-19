@@ -231,6 +231,14 @@
 - Costs to know about: the merged result is a single raster object — the individual strokes can no longer be selected, vectorized, or deleted one-by-one; flattened text is no longer editable; flattened vector content no longer stays sharp under infinite zoom-in. The pixel eraser still works on the result
 - A flattened layer is a single large image. Displaying many such layers (or a single very large one) leans on the GPU texture cache — if pans/zoom-out feel choppy on a big project, see **Performance settings** below
 - Undo restores the originals (it takes two undo steps: one for the merged object, one for the removed originals)
+- If the layer has **mask shapes** (see Masks below), flatten bakes the *clipped* result and consumes the masks — the masking becomes permanent in the resulting image
+## Masks
+- Any shape — rectangle, **polygon**, or ellipse (including skewed) — can be turned into a **mask** for its layer: double-click the shape with the Edit tool and check **Use as mask**. The rest of that layer's content is then clipped to the shape (drawing outside it is hidden). Great for comic **panels** ("draw inside this box")
+- **Invert mask (clip outside)** flips it: the shape's interior becomes a hole (content shows everywhere *except* inside it)
+- **Multiple masks compose** on a layer: non-inverted masks union (draw inside any of them); inverted masks subtract (knock holes). A normal mask + an inverted one = a donut. An inverted mask alone = the whole layer minus that hole. Order doesn't matter
+- A mask shape isn't drawn as artwork — while its layer is the **active (selected) layer** it shows as a **red dashed outline** so you can see and edit it; on other layers it clips silently (no red clutter). It's still fully selectable/movable/editable
+- Masking applies everywhere the art renders — on-canvas, **screenshots, SVG export, parallax, and reader mode** — but the red outline is an editing aid only (never exported or shown in reader mode)
+- **Flatten Layer** bakes the masked result into one image and removes the mask (see Flatten Layer above)
 ## Performance settings
 - **GPU resource cache budget** (Menu->Settings->General->*GPU resource cache budget (MB)*, **requires restart**): how much GPU memory Inkternity lets Skia keep textures resident in. Flattened layers are large images; if the budget is too small they get evicted and re-uploaded every frame while you pan or zoom out, which is choppy. The default (**4096 MB**) is tuned for large multi-section projects. **Raise it** (e.g. 8192) if you have lots of VRAM and a very large canvas still stutters; **lower it** (e.g. 1024) on a low-VRAM GPU if you see graphics instability. Takes effect on restart
 - **Maximum flatten size** (Menu->Settings->General): caps how large a flattened image can get. Smaller (e.g. 4096) uses far less GPU memory per layer — useful on low-VRAM machines — at the cost of some sharpness when you zoom all the way in

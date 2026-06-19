@@ -14,6 +14,9 @@ class EllipseCanvasComponent : public CanvasComponent {
         virtual std::optional<Vector4f> get_stroke_color() const override;
         virtual std::unique_ptr<CanvasComponent> get_data_copy() const override;
         virtual void set_data_from(const CanvasComponent& other) override;
+        virtual bool is_mask() const override { return d.isMask; }
+        virtual bool is_mask_inverted() const override { return d.maskInvert; }
+        virtual std::optional<SkPath> get_mask_path() const override;
 
         // User input data
         struct Data {
@@ -33,6 +36,9 @@ class EllipseCanvasComponent : public CanvasComponent {
             Vector2f center;
             Vector2f tipA;
             Vector2f tipB;
+            // PHASE7: clip mask flags (see RectangleCanvasComponent::Data).
+            bool isMask = false;
+            bool maskInvert = false;
             bool operator==(const Data& o) const = default;
         } d;
 

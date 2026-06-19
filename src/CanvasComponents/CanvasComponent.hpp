@@ -3,6 +3,7 @@
 #include <cereal/archives/portable_binary.hpp>
 #include <Helpers/VersionNumber.hpp>
 #include <include/core/SkCanvas.h>
+#include <include/core/SkPath.h>
 #include <Helpers/SCollision.hpp>
 #include "CanvasComponentType.hpp"
 #include "CanvasComponentContainer.hpp"
@@ -23,6 +24,14 @@ class CanvasComponent {
         virtual void remap_resource_ids(const std::unordered_map<NetworkingObjects::NetObjID, NetworkingObjects::NetObjID>& resourceOldToNewMap);
         virtual void change_stroke_color(const Vector4f& newStrokeColor);
         virtual std::optional<Vector4f> get_stroke_color() const;
+
+        // PHASE7 shape masks: a shape flagged as a mask is not drawn as artwork —
+        // it clips its layer's content to its interior (or exterior, if inverted).
+        // get_mask_path returns the shape's outline in component-local space (the
+        // compositor applies the component's draw transform). Defaults: not a mask.
+        virtual bool is_mask() const { return false; }
+        virtual bool is_mask_inverted() const { return false; }
+        virtual std::optional<SkPath> get_mask_path() const { return std::nullopt; }
 
         virtual void set_data_from(const CanvasComponent& other) = 0;
         virtual std::unique_ptr<CanvasComponent> get_data_copy() const = 0;

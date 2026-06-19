@@ -8,6 +8,7 @@
 #include "../../../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../../../GUIStuff/ElementHelpers/RadioButtonHelpers.hpp"
 #include "../../../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
+#include "../../../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 #include <algorithm>
 
 RectDrawEditTool::RectDrawEditTool(DrawingProgram& initDrawP, CanvasComponentContainer::ObjInfo* initComp):
@@ -26,8 +27,17 @@ void RectDrawEditTool::edit_gui(Toolbar& t) {
     auto commit_update_func = [&] { comp->obj->commit_update(drawP); };
 
     auto& gui = drawP.world.main.g.gui;
+    auto mask_changed = [&] {
+        comp->obj->commit_update(drawP);
+        drawP.drawCache.invalidate_layer_footprint(comp->obj->parentLayer);   // mask affects whole layer
+        drawP.world.main.g.gui.set_to_layout();
+    };
+
     gui.new_id("edit tool rectangle", [&] {
         text_label_centered(gui, a.d.polygonMode ? "Edit Polygon" : "Edit Rectangle");
+        checkbox_boolean_field(gui, "use as mask", "Use as mask", &a.d.isMask, mask_changed);
+        if(a.d.isMask)
+            checkbox_boolean_field(gui, "invert mask", "Invert mask (clip outside)", &a.d.maskInvert, mask_changed);
         if(!a.d.polygonMode)   // corner radius doesn't apply to polygons
             slider_scalar_field(gui, "relradiuswidth", "Corner Radius", &a.d.cornerRadius, 0.0f, 40.0f, { .onEdit = commit_update_func });
         radio_button_selector(gui, "Fill selector", &a.d.fillStrokeMode, {
