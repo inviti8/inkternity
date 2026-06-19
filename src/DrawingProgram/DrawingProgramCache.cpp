@@ -64,7 +64,7 @@ size_t DrawingProgramCache::MAXIMUM_COMPONENTS_IN_SINGLE_NODE = 50;
 size_t DrawingProgramCache::CACHE_NODE_RESOLUTION = 2048;
 size_t DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH = 33; // Around 30FPS
 size_t DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH = 5000; // Should be a bit long to prevent objects that are being updated, like brush strokes, from constantly refreshing the cache.
-size_t DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT = 3; // PHASE5.5: coarse-node cache relaxation during camera motion (0 = off)
+size_t DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT = 0; // PHASE5.5: coarse-node cache relaxation during camera motion (0 = off; on-demand tunable in Settings -> Debug)
 
 std::unordered_map<std::shared_ptr<DrawingProgramCacheBVHNode>, DrawingProgramCache::NodeCache> DrawingProgramCache::nodeCacheMap;
 DrawingProgramCache::WindowCache DrawingProgramCache::windowCache;
