@@ -56,6 +56,7 @@ extern "C" {
 #include <cereal/types/string.hpp>
 
 #include "MainProgram.hpp"
+#include "Diagnostics/RenderStats.hpp"
 
 #include <include/codec/SkPngDecoder.h>
 
@@ -805,6 +806,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
             mS.ctx = GrDirectContexts::MakeGL(iface, opts);
             if(!mS.ctx)
                 throw std::runtime_error("[GrDirectContexts::MakeGL] Could not make context");
+            // PHASE5.5: large flattened layers are big textures; the default Skia
+            // budget evicts + re-uploads them every motion frame. Hold the working
+            // set resident so panning/zooming a heavy canvas doesn't thrash.
+            if(mS.m->conf.gpuResourceCacheBudgetMB > 0)
+                mS.ctx->setResourceCacheLimit(static_cast<size_t>(mS.m->conf.gpuResourceCacheBudgetMB) * 1024ull * 1024ull);
         #endif
 
 #ifdef USE_SKIA_BACKEND_GRAPHITE
@@ -879,35 +885,58 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 void regular_draw(MainStruct& mS) {
     mS.lastRenderTimePoint = std::chrono::steady_clock::now();
 
+    // PHASE5.5 M0: top-level frame-phase timing (mainDraw=CPU recording,
+    // flush=GPU flushAndSubmit, swap=present/vsync). Localizes cost when the
+    // DrawingProgram timers read ~0.
+    RenderStats& rs = RenderStats::get();
+    auto phaseClock = std::chrono::steady_clock::now();
+    auto markPhase = [&phaseClock]() {
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - phaseClock).count();
+        phaseClock = now;
+        return ms;
+    };
+
     if(mS.m->window.intermediateSurfaceMSAA) {
         SkCanvas* intermediateCanvas = mS.m->window.intermediateSurfaceMSAA->getCanvas();
         intermediateCanvas->save();
         intermediateCanvas->translate(mS.m->input.screenOffset.x(), mS.m->input.screenOffset.y());
         mS.m->draw(intermediateCanvas);
         intermediateCanvas->restore();
+        rs.live.mainDrawMs = markPhase();
 
         #ifdef USE_BACKEND_VULKAN
             mS.vulkanWindowContext->getBackbufferSurface()->getCanvas()->drawImage(mS.m->window.intermediateSurfaceMSAA->makeTemporaryImage(), 0, 0);
             mS.ctx->flushAndSubmit();
+            rs.live.flushMs = markPhase();
             mS.vulkanWindowContext->swapBuffers();
+            rs.live.swapMs = markPhase();
         #elif USE_BACKEND_OPENGL
             mS.canvas->drawImage(mS.m->window.intermediateSurfaceMSAA->makeTemporaryImage(), 0, 0);
             mS.ctx->flushAndSubmit();
+            rs.live.flushMs = markPhase();
             SDL_GL_SwapWindow(mS.window);
+            rs.live.swapMs = markPhase();
         #endif
     }
     else {
         #ifdef USE_BACKEND_VULKAN
             mS.m->draw(mS.vulkanWindowContext->getBackbufferSurface()->getCanvas());
+            rs.live.mainDrawMs = markPhase();
             mS.ctx->flushAndSubmit();
+            rs.live.flushMs = markPhase();
             mS.vulkanWindowContext->swapBuffers();
+            rs.live.swapMs = markPhase();
         #elif USE_BACKEND_OPENGL
             mS.canvas->save();
             mS.canvas->translate(mS.m->input.screenOffset.x(), mS.m->input.screenOffset.y());
             mS.m->draw(mS.canvas);
             mS.canvas->restore();
+            rs.live.mainDrawMs = markPhase();
             mS.ctx->flushAndSubmit();
+            rs.live.flushMs = markPhase();
             SDL_GL_SwapWindow(mS.window);
+            rs.live.swapMs = markPhase();
         #endif
     }
 }
@@ -921,6 +950,15 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
 
     MainStruct& mS = *((MainStruct*)appstate);
     mS.lastUpdateTimePoint = std::chrono::steady_clock::now();
+
+    // PHASE5.5 M0: publish the finished frame's counters and start a fresh one at
+    // the true frame boundary. Safe here because the overlay reads `shown`, not
+    // `live` (double-buffered) — reset placement no longer races the GUI read.
+    {
+        RenderStats& rs = RenderStats::get();
+        rs.push_frame_ms(std::chrono::duration<float, std::milli>(mS.m->window.lastFrameTime).count());
+        rs.begin_frame();
+    }
 
 #ifdef NDEBUG
     try {

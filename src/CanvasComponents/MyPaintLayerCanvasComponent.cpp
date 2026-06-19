@@ -140,10 +140,16 @@ void MyPaintLayerCanvasComponent::draw(SkCanvas* canvas, const DrawData&, const 
     }
 
     SkPaint paint;
+    // PHASE5.5: mipmapped + linear sampling. A flattened layer can be a very
+    // large image; drawn minified (zoomed out / fast pan) the default nearest
+    // sampling scatters reads across the full-res texture every frame — the
+    // "zoom out gets choppy" symptom. Mipmaps make a minified draw sample a
+    // small LOD instead (cost ~ screen pixels, not image size). Ganesh
+    // generates + caches the mip chain on first use.
     canvas->drawImage(cachedDrawImage_,
                       static_cast<SkScalar>(cachedDrawX_),
                       static_cast<SkScalar>(cachedDrawY_),
-                      SkSamplingOptions{},
+                      SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear),
                       &paint);
 }
 

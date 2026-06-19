@@ -90,6 +90,14 @@ class GlobalConfig {
 
         bool disableGraphicsDriverWorkarounds = false;
         int vsyncValue = 1;
+        // PHASE5.5: Skia GPU resource-cache budget (MB). Large flattened layers
+        // are big textures; the default Skia budget (~256MB) evicts and re-uploads
+        // them every frame during motion (choppy pans/zoom-out). Raise so the
+        // working set stays resident. 4096 validated smooth on a large
+        // multi-section production file; 2048 was not enough for it. Lower on
+        // low-VRAM GPUs, raise for very large canvases. Applied at GPU context
+        // creation (takes effect on restart). Tunable in Settings.
+        int gpuResourceCacheBudgetMB = 4096;
 
         SDL_DateFormat dateFormat = SDL_DATE_FORMAT_DDMMYYYY;
         SDL_TimeFormat timeFormat = SDL_TIME_FORMAT_12HR;

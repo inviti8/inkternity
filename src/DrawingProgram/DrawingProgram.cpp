@@ -18,6 +18,8 @@
 #include <include/core/SkSurface.h>
 #include "../World.hpp"
 #include "../MainProgram.hpp"
+#include "../Diagnostics/RenderStats.hpp"
+#include <chrono>
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 #include "../CanvasComponents/Particles/LegacyFxLibrary.hpp"
 #include "../CanvasComponents/Particles/FxLibraryStore.hpp"
@@ -640,14 +642,21 @@ void DrawingProgram::modify_grid(const NetworkingObjects::NetObjWeakPtr<WorldGri
 }
 
 void DrawingProgram::update() {
+    RenderStats& stats = RenderStats::get();
+    const auto updateStart = std::chrono::steady_clock::now();
+
     selection.update();
     drawTool->tool_update();
 
     update_downloading_dropped_files();
     check_updateable_components();
 
-    if(drawCache.check_rebuild_needed_from_framerate() || drawCache.should_rebuild())
+    if(drawCache.check_rebuild_needed_from_framerate() || drawCache.should_rebuild()) {
+        stats.live.bvhRebuiltThisFrame = true;
         rebuild_cache();
+    }
+
+    stats.live.updateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - updateStart).count();
 }
 
 void DrawingProgram::pen_tool_switch_check() {
@@ -1059,16 +1068,23 @@ void DrawingProgram::get_used_resources(std::unordered_set<NetworkingObjects::Ne
 }
 
 void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
-    if(drawData.takingScreenshot)
-        layerMan.draw(canvas, drawData);
-    else if(layerMan.any_visible_parallax_layer()) {
+    if(drawData.takingScreenshot) {
+        layerMan.draw(canvas, drawData);   // screenshots/exports are not real frames; skip stats
+        return;
+    }
+
+    RenderStats& stats = RenderStats::get();
+    ++stats.live.drawCalls;   // counters reset per real frame in SDL_AppIterate; accumulate here
+    const auto drawStart = std::chrono::steady_clock::now();
+
+    if(layerMan.any_visible_parallax_layer()) {
         // PHASE4 Part A M2: parallax bypass. The window/BVH caches bake
         // cross-layer composites under ONE camera; with per-layer derived
         // cameras those composites are wrong, so while any visible layer
         // has depth, the layer tree is walked directly each frame (the
         // same path screenshots use — LayerListItem::draw applies the
         // derived cameras). Perf note (PHASE4.md §5): parallaxed canvases
-        // redraw uncached; Flatten Layer (View) is the mitigation for
+        // redraw uncached; Flatten Layer is the mitigation for
         // heavy layers. Depth-0-everywhere canvases never reach this
         // branch and keep the cache path bit-identically.
         canvas->saveLayer(nullptr, nullptr);
@@ -1118,6 +1134,8 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
         selection.draw_gui(canvas, drawData);
         drawTool->draw(canvas, drawData);
     }
+
+    stats.live.drawMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
 }
 
 Vector4f* DrawingProgram::get_foreground_color_ptr() {

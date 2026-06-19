@@ -2,6 +2,7 @@
 #include "DrawingProgram.hpp"
 #include "../World.hpp"
 #include "../MainProgram.hpp"
+#include "../Diagnostics/RenderStats.hpp"
 #include "Helpers/Parallel.hpp"
 #include "Layers/DrawingProgramLayerManager.hpp"
 
@@ -63,6 +64,7 @@ size_t DrawingProgramCache::MAXIMUM_COMPONENTS_IN_SINGLE_NODE = 50;
 size_t DrawingProgramCache::CACHE_NODE_RESOLUTION = 2048;
 size_t DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH = 33; // Around 30FPS
 size_t DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH = 5000; // Should be a bit long to prevent objects that are being updated, like brush strokes, from constantly refreshing the cache.
+size_t DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT = 0; // PHASE5.5: coarse-node cache relaxation during camera motion (0 = off; on-demand tunable in Settings -> Debug)
 
 std::unordered_map<std::shared_ptr<DrawingProgramCacheBVHNode>, DrawingProgramCache::NodeCache> DrawingProgramCache::nodeCacheMap;
 DrawingProgramCache::WindowCache DrawingProgramCache::windowCache;
@@ -278,8 +280,9 @@ void DrawingProgramCache::build_bvh_node_coords_and_resolution(DrawingProgramCac
 }
 
 void DrawingProgramCache::refresh_all_draw_cache(const DrawData& drawData) {
+    const WorldScalar gateScale = cache_gate_scale(drawData);
     traverse_bvh_run_function(drawData.cam.viewingAreaGenerousCollider, [&](std::shared_ptr<DrawingProgramCacheBVHNode> node) {
-        if(node && node->coords.inverseScale <= drawData.cam.c.inverseScale) {
+        if(node && node->coords.inverseScale <= gateScale) {
             refresh_draw_cache(node, drawData);
             return false;
         }
@@ -320,6 +323,8 @@ void DrawingProgramCache::refresh_draw_cache(const std::shared_ptr<DrawingProgra
     }
     else
         nodeCache.surface = drawP.world.main.create_native_surface(bvhNode->resolution, true);
+
+    ++RenderStats::get().live.nodeRebuilds;   // actual node-cache (re)render this frame (F2 / cache miss)
 
     SkCanvas* cacheCanvas = nodeCache.surface->getCanvas();
 
@@ -407,6 +412,7 @@ void DrawingProgramCache::update_window_cache_invalid_bounds(const DrawData& dra
 }
 
 void DrawingProgramCache::window_cache_complete_refresh(const DrawData& drawData) {
+    RenderStats::get().live.windowCacheRebuilt = true;   // F1 signal: full-window recomposite this frame
     SkCanvas* cacheCanvas = windowCache.surface->getCanvas();
     cacheCanvas->save();
     cacheCanvas->clear(SkColor4f{0, 0, 0, 0});
@@ -416,13 +422,32 @@ void DrawingProgramCache::window_cache_complete_refresh(const DrawData& drawData
     windowCache.coords = drawData.cam.c;
 }
 
+WorldScalar DrawingProgramCache::cache_gate_scale(const DrawData& drawData) const {
+    if(cameraMovingThisFrame && MOTION_CACHE_COARSEN_SHIFT > 0)
+        return drawData.cam.c.inverseScale << MOTION_CACHE_COARSEN_SHIFT;
+    return drawData.cam.c.inverseScale;
+}
+
 void DrawingProgramCache::update_and_draw_cached_canvas(SkCanvas* canvas, const DrawData& drawData) {
+    RenderStats::get().live.unsortedCount = static_cast<int>(unsortedComponents.size());
+    RenderStats::get().live.nodeCacheCount = static_cast<int>(nodeCacheMap.size());
+
+    // PHASE5.5: is the camera moving this frame? Drives the coarse-node cache
+    // relaxation (cheap blurry blits in motion) and the crisp rebuild on settle.
+    cameraMovingThisFrame = !haveLastWindowCamCoords || drawData.cam.c != lastWindowCamCoords;
+    const bool justSettled = !cameraMovingThisFrame && wasMovingLastFrame;
+    lastWindowCamCoords = drawData.cam.c;
+    haveLastWindowCamCoords = true;
+    wasMovingLastFrame = cameraMovingThisFrame;
+
     if(windowCache.surface == nullptr) {
         allocate_window_cache_area();
         refresh_all_draw_cache(drawData);
         window_cache_complete_refresh(drawData);
     }
-    else if(windowCache.attachedDrawingProgramCache != this || drawData.cam.c != windowCache.coords) {
+    // justSettled forces one crisp rebuild even though the camera pose now matches
+    // the (motion-built, blurry) window cache, replacing it with a sharp one.
+    else if(windowCache.attachedDrawingProgramCache != this || drawData.cam.c != windowCache.coords || justSettled) {
         refresh_all_draw_cache(drawData);
         window_cache_complete_refresh(drawData);
     }
@@ -434,16 +459,18 @@ void DrawingProgramCache::update_and_draw_cached_canvas(SkCanvas* canvas, const 
 }
 
 void DrawingProgramCache::draw_components_to_canvas(SkCanvas* canvas, const DrawData& drawData, const std::optional<SCollision::AABB<WorldScalar>>& drawBounds) {
+    ++RenderStats::get().live.treeWalks;   // each call = one full layer-tree walk this frame
     if(drawP.layerMan.layer_tree_root_exists()) {
         std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>> cachedNodesToDraw;
         std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>> uncachedNodes;
 
+        const WorldScalar gateScale = cache_gate_scale(drawData);
         traverse_bvh_run_function(drawData.cam.viewingAreaGenerousCollider, [&](const std::shared_ptr<DrawingProgramCacheBVHNode>& node) {
             if(node) {
                 auto it = nodeCacheMap.find(node);
                 if(it != nodeCacheMap.end()) {
                     auto& nodeCache = it->second;
-                    if(!nodeCache.invalidBounds.has_value() && node->coords.inverseScale <= drawData.cam.c.inverseScale) {
+                    if(!nodeCache.invalidBounds.has_value() && node->coords.inverseScale <= gateScale) {
                         cachedNodesToDraw.emplace_back(node);
                         return false;
                     }
@@ -469,6 +496,7 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
         layerPaint.setAlphaf(layerListItem.get_alpha());
         layerPaint.setBlendMode(serialized_blend_mode_to_sk_blend_mode(layerListItem.get_blend_mode()));
         canvas->saveLayer(nullptr, &layerPaint);
+        ++RenderStats::get().live.saveLayersIssued;   // F7.1 signal: isolation buffer opened per visible layer
         if(layerListItem.is_folder()) {
             for(auto& p : *layerListItem.get_folder().folderList | std::views::reverse)
                 recursive_draw_layer_item_to_canvas(*p.obj, canvas, drawData, drawBounds, nodesToDraw);
@@ -502,6 +530,13 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
             std::sort(compsToDraw.begin(), compsToDraw.end(), [](auto& a, auto& b) {
                 return a->pos < b->pos;
             });
+            // F7 signal: a visible leaf layer with nothing on screen still paid a
+            // saveLayer above (visibleLayers - visibleLayersInView == wasted buffers).
+            RenderStats::Frame& stats = RenderStats::get().live;
+            ++stats.visibleLayers;
+            if(!compsToDraw.empty())
+                ++stats.visibleLayersInView;
+            stats.directComponentDraws += static_cast<int>(compsToDraw.size());
             for(auto& c : compsToDraw)
                 c->obj->draw_with_predraw_data(canvas, drawData, c->obj->preDrawDataHolder.value());
         }
@@ -513,6 +548,7 @@ void DrawingProgramCache::draw_cache_image_to_canvas(SkCanvas* canvas, const Dra
     auto it = nodeCacheMap.find(bvhNode);
     if(it != nodeCacheMap.end()) {
         auto& nodeCache = it->second;
+        ++RenderStats::get().live.cachedNodeBlits;
         canvas->save();
         bvhNode->coords.transform_sk_canvas(canvas, drawData);
         nodeCache.lastRenderTime = std::chrono::steady_clock::now();

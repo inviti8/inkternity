@@ -8,6 +8,7 @@
 #include "DrawingProgram/Tools/DrawingProgramToolBase.hpp"
 #include "DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
 #include "DrawingProgram/RasterFlatten.hpp"
+#include "Diagnostics/RenderStats.hpp"
 #include "FileHelpers.hpp"
 #include "GUIStuff/Elements/MemoryImageDisplay.hpp"
 #include "GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
@@ -724,8 +725,8 @@ void Toolbar::top_toolbar() {
                                     optionsMenuOpen = true;
                                     optionsMenuType = CANVAS_SETTINGS_MENU;
                                 });
-                                menu_popup_text_button("flatten ink in view", "Flatten Layer (View)", [&] {
-                                    RasterFlatten::flatten_layer_in_view(main.world->drawProg);
+                                menu_popup_text_button("flatten layer", "Flatten Layer", [&] {
+                                    RasterFlatten::flatten_layer(main.world->drawProg);
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {
@@ -1911,6 +1912,37 @@ void Toolbar::performance_metrics() {
             std::stringstream d;
             d << "Rotation: " << main.world->drawData.cam.c.rotation;
             text_label(gui, d.str());
+
+            // PHASE5.5 M0 render-perf counters (see docs/design/PHASE5.5.md).
+            // Read the published (last-completed-frame) snapshot, never `live`.
+            const RenderStats::Frame& rs = RenderStats::get().shown;
+            const double frameMs = main.deltaTime * 1000.0;
+            const double otherMs = frameMs - rs.drawMs - rs.updateMs;   // GPU flush + GUI + input + swap
+            std::stringstream tm;
+            tm << "ms frame/draw/update/other: " << std::fixed << std::setprecision(1)
+               << frameMs << " / " << rs.drawMs << " / " << rs.updateMs << " / " << otherMs;
+            text_label(gui, tm.str());
+            std::stringstream ph;
+            ph << "ms mainDraw/flush/swap: " << std::setprecision(1)
+               << rs.mainDrawMs << " / " << rs.flushMs << " / " << rs.swapMs;
+            text_label(gui, ph.str());
+            std::stringstream up;
+            up << "ms gui/focus(cam/reader/rMan): " << std::setprecision(1)
+               << rs.guiUpdateMs << " / " << rs.focusUpdateMs
+               << " (" << rs.camUpdateMs << "/" << rs.readerUpdateMs << "/" << rs.rManUpdateMs << ")";
+            text_label(gui, up.str());
+            std::stringstream lows;
+            lows << "Frame ms 1%/0.1% low: " << std::setprecision(1)
+                 << RenderStats::get().percentile_high(0.99f) << " / " << RenderStats::get().percentile_high(0.999f);
+            text_label(gui, lows.str());
+            text_label(gui, std::string("Window cache rebuilt: ") + (rs.windowCacheRebuilt ? "YES (F1)" : "no"));
+            text_label(gui, std::string("BVH rebuilt this frame: ") + (rs.bvhRebuiltThisFrame ? "YES (heavy)" : "no"));
+            text_label(gui, "Draw calls / tree walks: " + std::to_string(rs.drawCalls) + " / " + std::to_string(rs.treeWalks));
+            text_label(gui, "Node blits / direct draws / rebuilds: " + std::to_string(rs.cachedNodeBlits) + " / " + std::to_string(rs.directComponentDraws) + " / " + std::to_string(rs.nodeRebuilds));
+            text_label(gui, "saveLayers/frame: " + std::to_string(rs.saveLayersIssued));
+            text_label(gui, "Unsorted (not in BVH) / node caches: " + std::to_string(rs.unsortedCount) + " / " + std::to_string(rs.nodeCacheCount));
+            text_label(gui, "Layers visible / in-view: " + std::to_string(rs.visibleLayers) + " / " + std::to_string(rs.visibleLayersInView)
+                            + " (waste " + std::to_string(rs.visibleLayers - rs.visibleLayersInView) + ")");
         }
     }
 }
@@ -2352,6 +2384,7 @@ void Toolbar::general_settings_inner_gui() {
                         checkbox_boolean_field(gui, "make all tools share same size", "Make all tools share size", &main.toolConfig.globalConf.useGlobalRelativeWidth);
                         #ifndef __EMSCRIPTEN__
                             checkbox_boolean_field(gui, "disable graphics driver workarounds", "Disable graphics driver workarounds (enabling or disabling this might fix some graphical glitches, requires restart)", &main.conf.disableGraphicsDriverWorkarounds);
+                            input_scalar_field<int>(gui, "gpu resource cache budget mb", "GPU resource cache budget (MB, requires restart; raise for large flattened drawings)", &main.conf.gpuResourceCacheBudgetMB, 128, 65536);
                         #endif
                         input_scalar_field(gui, "jump transition time", "Jump transition time", &main.conf.jumpTransitionTime, 0.01f, 1000.0f, {.decimalPrecision = 2});
                         // PHASE4 §10 M0: per-axis bake cap for Flatten Layer
@@ -2523,6 +2556,7 @@ void Toolbar::general_settings_inner_gui() {
                         input_scalar_field<size_t>(gui, "components to force cache rebuild", "Number of components to force cache rebuild", &DrawingProgramCache::MINIMUM_COMPONENTS_TO_START_REBUILD, 1, 1000000);
                         input_scalar_field<size_t>(gui, "maximum frame time to force cache rebuild", "Maximum frame time to force cache rebuild (ms)", &DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH, 1, 1000000);
                         input_scalar_field<size_t>(gui, "minimum time to force cache rebuild", "Minimum time to check cache rebuild (ms)", &DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH, 1, 1000000);
+                        input_scalar_field<size_t>(gui, "motion cache coarsen shift", "Motion cache coarsen shift (0=off)", &DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT, 0, 16);
                     });
                     break;
                 }

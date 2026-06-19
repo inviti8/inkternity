@@ -25,7 +25,7 @@ class FxLibraryStore;
 class LegacyFxLibrary;
 class PhoneDrawingProgramScreen;
 class DrawingProgram;
-namespace RasterFlatten { void flatten_layer_in_view(DrawingProgram& drawP); }
+namespace RasterFlatten { void flatten_layer(DrawingProgram& drawP); }
 
 class DrawingProgram {
     public:
@@ -201,5 +201,5 @@ class DrawingProgram {
         friend class ToolConfiguration;
         // PHASE4 §10: flatten needs selection (skip mid-manipulation
         // comps) + droppedDownloadingFiles (skip still-loading images).
-        friend void RasterFlatten::flatten_layer_in_view(DrawingProgram& drawP);
+        friend void RasterFlatten::flatten_layer(DrawingProgram& drawP);
 };
