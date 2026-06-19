@@ -54,8 +54,22 @@ void EllipseDrawEditTool::edit_start(EditTool& editTool, std::any& prevData) {
     auto& a = static_cast<EllipseCanvasComponent&>(comp->obj->get_comp());
 
     prevData = a.d;
-    editTool.add_point_handle({&a.d.p1, nullptr, &a.d.p2});
-    editTool.add_point_handle({&a.d.p2, &a.d.p1, nullptr});
+    // PHASE6: editing an ellipse makes it skewable. Convert a legacy bbox ellipse
+    // to the affine center+tips form (lossless — same axis-aligned ellipse) the
+    // first time it's edited; thereafter the two axis-tip handles rotate/scale/
+    // shear it. (Undo restores the pre-edit data via EditTool's oldData snapshot.)
+    if(!a.d.affineMode) {
+        a.d.center = Vector2f{(a.d.p1.x() + a.d.p2.x()) * 0.5f, (a.d.p1.y() + a.d.p2.y()) * 0.5f};
+        a.d.tipA = Vector2f{a.d.p2.x(), a.d.center.y()};   // right end of the horizontal semi-axis
+        a.d.tipB = Vector2f{a.d.center.x(), a.d.p2.y()};   // bottom end of the vertical semi-axis
+        a.d.affineMode = true;
+        comp->obj->commit_update(drawP);
+    }
+    // Two free-moving handles at the semi-axis tips. The center stays put while
+    // editing (move the whole ellipse with the normal selection drag); dragging a
+    // tip changes that axis, and non-perpendicular axes produce the shear/skew.
+    editTool.add_point_handle({&a.d.tipA, nullptr, nullptr});
+    editTool.add_point_handle({&a.d.tipB, nullptr, nullptr});
 }
 
 void EllipseDrawEditTool::commit_edit_updates(std::any& prevData) {

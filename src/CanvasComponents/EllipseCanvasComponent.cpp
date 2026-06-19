@@ -3,6 +3,7 @@
 #include "Helpers/ConvertVec.hpp"
 #include "Helpers/SCollision.hpp"
 #include <include/core/SkPathBuilder.h>
+#include <include/core/SkMatrix.h>
 #include "../DrawCollision.hpp"
 
 CanvasComponentType EllipseCanvasComponent::get_type() const {
@@ -10,19 +11,25 @@ CanvasComponentType EllipseCanvasComponent::get_type() const {
 }
 
 void EllipseCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode);
+    // Wire payload — same-build peers, so the PHASE6 affine fields are always present.
+    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB);
 }
 
 void EllipseCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
-    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode);
+    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB);
 }
 
 void EllipseCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode);
+    a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.affineMode, d.center, d.tipA, d.tipB);
 }
 
 void EllipseCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     a(d.strokeColor, d.fillColor, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode);
+    // PHASE6 (INFPNT000018 / 0.17.0): affine fields appended. Pre-0.17 files have
+    // none — they keep affineMode=false (default) and load as the legacy bbox
+    // ellipse unchanged.
+    if(version >= VersionNumber(0, 17, 0))
+        a(d.affineMode, d.center, d.tipA, d.tipB);
 }
 
 void EllipseCanvasComponent::change_stroke_color(const Vector4f& newStrokeColor) {
@@ -50,6 +57,21 @@ void EllipseCanvasComponent::draw(SkCanvas* canvas, const DrawData& drawData, co
 }
 
 void EllipseCanvasComponent::create_draw_data() {
+    if(d.affineMode) {
+        // PHASE6: oval inscribed in the parallelogram spanned by the two semi-axes.
+        // Build a unit oval and affine-transform the PATH (not the canvas) so the
+        // stroke keeps a uniform width while the ellipse shears.
+        const Vector2f axisA{d.tipA.x() - d.center.x(), d.tipA.y() - d.center.y()};
+        const Vector2f axisB{d.tipB.x() - d.center.x(), d.tipB.y() - d.center.y()};
+        SkPathBuilder unit;
+        unit.addOval(SkRect::MakeLTRB(-1.0f, -1.0f, 1.0f, 1.0f));
+        SkMatrix m;
+        m.setAll(axisA.x(), axisB.x(), d.center.x(),
+                 axisA.y(), axisB.y(), d.center.y(),
+                 0.0f, 0.0f, 1.0f);
+        ellipsePath = unit.detach().makeTransform(m);
+        return;
+    }
     SkPathBuilder ellipsePathBuilder;
     SkRect newRect = SkRect::MakeLTRB(d.p1.x(), d.p1.y(), d.p2.x(), d.p2.y());
     ellipsePathBuilder.addOval(newRect);
@@ -79,6 +101,35 @@ bool EllipseCanvasComponent::collides_within_coords(const SCollision::ColliderCo
 void EllipseCanvasComponent::create_collider() {
     using namespace SCollision;
     ColliderCollection<float> strokeObjects;
+
+    if(d.affineMode) {
+        // PHASE6: sample the sheared ellipse (center + cos t * axisA + sin t * axisB).
+        const Vector2f axisA{d.tipA.x() - d.center.x(), d.tipA.y() - d.center.y()};
+        const Vector2f axisB{d.tipB.x() - d.center.x(), d.tipB.y() - d.center.y()};
+        auto sample = [&](float t) {
+            return Vector2f{d.center.x() + std::cos(t) * axisA.x() + std::sin(t) * axisB.x(),
+                            d.center.y() + std::cos(t) * axisA.y() + std::sin(t) * axisB.y()};
+        };
+        if(d.fillStrokeMode == 1) {
+            std::vector<Vector2f> points;
+            const unsigned numOfSegments = 40;
+            for(unsigned i = 0; i < numOfSegments; i++)
+                points.emplace_back(sample(static_cast<float>(i) / numOfSegments * std::numbers::pi * 2.0));
+            generate_polyline(strokeObjects, points, d.strokeWidth, true);
+        }
+        else {
+            const unsigned numOfSegments = 24;
+            Vector2f prevPoint = sample(0.0f);
+            for(unsigned i = 1; i <= numOfSegments; i++) {
+                Vector2f nextPoint = sample(static_cast<float>(i) / numOfSegments * std::numbers::pi * 2.0);
+                strokeObjects.triangle.emplace_back(d.center, prevPoint, nextPoint);
+                prevPoint = nextPoint;
+            }
+        }
+        collisionTree.clear();
+        collisionTree.calculate_bvh_recursive(strokeObjects);
+        return;
+    }
 
     if(d.fillStrokeMode == 0) {
         Vector2f ellipseCenter = (d.p1 + d.p2) * 0.5;
