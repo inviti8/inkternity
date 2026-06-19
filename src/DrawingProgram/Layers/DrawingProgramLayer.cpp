@@ -19,6 +19,8 @@ void DrawingProgramLayer::draw(SkCanvas* canvas, const DrawData& drawData) const
         if(skipSelected && drawData.main->world->drawProg.selection.is_selected(
                const_cast<CanvasComponentContainer::ObjInfo*>(&p)))
             continue;
+        if(p.obj->get_comp().is_mask())   // PHASE7: masks define the clip, not content
+            continue;
         p.obj->draw(canvas, drawData);
     }
 }

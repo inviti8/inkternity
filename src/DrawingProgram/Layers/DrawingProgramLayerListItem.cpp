@@ -2,6 +2,7 @@
 #include "DrawingProgramLayerFolder.hpp"
 #include <cereal/types/string.hpp>
 #include "DrawingProgramLayer.hpp"
+#include "../DrawingProgram.hpp"
 #include "../../MainProgram.hpp"
 #include "../../ReaderMode/ReaderMode.hpp"
 #include "../../World.hpp"
@@ -254,8 +255,17 @@ void DrawingProgramLayerListItem::draw(SkCanvas* canvas, const DrawData& drawDat
 
         if(folderData)
             folderData->draw(canvas, *dd);
-        else
+        else {
+            // PHASE7: this is the direct draw path (screenshots, SVG export, and
+            // the parallax bypass) — apply the layer's mask clip here too, not
+            // just in the cached compositor. Own save/restore so it's scoped even
+            // on the SVG path (which skips the saveLayer above).
+            canvas->save();
+            if(drawData.main && drawData.main->world)
+                drawData.main->world->drawProg.drawCache.apply_layer_mask_clip(*this, canvas, *dd);
             layerData->draw(canvas, *dd);
+            canvas->restore();
+        }
 
         if(!drawData.isSVGRender)
             canvas->restore();
