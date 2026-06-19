@@ -1,7 +1,5 @@
 #include "DrawingProgramCache.hpp"
 #include "DrawingProgram.hpp"
-#include <algorithm>
-#include <cmath>
 #include "../World.hpp"
 #include "../MainProgram.hpp"
 #include "../Diagnostics/RenderStats.hpp"
@@ -66,8 +64,7 @@ size_t DrawingProgramCache::MAXIMUM_COMPONENTS_IN_SINGLE_NODE = 50;
 size_t DrawingProgramCache::CACHE_NODE_RESOLUTION = 2048;
 size_t DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH = 33; // Around 30FPS
 size_t DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH = 5000; // Should be a bit long to prevent objects that are being updated, like brush strokes, from constantly refreshing the cache.
-size_t DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT = 5; // PHASE5.5: MAX coarse-node cache relaxation during fast motion (0 = off)
-size_t DrawingProgramCache::MOTION_CACHE_PX_PER_SHIFT = 24; // PHASE5.5: px/frame of pan per coarsening level (slow pans stay crisp)
+size_t DrawingProgramCache::MOTION_CACHE_COARSEN_SHIFT = 3; // PHASE5.5: coarse-node cache relaxation during camera motion (0 = off)
 
 std::unordered_map<std::shared_ptr<DrawingProgramCacheBVHNode>, DrawingProgramCache::NodeCache> DrawingProgramCache::nodeCacheMap;
 DrawingProgramCache::WindowCache DrawingProgramCache::windowCache;
@@ -426,8 +423,8 @@ void DrawingProgramCache::window_cache_complete_refresh(const DrawData& drawData
 }
 
 WorldScalar DrawingProgramCache::cache_gate_scale(const DrawData& drawData) const {
-    if(currentCoarsenShift > 0)
-        return drawData.cam.c.inverseScale << currentCoarsenShift;
+    if(cameraMovingThisFrame && MOTION_CACHE_COARSEN_SHIFT > 0)
+        return drawData.cam.c.inverseScale << MOTION_CACHE_COARSEN_SHIFT;
     return drawData.cam.c.inverseScale;
 }
 
@@ -439,23 +436,6 @@ void DrawingProgramCache::update_and_draw_cached_canvas(SkCanvas* canvas, const 
     // relaxation (cheap blurry blits in motion) and the crisp rebuild on settle.
     cameraMovingThisFrame = !haveLastWindowCamCoords || drawData.cam.c != lastWindowCamCoords;
     const bool justSettled = !cameraMovingThisFrame && wasMovingLastFrame;
-
-    // Speed-adaptive coarsening: scale the shift with how fast the camera pans
-    // (screen px/frame). Slow, deliberate pans -> shift 0 -> full crisp quality.
-    // Fast transitions -> up to MAX -> smooth (blur invisible at speed).
-    currentCoarsenShift = 0;
-    if(cameraMovingThisFrame && haveLastWindowCamCoords && MOTION_CACHE_COARSEN_SHIFT > 0 && MOTION_CACHE_PX_PER_SHIFT > 0) {
-        const double invSd = static_cast<double>(drawData.cam.c.inverseScale);
-        if(invSd > 0.0) {
-            const double dxPx = (static_cast<double>(drawData.cam.c.pos.x()) - static_cast<double>(lastWindowCamCoords.pos.x())) / invSd;
-            const double dyPx = (static_cast<double>(drawData.cam.c.pos.y()) - static_cast<double>(lastWindowCamCoords.pos.y())) / invSd;
-            const double pxMoved = std::abs(dxPx) + std::abs(dyPx);
-            const size_t lvl = static_cast<size_t>(pxMoved / static_cast<double>(MOTION_CACHE_PX_PER_SHIFT));
-            currentCoarsenShift = std::min(lvl, MOTION_CACHE_COARSEN_SHIFT);
-        }
-    }
-    RenderStats::get().live.coarsenShift = static_cast<int>(currentCoarsenShift);
-
     lastWindowCamCoords = drawData.cam.c;
     haveLastWindowCamCoords = true;
     wasMovingLastFrame = cameraMovingThisFrame;

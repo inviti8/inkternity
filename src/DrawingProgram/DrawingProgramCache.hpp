@@ -21,19 +21,13 @@ class DrawingProgramCache {
         static size_t CACHE_NODE_RESOLUTION;
         static size_t MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH;
         static size_t MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH;
-        // PHASE5.5: while the camera is moving, relax the node-cache gate by up to
-        // this many powers of two so coarse upper BVH nodes (which hold "straddler"
+        // PHASE5.5: while the camera is moving, relax the node-cache gate by this
+        // many powers of two so coarse upper BVH nodes (which hold "straddler"
         // components) become cacheable+blittable instead of re-rasterized every
-        // frame. Blitting a coarse cache upscales (blurry) by up to 2^shift.
-        // This is the MAX; the actual shift scales with camera speed (see below),
-        // so fast transitions coarsen (smooth, blur invisible) while slow pans stay
-        // crisp (shift 0). 0 disables entirely. Tunable live in Settings -> Debug.
+        // frame. Blitting a coarse cache upscales (blurry) by up to 2^shift, which
+        // is acceptable in motion; the at-rest frame rebuilds crisp at shift 0.
+        // 0 disables (original behavior). Tunable live in Settings -> Debug.
         static size_t MOTION_CACHE_COARSEN_SHIFT;
-        // Screen-pixels-of-pan-per-frame that adds one level of coarsening. Below
-        // this speed the shift is 0 (full quality); each additional this-many px/frame
-        // adds one more level up to MOTION_CACHE_COARSEN_SHIFT. Larger = stay crisp
-        // at higher speeds (less aggressive). Tunable live in Settings -> Debug.
-        static size_t MOTION_CACHE_PX_PER_SHIFT;
 
         DrawingProgramCache(DrawingProgram& initDrawP);
         void add_component(CanvasComponentContainer::ObjInfo* c);
@@ -101,7 +95,6 @@ class DrawingProgramCache {
         bool haveLastWindowCamCoords = false;
         bool wasMovingLastFrame = false;
         bool cameraMovingThisFrame = false;
-        size_t currentCoarsenShift = 0;   // speed-adaptive: 0 at rest/slow, up to MAX when fast
 
         std::shared_ptr<DrawingProgramCacheBVHNode> bvhRoot;
         std::vector<CanvasComponentContainer::ObjInfo*> unsortedComponents;

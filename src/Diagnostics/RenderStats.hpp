@@ -34,7 +34,6 @@ struct RenderStats {
         int    nodeRebuilds         = 0;      // BVH node-cache surfaces (re)rendered this frame (F2 / cache miss)
         int    unsortedCount        = 0;      // components in unsortedComponents (NOT in BVH -> always direct-drawn)
         int    nodeCacheCount       = 0;      // node-cache surfaces currently allocated (BVH coverage)
-        int    coarsenShift         = 0;      // speed-adaptive motion coarsening level this frame (0 = crisp)
         double drawMs               = 0.0;    // total wall time in DrawingProgram::draw this frame
         double updateMs             = 0.0;    // total wall time in DrawingProgram::update (incl. BVH rebuild)
         bool   bvhRebuiltThisFrame  = false;  // full BVH rebuild_cache() fired this frame (expensive)
