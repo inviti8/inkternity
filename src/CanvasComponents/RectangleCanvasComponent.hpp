@@ -36,6 +36,15 @@ class RectangleCanvasComponent : public CanvasComponent {
             // load with polygonMode=false and are unchanged.
             bool polygonMode = false;
             std::vector<Vector2f> points;
+            // PHASE8: optional per-node bezier tangents (parallel to `points`,
+            // or empty == every node is a straight corner). controlIn/Out are
+            // offsets from the node; an edge A->B is a cubic when A.controlOut or
+            // B.controlIn is non-zero, else a straight line. nodeType: 0 corner,
+            // 1 smooth (mirrored tangents), 2 cusp (independent). Old polygons
+            // load with these empty -> identical straight-edge rendering.
+            std::vector<Vector2f> controlIn;
+            std::vector<Vector2f> controlOut;
+            std::vector<uint8_t> nodeType;
             // PHASE7: when isMask is true this shape is a clip mask for its layer
             // (not drawn as artwork); maskInvert clips to the exterior instead of
             // the interior. Old files default both false (normal shape).

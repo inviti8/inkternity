@@ -80,15 +80,15 @@ CanvasComponentType RectangleCanvasComponent::get_type() const {
 
 void RectangleCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const {
     // Wire payload — peers run the same build, so all appended fields are present.
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert);
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert, d.controlIn, d.controlOut, d.nodeType);
 }
 
 void RectangleCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert);
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert, d.controlIn, d.controlOut, d.nodeType);
 }
 
 void RectangleCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert);
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points, d.isMask, d.maskInvert, d.controlIn, d.controlOut, d.nodeType);
 }
 
 void RectangleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
@@ -100,6 +100,10 @@ void RectangleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, 
     // PHASE7 (INFPNT000019 / 0.18.0): mask flags appended.
     if(version >= VersionNumber(0, 18, 0))
         a(d.isMask, d.maskInvert);
+    // PHASE8 (INFPNT000020 / 0.19.0): per-node bezier tangents appended. Pre-0.19
+    // polygons have none -> empty arrays -> all-corner (straight) rendering.
+    if(version >= VersionNumber(0, 19, 0))
+        a(d.controlIn, d.controlOut, d.nodeType);
 }
 
 std::optional<SkPath> RectangleCanvasComponent::get_mask_path() const {
