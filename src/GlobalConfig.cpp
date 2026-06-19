@@ -30,7 +30,6 @@ nlohmann::json GlobalConfig::get_config_json(const InputManager& input) const {
     toRet["guiScale"] = guiScale;
     toRet["jumpTransitionTime"] = jumpTransitionTime;
     toRet["disableGraphicsDriverWorkarounds"] = disableGraphicsDriverWorkarounds;
-    toRet["gpuResourceCacheBudgetMB"] = gpuResourceCacheBudgetMB;
     toRet["dragZoomSpeed"] = dragZoomSpeed;
     toRet["scrollZoomSpeed"] = scrollZoomSpeed;
     toRet["vsync"] = vsyncValue;
@@ -109,7 +108,6 @@ void GlobalConfig::set_config_json(InputManager& input, const nlohmann::json& j,
     try{j.at("guiScale").get_to(guiScale);} catch(...) {}
     try{j.at("jumpTransitionTime").get_to(jumpTransitionTime);} catch(...) {}
     try{j.at("disableGraphicsDriverWorkarounds").get_to(disableGraphicsDriverWorkarounds);} catch(...) {}
-    try{j.at("gpuResourceCacheBudgetMB").get_to(gpuResourceCacheBudgetMB);} catch(...) {}
     try{j.at("useNativeFilePicker").get_to(useNativeFilePicker);} catch(...) {}
     try{j.at("verifiablePublishingEnabled").get_to(verifiablePublishingEnabled);} catch(...) {}
     // Network toggle hidden for release — force mainnet unless env override.

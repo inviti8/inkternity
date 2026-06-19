@@ -806,11 +806,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
             mS.ctx = GrDirectContexts::MakeGL(iface, opts);
             if(!mS.ctx)
                 throw std::runtime_error("[GrDirectContexts::MakeGL] Could not make context");
-            // PHASE5.5: large flattened layers are big textures; the default Skia
-            // budget evicts + re-uploads them every motion frame. Hold the working
-            // set resident so panning/zooming a heavy canvas doesn't thrash.
-            if(mS.m->conf.gpuResourceCacheBudgetMB > 0)
-                mS.ctx->setResourceCacheLimit(static_cast<size_t>(mS.m->conf.gpuResourceCacheBudgetMB) * 1024ull * 1024ull);
         #endif
 
 #ifdef USE_SKIA_BACKEND_GRAPHITE
