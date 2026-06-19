@@ -725,8 +725,8 @@ void Toolbar::top_toolbar() {
                                     optionsMenuOpen = true;
                                     optionsMenuType = CANVAS_SETTINGS_MENU;
                                 });
-                                menu_popup_text_button("flatten ink in view", "Flatten Layer (View)", [&] {
-                                    RasterFlatten::flatten_layer_in_view(main.world->drawProg);
+                                menu_popup_text_button("flatten layer", "Flatten Layer", [&] {
+                                    RasterFlatten::flatten_layer(main.world->drawProg);
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {

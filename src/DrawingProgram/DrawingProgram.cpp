@@ -1084,7 +1084,7 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
         // has depth, the layer tree is walked directly each frame (the
         // same path screenshots use — LayerListItem::draw applies the
         // derived cameras). Perf note (PHASE4.md §5): parallaxed canvases
-        // redraw uncached; Flatten Layer (View) is the mitigation for
+        // redraw uncached; Flatten Layer is the mitigation for
         // heavy layers. Depth-0-everywhere canvases never reach this
         // branch and keep the cache path bit-identically.
         canvas->saveLayer(nullptr, nullptr);

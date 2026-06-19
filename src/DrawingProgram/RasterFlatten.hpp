@@ -6,14 +6,18 @@
 // tiled raster surface + BVH entry. On a heavy crosshatch canvas the
 // component count is what makes the app sluggish — every full BVH rebuild
 // scales with it, and overlapping strokes never share tiles. Flattening
-// bakes the in-view components into ONE merged raster component,
+// bakes ALL of the layer's components into ONE merged raster component,
 // collapsing the count (and de-duplicating overlapping tiles) in a single
-// undoable action the artist triggers when a region is "done".
+// undoable action the artist triggers when a layer is "done".
+//
+// PHASE5.5: this was originally view-bounded (only on-screen components),
+// which surprised artists — "flatten the layer" should bake the whole layer,
+// not just what's on screen. It now flattens the entire active layer.
 //
 // PHASE4 §10 generalized this from ink-only to every *visual* component
 // type (vector strokes, shapes, text boxes, images) — which also removed
-// the old z-order caveat: when everything in view on the layer merges,
-// nothing is left to interleave incorrectly. Skipped: WAYPOINT (functional
+// the old z-order caveat: when everything on the layer merges, nothing is
+// left to interleave incorrectly. Skipped: WAYPOINT (functional
 // marker, not artwork), still-downloading images (baking the placeholder
 // would silently lose the real image), and currently-selected components
 // (mid-manipulation).
@@ -37,12 +41,12 @@ namespace RasterFlatten {
 // is ~256 MB of readback bitmap + up to ~512 MB of transient 16-bit tiles.
 extern int MAXIMUM_FLATTEN_SIZE_PX;
 
-// Bake every visual component whose world bounds intersect the current
-// camera view into a single merged raster component on the layer being
-// edited, replacing the originals. Undoable (place + erase). No-op with
-// an in-app notice if fewer than two eligible components are in view, or
-// if the build has no libmypaint (the merged result is a libmypaint
-// surface so it stays raster-erasable).
-void flatten_layer_in_view(DrawingProgram& drawP);
+// Bake every visual component on the layer being edited into a single merged
+// raster component, replacing the originals (the WHOLE layer, regardless of
+// what's on screen). Undoable (place + erase). No-op with an in-app notice if
+// fewer than two eligible components exist on the layer, or if the build has
+// no libmypaint (the merged result is a libmypaint surface so it stays
+// raster-erasable).
+void flatten_layer(DrawingProgram& drawP);
 
 }  // namespace RasterFlatten

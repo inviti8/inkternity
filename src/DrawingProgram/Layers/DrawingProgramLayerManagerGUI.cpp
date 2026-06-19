@@ -676,7 +676,7 @@ void DrawingProgramLayerManagerGUI::merge_layer_down(GUIStuff::TreeListingObjInd
         return l.get_alpha() == 1.0f && l.get_blend_mode() == SerializedBlendMode::BLEND_SRC_OVER;
     };
     if(!has_default_compositing(*srcPtr) || !has_default_compositing(dest)) {
-        Logger::get().log("USERINFO", "Merge Down: both layers need default alpha + blend mode (a merge under non-default compositing would change the art's appearance). Reset them, or use Flatten Layer (View).");
+        Logger::get().log("USERINFO", "Merge Down: both layers need default alpha + blend mode (a merge under non-default compositing would change the art's appearance). Reset them, or use Flatten Layer.");
         return;
     }
     // Different parallax depths = different derived cameras = content

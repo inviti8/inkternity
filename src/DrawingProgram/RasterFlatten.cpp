@@ -39,7 +39,7 @@ int MAXIMUM_FLATTEN_SIZE_PX = 8192;
 
 #ifdef HVYM_HAS_LIBMYPAINT
 
-void flatten_layer_in_view(DrawingProgram& drawP) {
+void flatten_layer(DrawingProgram& drawP) {
     auto& world = drawP.world;
     auto& main = world.main;
 
@@ -62,23 +62,11 @@ void flatten_layer_in_view(DrawingProgram& drawP) {
     auto& components = editLayer->get_layer().components;
     if (!components) return;
 
-    // Active-view world AABB: project the four screen corners into world
-    // space (matches how the screenshot + vectorize tools build their rects).
     const auto& cam = world.drawData.cam;
-    const auto& camCoords = cam.c;
-    const Vector2f screen = cam.viewingArea;
-    const WorldVec c00 = camCoords.from_space({0.0f, 0.0f});
-    const WorldVec c10 = camCoords.from_space({screen.x(), 0.0f});
-    const WorldVec c01 = camCoords.from_space({0.0f, screen.y()});
-    const WorldVec c11 = camCoords.from_space({screen.x(), screen.y()});
-    SCollision::AABB<WorldScalar> viewAABB;
-    viewAABB.min = WorldVec{std::min({c00.x(), c10.x(), c01.x(), c11.x()}),
-                            std::min({c00.y(), c10.y(), c01.y(), c11.y()})};
-    viewAABB.max = WorldVec{std::max({c00.x(), c10.x(), c01.x(), c11.x()}),
-                            std::max({c00.y(), c10.y(), c01.y(), c11.y()})};
 
-    // Collect every visual in-view component on the layer (PHASE4 §10).
-    // Skip-list rather than allow-list:
+    // Collect every visual component on the layer (the whole layer, not just
+    // what's on screen — flattening a layer bakes ALL of its artwork into one
+    // image). Skip-list rather than allow-list:
     //  - WAYPOINT: functional marker, not artwork — rasterizing the pin
     //    would orphan it from wpGraph.
     //  - IMAGE without its resource on hand (still downloading / display
@@ -100,7 +88,6 @@ void flatten_layer_in_view(DrawingProgram& drawP) {
         if (type == CanvasComponentType::WAYPOINT) continue;
         const auto wb = container.get_world_bounds();
         if (!wb.has_value()) continue;
-        if (!SCollision::collide(wb.value(), viewAABB)) continue;
         if (drawP.selection.is_selected(&(*it))) continue;
         if (type == CanvasComponentType::IMAGE) {
             auto& img = static_cast<ImageCanvasComponent&>(container.get_comp());
@@ -136,22 +123,23 @@ void flatten_layer_in_view(DrawingProgram& drawP) {
 
     if (sources.size() < 2) {
         Logger::get().log("USERINFO",
-            "Flatten: need at least 2 components in view (found " +
+            "Flatten: need at least 2 components on the layer (found " +
             std::to_string(sources.size()) + ").");
         return;
     }
 
     // Bake scale: never coarser than the finest raster source AND never
-    // coarser than the current view (WYSIWYG floor — vectors are
+    // coarser than the current zoom (WYSIWYG floor — vectors are
     // resolution-free, so "at least as sharp as what's on screen" is the
-    // intuitive guarantee; zoom in before flattening to keep more detail).
-    // Coarsened only if the resulting bitmap would blow past the per-axis
-    // cap.
+    // intuitive guarantee; zoom in before flattening a vector-bearing layer
+    // to keep more detail). Coarsened only if the resulting bitmap would blow
+    // past the per-axis cap — likely for a layer whose artwork spans a large
+    // world area (the "Region large — reduced resolution" note below fires).
     const int maxFlattenDim = std::max(MAXIMUM_FLATTEN_SIZE_PX, 256);
     const WorldVec dim = mergedAABB->dim();
     // Pure-raster flatten keeps the finest-source rule (baking finer than
     // the sources' pixels gains nothing and costs tile memory); the
-    // current-view floor applies once vector content is in the mix.
+    // current-zoom floor applies once vector content is in the mix.
     WorldScalar targetInv = finestInverseScale.value_or(cam.c.inverseScale);
     if (hasVectorSource && cam.c.inverseScale < targetInv)
         targetInv = cam.c.inverseScale;
@@ -241,7 +229,7 @@ void flatten_layer_in_view(DrawingProgram& drawP) {
 
 #else  // !HVYM_HAS_LIBMYPAINT
 
-void flatten_layer_in_view(DrawingProgram&) {
+void flatten_layer(DrawingProgram&) {
     // The merged result is a libmypaint surface (raster-erasable), so
     // flatten as a whole is gated on the ink feature.
     Logger::get().log("USERINFO", "Flatten: custom ink isn't available in this build.");
