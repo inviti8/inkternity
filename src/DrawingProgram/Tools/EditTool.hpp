@@ -15,6 +15,10 @@ class EditTool : public DrawingProgramToolBase {
             float minimumDistanceBetweenMinAndPoint = MINIMUM_DISTANCE_BETWEEN_BOUNDS;
             float minimumDistanceBetweenMaxAndPoint = MINIMUM_DISTANCE_BETWEEN_BOUNDS;
             Affine2f coordMatrix = Affine2f::Identity();
+            // PHASE8: if set, this handle is a bezier tangent — draw an "arm" line
+            // from this anchor (a node position, component-local) to the handle
+            // tip, and render the tip distinctly. nullptr = a normal anchor handle.
+            Vector2f* armAnchor = nullptr;
         };
 
         EditTool(DrawingProgram& initDrawP);
@@ -40,9 +44,11 @@ class EditTool : public DrawingProgramToolBase {
         void edit_start(CanvasComponentContainer::ObjInfo* comp, bool initUndoAfterEditDone = true);
         bool is_editable(CanvasComponentContainer::ObjInfo* comp);
 
-        // PHASE6: re-register handles after the editable point list changed size
-        // (clears handles + selection, asks the component edit tool to re-add).
-        void refresh_point_handles();
+        // PHASE6/8: re-register handles after the editable point list changed
+        // size, or to refresh bezier-tangent coordMatrices after a node moved.
+        // keepSelection preserves selectedHandles (valid when the handle count is
+        // unchanged — e.g. after a drag, not after Add/Delete).
+        void refresh_point_handles(bool keepSelection = false);
         void toggle_handle_selection(size_t handleIndex);
 
         std::unique_ptr<DrawingProgramEditToolBase> compEditTool;

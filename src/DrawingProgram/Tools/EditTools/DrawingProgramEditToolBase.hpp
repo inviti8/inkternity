@@ -15,6 +15,9 @@ class DrawingProgramEditToolBase {
         // list changes size (e.g. polygon Add/Delete vertex), since handles hold
         // pointers into that list. Default no-op for tools with fixed handles.
         virtual void register_handles(EditTool& editTool) {}
+        // PHASE8: opt in to re-registering handles after each handle drag — needed
+        // for bezier tangents whose coordMatrix tracks a (possibly moved) node.
+        virtual bool wants_handle_refresh_on_drag() const { return false; }
         virtual void commit_edit_updates(std::any& prevData) = 0;
         virtual bool edit_update() = 0;
         virtual void edit_gui(Toolbar& t) = 0;

@@ -10,6 +10,47 @@
 #include "../../../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
 #include "../../../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 #include <algorithm>
+#include <cmath>
+
+namespace {
+// PHASE8: keep the per-node bezier arrays sized with the vertex list (empty ->
+// all corners; resize preserves existing nodes and appends corners).
+void ensure_node_arrays(RectangleCanvasComponent::Data& d) {
+    const size_t n = d.points.size();
+    d.controlIn.resize(n, Vector2f{0.0f, 0.0f});
+    d.controlOut.resize(n, Vector2f{0.0f, 0.0f});
+    d.nodeType.resize(n, 0);
+}
+// Turn node i into a smooth curve: tangents along (next - prev), length ~1/3 of
+// the shorter adjacent edge (in/out mirrored).
+void make_node_curve(RectangleCanvasComponent::Data& d, size_t i) {
+    ensure_node_arrays(d);
+    const size_t n = d.points.size();
+    if(n < 3 || i >= n) return;
+    const size_t prev = (i + n - 1) % n, next = (i + 1) % n;
+    auto dist = [&](size_t a, size_t b) {
+        const float dx = d.points[a].x() - d.points[b].x(), dy = d.points[a].y() - d.points[b].y();
+        return std::sqrt(dx * dx + dy * dy);
+    };
+    float dx = d.points[next].x() - d.points[prev].x();
+    float dy = d.points[next].y() - d.points[prev].y();
+    float dl = std::sqrt(dx * dx + dy * dy);
+    if(dl < 1e-6f) { dx = 1.0f; dy = 0.0f; dl = 1.0f; }
+    dx /= dl; dy /= dl;
+    float len = std::min(dist(i, prev), dist(i, next)) * 0.33f;
+    if(len < 1e-3f) len = 1.0f;
+    d.controlOut[i] = Vector2f{dx * len, dy * len};
+    d.controlIn[i]  = Vector2f{-dx * len, -dy * len};
+    d.nodeType[i] = 1;   // smooth
+}
+void make_node_corner(RectangleCanvasComponent::Data& d, size_t i) {
+    ensure_node_arrays(d);
+    if(i >= d.points.size()) return;
+    d.controlIn[i]  = Vector2f{0.0f, 0.0f};
+    d.controlOut[i] = Vector2f{0.0f, 0.0f};
+    d.nodeType[i] = 0;
+}
+}
 
 RectDrawEditTool::RectDrawEditTool(DrawingProgram& initDrawP, CanvasComponentContainer::ObjInfo* initComp):
     DrawingProgramEditToolBase(initDrawP, initComp)
@@ -59,17 +100,22 @@ void RectDrawEditTool::edit_gui(Toolbar& t) {
             });
         }
 
-        // PHASE6 M3: Add Point — click two adjacent vertices on the canvas (they
-        // turn yellow), then insert a new vertex at the midpoint of that edge.
+        // PHASE6/8: polygon node actions. Only VERTEX handles (index < points
+        // count) count for these — tangent handles (indices >= count) are ignored.
         if(a.d.polygonMode && editTool) {
-            const auto& sel = editTool->selectedHandles;
             const size_t n = a.d.points.size();
-            std::optional<size_t> insertAfter;   // edge start index, or none if selection isn't a single edge
-            if(sel.size() == 2 && n >= 3) {
-                const size_t lo = std::min(sel[0], sel[1]);
-                const size_t hi = std::max(sel[0], sel[1]);
-                if(hi == lo + 1) insertAfter = lo;                  // adjacent in sequence
-                else if(lo == 0 && hi == n - 1) insertAfter = hi;   // wrap-around edge (last -> first)
+            std::vector<size_t> selVerts;
+            for(size_t s : editTool->selectedHandles)
+                if(s < n) selVerts.push_back(s);
+
+            // Add Point — two adjacent vertices selected -> insert a vertex at the
+            // edge midpoint (keeping the bezier arrays parallel).
+            std::optional<size_t> insertAfter;
+            if(selVerts.size() == 2 && n >= 3) {
+                const size_t lo = std::min(selVerts[0], selVerts[1]);
+                const size_t hi = std::max(selVerts[0], selVerts[1]);
+                if(hi == lo + 1) insertAfter = lo;
+                else if(lo == 0 && hi == n - 1) insertAfter = hi;
             }
             if(insertAfter.has_value()) {
                 const size_t after = insertAfter.value();
@@ -79,15 +125,33 @@ void RectDrawEditTool::edit_gui(Toolbar& t) {
                     const Vector2f& va = rect.d.points[after];
                     const Vector2f& vb = rect.d.points[(after + 1) % m];
                     const Vector2f mid{(va.x() + vb.x()) * 0.5f, (va.y() + vb.y()) * 0.5f};
-                    rect.d.points.insert(rect.d.points.begin() + static_cast<long>(after + 1), mid);
+                    const long at = static_cast<long>(after + 1);
+                    rect.d.points.insert(rect.d.points.begin() + at, mid);
+                    if(rect.d.controlIn.size()  == m) rect.d.controlIn.insert(rect.d.controlIn.begin() + at, Vector2f{0.0f, 0.0f});
+                    if(rect.d.controlOut.size() == m) rect.d.controlOut.insert(rect.d.controlOut.begin() + at, Vector2f{0.0f, 0.0f});
+                    if(rect.d.nodeType.size()   == m) rect.d.nodeType.insert(rect.d.nodeType.begin() + at, static_cast<uint8_t>(0));
                     comp->obj->commit_update(drawP);
-                    if(editTool) editTool->refresh_point_handles();   // vector resized -> re-point handles
+                    if(editTool) editTool->refresh_point_handles();
                     drawP.world.main.g.gui.set_to_layout();
                 }});
             }
-            else {
-                text_label_light(gui, "Select 2 adjacent vertices to add a point");
+
+            // Make Curve / Make Corner — exactly one vertex selected.
+            if(selVerts.size() == 1 && n >= 3) {
+                const size_t vi = selVerts[0];
+                const bool isCurve = vi < a.d.nodeType.size() && a.d.nodeType[vi] != 0;
+                text_button(gui, "polygon node curve toggle", isCurve ? "Make Corner" : "Make Curve", { .wide = true, .onClick = [this, vi, isCurve] {
+                    auto& rect = static_cast<RectangleCanvasComponent&>(comp->obj->get_comp());
+                    if(isCurve) make_node_corner(rect.d, vi);
+                    else        make_node_curve(rect.d, vi);
+                    comp->obj->commit_update(drawP);
+                    if(editTool) editTool->refresh_point_handles();   // tangent handle count changed
+                    drawP.world.main.g.gui.set_to_layout();
+                }});
             }
+
+            if(selVerts.empty())
+                text_label_light(gui, "Select 2 adjacent vertices to Add Point, or 1 vertex to curve it");
         }
     });
 }
@@ -102,17 +166,35 @@ void RectDrawEditTool::register_handles(EditTool& editTool) {
     this->editTool = &editTool;
     auto& a = static_cast<RectangleCanvasComponent&>(comp->obj->get_comp());
     if(a.d.polygonMode) {
-        // PHASE6 M2: one free-moving handle per polygon vertex. Handles hold
-        // pointers into a.d.points; the vector is not resized during a drag
-        // session. After Add Point grows the vector, EditTool::refresh_point_handles
-        // calls this again to re-point the handles (M3).
+        // PHASE6 M2: one free-moving handle per polygon vertex. Vertex handles are
+        // registered FIRST so handle index i (for i < points.size()) maps to vertex
+        // i — Add Point and Make Curve/Corner rely on that. PHASE8: bezier tangent
+        // handles for curve nodes come AFTER (indices >= points.size()); each holds
+        // a control OFFSET with coordMatrix = translate(node) so it renders at
+        // node+offset, and armAnchor = the node for the arm line.
         for(auto& pt : a.d.points)
             editTool.add_point_handle({&pt, nullptr, nullptr});
+        const size_t n = a.d.points.size();
+        for(size_t i = 0; i < n; ++i) {
+            if(i >= a.d.nodeType.size() || a.d.nodeType[i] == 0)
+                continue;   // corner node — no tangents
+            Affine2f m = Affine2f::Identity();
+            m.translation() = a.d.points[i];
+            if(i < a.d.controlOut.size())
+                editTool.add_point_handle({&a.d.controlOut[i], nullptr, nullptr, MINIMUM_DISTANCE_BETWEEN_BOUNDS, MINIMUM_DISTANCE_BETWEEN_BOUNDS, m, &a.d.points[i]});
+            if(i < a.d.controlIn.size())
+                editTool.add_point_handle({&a.d.controlIn[i], nullptr, nullptr, MINIMUM_DISTANCE_BETWEEN_BOUNDS, MINIMUM_DISTANCE_BETWEEN_BOUNDS, m, &a.d.points[i]});
+        }
     }
     else {
         editTool.add_point_handle({&a.d.p1, nullptr, &a.d.p2});
         editTool.add_point_handle({&a.d.p2, &a.d.p1, nullptr});
     }
+}
+
+bool RectDrawEditTool::wants_handle_refresh_on_drag() const {
+    auto& a = static_cast<RectangleCanvasComponent&>(comp->obj->get_comp());
+    return a.d.polygonMode;   // keep tangent coordMatrices in sync after a node moves
 }
 
 void RectDrawEditTool::commit_edit_updates(std::any& prevData) {
