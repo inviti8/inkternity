@@ -78,6 +78,7 @@ void flatten_layer(DrawingProgram& drawP) {
     // highest-res) RASTER source; vector content has no native scale and
     // is covered by the current-view WYSIWYG floor below.
     std::vector<CanvasComponentContainer::ObjInfoIterator> sources;
+    std::vector<CanvasComponentContainer::ObjInfoIterator> maskSources;   // PHASE7: clip shapes
     std::optional<SCollision::AABB<WorldScalar>> mergedAABB;
     std::optional<WorldScalar> finestInverseScale;
     bool hasVectorSource = false;
@@ -106,6 +107,13 @@ void flatten_layer(DrawingProgram& drawP) {
             static_cast<TextBoxCanvasComponent&>(container.get_comp()).d.editing)
             continue;  // text being typed right now — don't bake the cursor
 
+        // PHASE7: mask shapes aren't artwork — they define the clip and are
+        // consumed by the bake (collected here for the clip + erased after).
+        if (container.get_comp().is_mask()) {
+            maskSources.push_back(it);
+            continue;
+        }
+
         sources.push_back(it);
         if (!mergedAABB) mergedAABB = wb.value();
         else mergedAABB->include_aabb_in_bounds(wb.value());
@@ -121,7 +129,10 @@ void flatten_layer(DrawingProgram& drawP) {
         }
     }
 
-    if (sources.size() < 2) {
+    // Normally need >= 2 components to merge; but baking even a single shape is
+    // meaningful when there's a mask to collapse into it (PHASE7).
+    const bool enoughToBake = sources.size() >= 2 || (!sources.empty() && !maskSources.empty());
+    if (!enoughToBake) {
         Logger::get().log("USERINFO",
             "Flatten: need at least 2 components on the layer (found " +
             std::to_string(sources.size()) + ").");
@@ -174,10 +185,16 @@ void flatten_layer(DrawingProgram& drawP) {
     dd.refresh_draw_optimizing_values();
     // `components` is z-ascending, and `sources` preserves that order, so
     // drawing front-to-back reproduces the on-canvas stacking.
+    // PHASE7: clip to the layer's mask shapes so the bake collapses the masking
+    // into the raster (the same clip the live compositor applies).
+    canvas->save();
+    if (!maskSources.empty())
+        drawP.drawCache.apply_layer_mask_clip(*editLayer, canvas, dd);
     for (auto& it : sources) {
         auto& container = *it->obj;
         container.draw_with_predraw_data(canvas, dd, container.calculate_predraw_data(dd));
     }
+    canvas->restore();
 
     // Read the composited pixels back as 8bpc UNPREMULTIPLIED RGBA — exactly
     // what import_from_bitmap expects (readPixels unpremultiplies for us).
@@ -213,8 +230,9 @@ void flatten_layer(DrawingProgram& drawP) {
         pit->obj->commit_update(drawP);
 
     std::vector<CanvasComponentContainer::ObjInfo*> toErase;
-    toErase.reserve(sources.size());
+    toErase.reserve(sources.size() + maskSources.size());
     for (auto& it : sources) toErase.push_back(&(*it));
+    for (auto& it : maskSources) toErase.push_back(&(*it));   // PHASE7: masks consumed by the bake
     drawP.layerMan.erase_component_container(toErase);
 
     std::string note;

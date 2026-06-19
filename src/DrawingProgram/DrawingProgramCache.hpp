@@ -52,6 +52,10 @@ class DrawingProgramCache {
         // (move, or toggling the mask flag) changes the layer's whole clipped
         // region, so per-component AABB invalidation isn't enough.
         void invalidate_layer_footprint(const DrawingProgramLayerListItem* layer);
+        // PHASE7: clip the canvas to a layer's mask shapes (also used by flatten to
+        // bake the masked result). No-op if the layer has no masks. Caller scopes
+        // the clip with save/restore.
+        void apply_layer_mask_clip(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData);
         void invalidate_cache_at_aabb(const SCollision::AABB<WorldScalar>& aabb);
         void invalidate_cache_at_optional_aabb(const std::optional<SCollision::AABB<WorldScalar>>& aabb);
         static void delete_all_draw_cache();
@@ -90,10 +94,6 @@ class DrawingProgramCache {
         void refresh_draw_cache(const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode, const DrawData& drawData);
         void draw_cache_image_to_canvas(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode);
         void recursive_draw_layer_item_to_canvas(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData, const std::optional<SCollision::AABB<WorldScalar>>& drawBounds, const std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>>& nodesToDraw);
-        // PHASE7: if the layer has mask shapes, clip the canvas to them (interior of
-        // non-inverted masks, minus inverted ones) before its content is drawn. The
-        // clip is scoped by the caller's saveLayer/restore. No-op if no masks.
-        void apply_layer_mask_clip(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData);
 
         std::optional<std::chrono::steady_clock::time_point> badFrametimeTimePoint;
         std::optional<std::chrono::steady_clock::time_point> unorderedObjectsExistTimePoint;
