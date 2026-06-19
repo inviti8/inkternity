@@ -90,6 +90,10 @@ class DrawingProgramCache {
         // non-inverted masks, minus inverted ones) before its content is drawn. The
         // clip is scoped by the caller's saveLayer/restore. No-op if no masks.
         void apply_layer_mask_clip(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData);
+        // PHASE7: invalidate the union of a layer's component bounds. A mask edit
+        // changes the layer's whole clipped region, so per-component AABB
+        // invalidation isn't enough — re-composite the layer's full footprint.
+        void invalidate_layer_footprint(const DrawingProgramLayerListItem* layer);
 
         std::optional<std::chrono::steady_clock::time_point> badFrametimeTimePoint;
         std::optional<std::chrono::steady_clock::time_point> unorderedObjectsExistTimePoint;

@@ -214,6 +214,10 @@ void DrawingProgramCache::preupdate_component(CanvasComponentContainer::ObjInfo*
         c->obj->cacheParentBvhNode.reset();
     }
     invalidate_cache_at_optional_aabb(c->obj->get_world_bounds());
+    // PHASE7: a mask shape clips the whole layer, so moving/editing it must
+    // refresh the layer's entire footprint, not just the mask's own bounds.
+    if(c->obj->get_comp().is_mask())
+        invalidate_layer_footprint(c->obj->parentLayer);
 }
 
 void DrawingProgramCache::build_bvh_node(const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode, const std::vector<CanvasComponentContainer::ObjInfo*>& components) {
@@ -550,6 +554,21 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
         }
         canvas->restore();
     }
+}
+
+void DrawingProgramCache::invalidate_layer_footprint(const DrawingProgramLayerListItem* layer) {
+    if(!layer || layer->is_folder()) return;
+    auto& components = layer->get_layer().components;
+    if(!components) return;
+    std::optional<SCollision::AABB<WorldScalar>> footprint;
+    for(auto& p : *components) {
+        const auto& wb = p.obj->get_world_bounds();
+        if(!wb.has_value()) continue;
+        if(!footprint) footprint = wb.value();
+        else footprint->include_aabb_in_bounds(wb.value());
+    }
+    if(footprint)
+        invalidate_cache_at_aabb(footprint.value());
 }
 
 void DrawingProgramCache::apply_layer_mask_clip(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData) {
