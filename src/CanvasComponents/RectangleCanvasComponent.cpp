@@ -160,10 +160,26 @@ bool RectangleCanvasComponent::collides_within_coords(const SCollision::Collider
 void RectangleCanvasComponent::create_draw_data() {
     SkPathBuilder rectPathBuilder;
     if(d.polygonMode && d.points.size() >= 2) {
-        // PHASE6: closed polygon through the vertex list.
+        // PHASE6/8: closed polygon through the vertex list. PHASE8: an edge is a
+        // cubic when either endpoint has a tangent toward it, else a straight line.
+        const size_t n = d.points.size();
+        auto ctrlOut = [&](size_t i) { return i < d.controlOut.size() ? d.controlOut[i] : Vector2f{0.0f, 0.0f}; };
+        auto ctrlIn  = [&](size_t i) { return i < d.controlIn.size()  ? d.controlIn[i]  : Vector2f{0.0f, 0.0f}; };
+        auto isZero  = [](const Vector2f& v) { return v.x() == 0.0f && v.y() == 0.0f; };
         rectPathBuilder.moveTo(convert_vec2<SkPoint>(d.points[0]));
-        for(size_t i = 1; i < d.points.size(); ++i)
-            rectPathBuilder.lineTo(convert_vec2<SkPoint>(d.points[i]));
+        for(size_t i = 0; i < n; ++i) {
+            const size_t j = (i + 1) % n;
+            const Vector2f outC = ctrlOut(i);
+            const Vector2f inC  = ctrlIn(j);
+            if(!isZero(outC) || !isZero(inC)) {
+                const Vector2f c1{d.points[i].x() + outC.x(), d.points[i].y() + outC.y()};
+                const Vector2f c2{d.points[j].x() + inC.x(),  d.points[j].y() + inC.y()};
+                rectPathBuilder.cubicTo(convert_vec2<SkPoint>(c1), convert_vec2<SkPoint>(c2), convert_vec2<SkPoint>(d.points[j]));
+            }
+            else {
+                rectPathBuilder.lineTo(convert_vec2<SkPoint>(d.points[j]));
+            }
+        }
         rectPathBuilder.close();
         rectPath = rectPathBuilder.detach();
         return;
@@ -180,23 +196,56 @@ void RectangleCanvasComponent::create_draw_data() {
     }
 }
 
+std::vector<Vector2f> RectangleCanvasComponent::flatten_polygon_outline() const {
+    std::vector<Vector2f> outline;
+    const size_t n = d.points.size();
+    if(n < 2) return outline;
+    auto ctrlOut = [&](size_t i) { return i < d.controlOut.size() ? d.controlOut[i] : Vector2f{0.0f, 0.0f}; };
+    auto ctrlIn  = [&](size_t i) { return i < d.controlIn.size()  ? d.controlIn[i]  : Vector2f{0.0f, 0.0f}; };
+    auto isZero  = [](const Vector2f& v) { return v.x() == 0.0f && v.y() == 0.0f; };
+    constexpr int SEGS = 12;
+    for(size_t i = 0; i < n; ++i) {
+        outline.push_back(d.points[i]);   // the vertex
+        const size_t j = (i + 1) % n;
+        const Vector2f outC = ctrlOut(i);
+        const Vector2f inC  = ctrlIn(j);
+        if(isZero(outC) && isZero(inC))
+            continue;                     // straight edge — next vertex closes it
+        const Vector2f& p0 = d.points[i];
+        const Vector2f& p3 = d.points[j];
+        const Vector2f c1{p0.x() + outC.x(), p0.y() + outC.y()};
+        const Vector2f c2{p3.x() + inC.x(),  p3.y() + inC.y()};
+        for(int s = 1; s < SEGS; ++s) {   // interior samples only (endpoints are the vertices)
+            const float t = static_cast<float>(s) / SEGS;
+            const float u = 1.0f - t;
+            const float b0 = u * u * u, b1 = 3.0f * u * u * t, b2 = 3.0f * u * t * t, b3 = t * t * t;
+            outline.push_back(Vector2f{b0 * p0.x() + b1 * c1.x() + b2 * c2.x() + b3 * p3.x(),
+                                       b0 * p0.y() + b1 * c1.y() + b2 * c2.y() + b3 * p3.y()});
+        }
+    }
+    return outline;
+}
+
 void RectangleCanvasComponent::create_collider() {
     using namespace SCollision;
     ColliderCollection<float> strokeObjects;
     if(d.polygonMode && d.points.size() >= 3) {
         // PHASE6: outline -> closed polyline; fill (and fill+outline) ->
-        // ear-clipping triangulation (concave-correct, since M2 vertex editing
-        // can make the polygon concave).
-        if(d.fillStrokeMode == 1) {
-            generate_polyline(strokeObjects, d.points, d.strokeWidth, true);
+        // ear-clipping triangulation (concave-correct). PHASE8: curved edges are
+        // flattened to a polyline first so the collider follows the curves.
+        const std::vector<Vector2f> outline = flatten_polygon_outline();
+        if(outline.size() >= 3) {
+            if(d.fillStrokeMode == 1) {
+                generate_polyline(strokeObjects, outline, d.strokeWidth, true);
+            }
+            else {
+                for(const auto& t : triangulate_polygon(outline))
+                    strokeObjects.triangle.emplace_back(t[0], t[1], t[2]);
+            }
+            collisionTree.clear();
+            collisionTree.calculate_bvh_recursive(strokeObjects);
+            return;
         }
-        else {
-            for(const auto& t : triangulate_polygon(d.points))
-                strokeObjects.triangle.emplace_back(t[0], t[1], t[2]);
-        }
-        collisionTree.clear();
-        collisionTree.calculate_bvh_recursive(strokeObjects);
-        return;
     }
     if(d.fillStrokeMode == 0) {
         std::array<Vector2f, 4> newT = triangle_from_rect_points(d.p1, d.p2);

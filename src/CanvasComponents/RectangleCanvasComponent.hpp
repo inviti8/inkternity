@@ -59,6 +59,10 @@ class RectangleCanvasComponent : public CanvasComponent {
         virtual bool collides_within_coords(const SCollision::ColliderCollection<float>& checkAgainst) const override;
         void create_draw_data();
         void create_collider();
+        // PHASE8: sample the (possibly curved) polygon outline into a closed
+        // polyline for the collider. Straight edges contribute just their
+        // endpoints; curved edges insert interior samples.
+        std::vector<Vector2f> flatten_polygon_outline() const;
         virtual SCollision::AABB<float> get_obj_coord_bounds() const override;
 
         SkPath rectPath;
