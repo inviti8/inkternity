@@ -38,6 +38,10 @@ class DrawingProgram {
         void update();
         void scale_up(const WorldScalar& scaleUpAmount);
         void draw(SkCanvas* canvas, const DrawData& drawData);
+        // PHASE7: author-mode overlay outlining mask shapes (red dashed). Drawn
+        // after the cached composite so it is NOT baked into the cache / flatten /
+        // screenshots, and skipped in reader mode (editing aid only).
+        void draw_mask_outlines(SkCanvas* canvas, const DrawData& drawData);
         void write_components_server(cereal::PortableBinaryOutputArchive& a);
         void read_components_client(cereal::PortableBinaryInputArchive& a);
         void init_server_callbacks();

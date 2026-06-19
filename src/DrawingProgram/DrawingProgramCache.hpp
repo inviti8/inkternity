@@ -48,6 +48,10 @@ class DrawingProgramCache {
         bool check_rebuild_needed_from_framerate();
         void update_and_draw_cached_canvas(SkCanvas* canvas, const DrawData& drawData);
         void draw_components_to_canvas(SkCanvas* canvas, const DrawData& drawData, const std::optional<SCollision::AABB<WorldScalar>>& drawBounds);
+        // PHASE7: invalidate the union of a layer's component bounds. A mask edit
+        // (move, or toggling the mask flag) changes the layer's whole clipped
+        // region, so per-component AABB invalidation isn't enough.
+        void invalidate_layer_footprint(const DrawingProgramLayerListItem* layer);
         void invalidate_cache_at_aabb(const SCollision::AABB<WorldScalar>& aabb);
         void invalidate_cache_at_optional_aabb(const std::optional<SCollision::AABB<WorldScalar>>& aabb);
         static void delete_all_draw_cache();
@@ -90,10 +94,6 @@ class DrawingProgramCache {
         // non-inverted masks, minus inverted ones) before its content is drawn. The
         // clip is scoped by the caller's saveLayer/restore. No-op if no masks.
         void apply_layer_mask_clip(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData);
-        // PHASE7: invalidate the union of a layer's component bounds. A mask edit
-        // changes the layer's whole clipped region, so per-component AABB
-        // invalidation isn't enough — re-composite the layer's full footprint.
-        void invalidate_layer_footprint(const DrawingProgramLayerListItem* layer);
 
         std::optional<std::chrono::steady_clock::time_point> badFrametimeTimePoint;
         std::optional<std::chrono::steady_clock::time_point> unorderedObjectsExistTimePoint;
