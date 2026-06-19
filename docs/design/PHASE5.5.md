@@ -2,8 +2,11 @@
 
 ## Status
 
-**Investigation + plan, pre-implementation.** Reported by zynx after first
-production use. Two distinct symptoms:
+**RESOLVED** — see §11 for the fix (flatten whole-layer + mipmaps + GPU cache
+budget). The investigation below (§1–§10) is kept as the reasoning trail,
+including two superseded turns; read §11 first for the actual answer.
+
+Reported by zynx after first production use. Two distinct symptoms:
 
 1. **Transition stutter** — a detailed multi-drawing sequence chained with
    waypoints drops frames *while moving between waypoints*, even after
@@ -556,3 +559,65 @@ it re-renders them every frame.
 the double-buffer (M0.5) is what made these numbers believable. Three hypotheses
 (rebuild loop, `saveLayer`/folder explosion, unsorted components) were each
 killed by a capture — the measurement gate did its job.
+
+---
+
+## 11. RESOLUTION (what actually fixed it)
+
+The §9/§10 caching analysis was the scenic route. With the real (post-flatten)
+data, the fix had **nothing to do with the BVH/window caching** we spent most of
+the investigation on. Two concrete changes solved it; both are quality-preserving
+and shipped on `perf/phase5.5-render`.
+
+### Fix 1 — Flatten the whole layer, not just the viewport (the foundation)
+
+`RasterFlatten` was view-bounded: it only baked components intersecting the
+on-screen `viewAABB`, so "Flatten Layer" left every off-screen stroke alive. The
+production file carried **1423 components when it should have had ~15**. Removing
+the `viewAABB` cull so flatten bakes the *entire active layer* (M2) collapsed the
+count and cut cost across the board (BVH, cache, draw) — the single biggest win.
+This was a genuine bug, not a perf knob.
+
+### Fix 2 — Mipmaps + GPU cache budget for large flattened textures
+
+With ~15 components the file was still 2 fps in transitions, because each
+component is now a **large flattened image** (up to the 8192px flatten cap). Two
+sub-problems (M3):
+
+- **No mipmaps.** `MyPaintLayerCanvasComponent::draw` used default
+  `SkSamplingOptions{}` (nearest, no mips). Drawn minified (zoomed out / panning),
+  Skia scattered reads across the full-res texture every frame — the artist's
+  "zoom in fast, zoom out choppy" report. Fixed with
+  `SkSamplingOptions(kLinear, kLinear)` so a minified draw samples a small mip
+  (cost ∝ screen pixels, not image size).
+- **GPU cache too small.** Skia's default resource-cache budget (~256 MB) is far
+  below the working set of several big flattened textures, so they evicted and
+  **re-uploaded every motion frame** (high CPU = pixel readback for upload).
+  Fixed by raising the `GrDirectContext` resource-cache limit via the persisted
+  config `gpuResourceCacheBudgetMB`.
+
+**Critical interaction:** mipmaps *alone* made it worse — generating the mip chain
+for a huge texture that keeps getting evicted is expensive, so an undersized
+budget + mipmaps = stutter/stall (observed at 2048 MB on the production file). The
+two fixes are a package: the budget must hold the working set for mipmaps to pay
+off. **4096 MB** validated smooth on the large multi-section production file;
+2048 MB did not. Default is now 4096, tunable in Settings (restart to apply).
+
+### What was kept / dropped
+
+- **Kept, off by default:** the speed-/coarsen motion cache
+  (`MOTION_CACHE_COARSEN_SHIFT`, default 0). It trades transient blur for
+  smoothness and is only useful on low-VRAM machines that can't hold the textures
+  resident; left as a Settings → Debug tunable.
+- **Kept:** the perf overlay (Settings → Debug → show performance metrics) — it's
+  what cracked the diagnosis and is free when off.
+- **Dropped:** the speed-adaptive coarsening variant (M1.1, reverted — harder to
+  control, no better than the fixed shift).
+
+### Honest limit
+
+The mipmap fix is unconditional; the budget fix only helps if the in-view
+flattened textures **fit in VRAM**. A canvas whose visible flattened layers
+exceed the card's memory will still thrash — the remedy there is a lower
+**Maximum flatten size** (smaller textures, slightly less zoom-in sharpness) or,
+long-term, a tiled mipmap pyramid. Not needed for current production files.
