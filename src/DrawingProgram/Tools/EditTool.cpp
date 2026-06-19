@@ -8,6 +8,8 @@
 #include <cereal/types/vector.hpp>
 #include <algorithm>
 #include <memory>
+#include <include/core/SkPaint.h>
+#include <include/core/SkRect.h>
 
 #include "EditTools/TextBoxEditTool.hpp"
 #include "EditTools/RectDrawEditTool.hpp"
@@ -149,14 +151,28 @@ void EditTool::input_mouse_button_on_canvas_callback(const InputManager::MouseBu
                 if(!isMovingPoint && !objInfoBeingEdited->obj->collides_with_cam_coords(drawP.world.drawData.cam.c, cMouseCircle))
                     clickedAway = true;
 
-                if(clickedAway)
-                    switch_tool(get_type());
-
-                if(objInfoBeingEdited)
+                if(clickedAway) {
+                    // PHASE6: don't exit immediately — start a vertex marquee.
+                    // On release: a drag box-selects vertices; a click (no drag)
+                    // falls through to the old "click empty space exits edit".
+                    marqueeActive = true;
+                    marqueeStartScreen = button.pos;
+                    marqueeCurScreen = button.pos;
+                }
+                else if(objInfoBeingEdited)
                     compEditTool->input_mouse_button_on_canvas_callback(button, pointDragging);
             }
         }
         else {
+            // PHASE6: resolve a vertex marquee. A real drag box-selects vertices;
+            // a click (no drag) on empty space exits edit (the prior behavior).
+            if(marqueeActive) {
+                if((marqueeCurScreen - marqueeStartScreen).norm() > 4.0f)
+                    select_handles_in_screen_rect(marqueeStartScreen, marqueeCurScreen);
+                else if(objInfoBeingEdited)
+                    switch_tool(get_type());
+                marqueeActive = false;
+            }
             // PHASE6: a press+release on a handle without dragging toggles its
             // selection (used by polygon Add Point); a drag just moved the vertex.
             if(pointDragging && !pointDragMoved && pressedHandleIndex < pointHandles.size())
@@ -170,6 +186,8 @@ void EditTool::input_mouse_button_on_canvas_callback(const InputManager::MouseBu
 }
 
 void EditTool::input_mouse_motion_callback(const InputManager::MouseMotionCallbackArgs& motion) {
+    if(marqueeActive)
+        marqueeCurScreen = motion.pos;
     if(objInfoBeingEdited) {
         if(drawP.controls.leftClickHeld && pointDragging) {
             // PHASE6: past a few screen px of movement this is a drag, not a click.
@@ -258,9 +276,23 @@ void EditTool::switch_tool(DrawingProgramToolType newTool) {
     pointHandles.clear();
     pointDragging = nullptr;
     selectedHandles.clear();
+    marqueeActive = false;
 
     if(!drawP.is_selection_allowing_tool(newTool))
         drawP.selection.deselect_all();
+}
+
+void EditTool::select_handles_in_screen_rect(const Vector2f& a, const Vector2f& b) {
+    if(!objInfoBeingEdited) return;
+    const Vector2f mn{std::min(a.x(), b.x()), std::min(a.y(), b.y())};
+    const Vector2f mx{std::max(a.x(), b.x()), std::max(a.y(), b.y())};
+    selectedHandles.clear();
+    for(size_t hi = 0; hi < pointHandles.size(); ++hi) {
+        HandleData& h = pointHandles[hi];
+        const Vector2f sp = drawP.world.drawData.cam.c.to_space(objInfoBeingEdited->obj->coords.from_space(h.coordMatrix * *h.p));
+        if(sp.x() >= mn.x() && sp.x() <= mx.x() && sp.y() >= mn.y() && sp.y() <= mx.y())
+            selectedHandles.push_back(hi);
+    }
 }
 
 void EditTool::refresh_point_handles() {
@@ -341,6 +373,21 @@ void EditTool::draw(SkCanvas* canvas, const DrawData& drawData) {
             const bool selected = std::find(selectedHandles.begin(), selectedHandles.end(), hi) != selectedHandles.end();
             const SkColor4f color = selected ? SkColor4f{0.95f, 0.85f, 0.1f, 1.0f} : SkColor4f{0.1f, 0.9f, 0.9f, 1.0f};
             drawP.draw_drag_circle(canvas, drawData.cam.c.to_space((objInfoBeingEdited->obj->coords.from_space(h.coordMatrix * *h.p))), color, drawData);
+        }
+        // PHASE6: vertex marquee (screen space, like the edit handles above).
+        if(marqueeActive) {
+            const SkRect r = SkRect::MakeLTRB(std::min(marqueeStartScreen.x(), marqueeCurScreen.x()),
+                                              std::min(marqueeStartScreen.y(), marqueeCurScreen.y()),
+                                              std::max(marqueeStartScreen.x(), marqueeCurScreen.x()),
+                                              std::max(marqueeStartScreen.y(), marqueeCurScreen.y()));
+            SkPaint fill;
+            fill.setColor4f(SkColor4f{0.3f, 0.6f, 0.95f, 0.18f});
+            canvas->drawRect(r, fill);
+            SkPaint outline;
+            outline.setStyle(SkPaint::kStroke_Style);
+            outline.setStrokeWidth(1.0f);
+            outline.setColor4f(SkColor4f{0.4f, 0.7f, 1.0f, 0.9f});
+            canvas->drawRect(r, outline);
         }
     }
 }

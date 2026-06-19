@@ -60,5 +60,13 @@ class EditTool : public DrawingProgramToolBase {
         Vector2f pointDownScreenPos{0.0f, 0.0f};
         bool pointDragMoved = false;
 
+        // PHASE6: dragging on empty space (while editing) box-selects vertices —
+        // easier than tapping each handle, especially with a stylus. A click (no
+        // drag) on empty space still exits edit. Screen-space.
+        bool marqueeActive = false;
+        Vector2f marqueeStartScreen{0.0f, 0.0f};
+        Vector2f marqueeCurScreen{0.0f, 0.0f};
+        void select_handles_in_screen_rect(const Vector2f& a, const Vector2f& b);
+
         std::unique_ptr<CanvasComponent> oldData;
 };
