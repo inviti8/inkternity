@@ -2384,6 +2384,7 @@ void Toolbar::general_settings_inner_gui() {
                         checkbox_boolean_field(gui, "make all tools share same size", "Make all tools share size", &main.toolConfig.globalConf.useGlobalRelativeWidth);
                         #ifndef __EMSCRIPTEN__
                             checkbox_boolean_field(gui, "disable graphics driver workarounds", "Disable graphics driver workarounds (enabling or disabling this might fix some graphical glitches, requires restart)", &main.conf.disableGraphicsDriverWorkarounds);
+                            input_scalar_field<int>(gui, "gpu resource cache budget mb", "GPU resource cache budget (MB, requires restart; raise for large flattened drawings)", &main.conf.gpuResourceCacheBudgetMB, 128, 65536);
                         #endif
                         input_scalar_field(gui, "jump transition time", "Jump transition time", &main.conf.jumpTransitionTime, 0.01f, 1000.0f, {.decimalPrecision = 2});
                         // PHASE4 §10 M0: per-axis bake cap for Flatten Layer
