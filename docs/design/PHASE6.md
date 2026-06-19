@@ -162,6 +162,24 @@ Recipe (same as the MyPaintLayer recording precedent):
 Undo and network sync come for free: the EditTool already captures component
 state for undo, and components broadcast via the same serialization.
 
+### Backward compatibility — NON-NEGOTIABLE requirement
+
+Existing `.inkternity` files (zynx's in-progress graphic novel) **must load
+unchanged with no migration, flatten, or rasterize step, and no data loss.**
+This is guaranteed by the append-and-gate recipe above: old files have none of
+the new bytes, so `load_file` skips them and `polygonMode`/`affineMode` stay
+`false` → existing rectangles and ellipses behave exactly as before. Hard rules:
+- **Only append** new fields to `save`/`save_file`; never reorder or insert into
+  the existing field sequence.
+- **Gate every new read** in `load_file` on `version >= <PHASE6 version>`.
+- Acceptance test (part of M1/M5): open a **copy** of a real pre-PHASE6 file,
+  confirm rects/ellipses render identically and round-trip (load → save → load)
+  cleanly across the version bump, before trusting it on originals.
+
+(The one direction that is *not* guaranteed — a new-build file opened in an
+*older* build — is the normal "use the current version" expectation and does not
+affect loading existing files into the new build.)
+
 ---
 
 ## Effort estimate
