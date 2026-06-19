@@ -50,6 +50,45 @@ void make_node_corner(RectangleCanvasComponent::Data& d, size_t i) {
     d.controlOut[i] = Vector2f{0.0f, 0.0f};
     d.nodeType[i] = 0;
 }
+// Insert a vertex on edge `after`->next. A straight edge gets a midpoint corner;
+// a curved edge is split with de Casteljau (t=0.5) so the curve shape is preserved
+// and the three involved nodes get correct tangents.
+void add_polygon_point(RectangleCanvasComponent::Data& d, size_t after) {
+    const size_t m = d.points.size();
+    if(m < 2 || after >= m) return;
+    const size_t j = (after + 1) % m;
+    const Vector2f p0 = d.points[after];
+    const Vector2f p3 = d.points[j];
+    const bool iCurve = after < d.nodeType.size() && d.nodeType[after] != 0;
+    const bool jCurve = j < d.nodeType.size() && d.nodeType[j] != 0;
+    const long at = static_cast<long>(after + 1);
+    auto mid2 = [](const Vector2f& a, const Vector2f& b) { return Vector2f{(a.x() + b.x()) * 0.5f, (a.y() + b.y()) * 0.5f}; };
+
+    if(!iCurve && !jCurve) {
+        // Straight edge -> midpoint corner (keep arrays parallel if present).
+        const Vector2f mid = mid2(p0, p3);
+        d.points.insert(d.points.begin() + at, mid);
+        if(d.controlIn.size()  == m) d.controlIn.insert(d.controlIn.begin() + at, Vector2f{0.0f, 0.0f});
+        if(d.controlOut.size() == m) d.controlOut.insert(d.controlOut.begin() + at, Vector2f{0.0f, 0.0f});
+        if(d.nodeType.size()   == m) d.nodeType.insert(d.nodeType.begin() + at, static_cast<uint8_t>(0));
+        return;
+    }
+
+    ensure_node_arrays(d);   // need controlOut[after] / controlIn[j] indexable
+    const Vector2f c1 = iCurve ? Vector2f{p0.x() + d.controlOut[after].x(), p0.y() + d.controlOut[after].y()} : p0;
+    const Vector2f c2 = jCurve ? Vector2f{p3.x() + d.controlIn[j].x(), p3.y() + d.controlIn[j].y()} : p3;
+    const Vector2f m0 = mid2(p0, c1), m1 = mid2(c1, c2), m2 = mid2(c2, p3);
+    const Vector2f q0 = mid2(m0, m1), q1 = mid2(m1, m2);
+    const Vector2f split = mid2(q0, q1);
+    d.controlOut[after] = Vector2f{m0.x() - p0.x(), m0.y() - p0.y()};   // shortened left tangent
+    d.points.insert(d.points.begin() + at, split);
+    d.controlIn.insert(d.controlIn.begin() + at, Vector2f{q0.x() - split.x(), q0.y() - split.y()});
+    d.controlOut.insert(d.controlOut.begin() + at, Vector2f{q1.x() - split.x(), q1.y() - split.y()});
+    d.nodeType.insert(d.nodeType.begin() + at, static_cast<uint8_t>(1));   // smooth split node
+    const size_t jNew = (after + 1 < m) ? (after + 2) : 0;                 // node j after the insert
+    if(jNew < d.controlIn.size())
+        d.controlIn[jNew] = Vector2f{m2.x() - d.points[jNew].x(), m2.y() - d.points[jNew].y()};
+}
 }
 
 RectDrawEditTool::RectDrawEditTool(DrawingProgram& initDrawP, CanvasComponentContainer::ObjInfo* initComp):
@@ -121,22 +160,15 @@ void RectDrawEditTool::edit_gui(Toolbar& t) {
                 const size_t after = insertAfter.value();
                 text_button(gui, "polygon add point", "Add Point", { .wide = true, .onClick = [this, after] {
                     auto& rect = static_cast<RectangleCanvasComponent&>(comp->obj->get_comp());
-                    const size_t m = rect.d.points.size();
-                    const Vector2f& va = rect.d.points[after];
-                    const Vector2f& vb = rect.d.points[(after + 1) % m];
-                    const Vector2f mid{(va.x() + vb.x()) * 0.5f, (va.y() + vb.y()) * 0.5f};
-                    const long at = static_cast<long>(after + 1);
-                    rect.d.points.insert(rect.d.points.begin() + at, mid);
-                    if(rect.d.controlIn.size()  == m) rect.d.controlIn.insert(rect.d.controlIn.begin() + at, Vector2f{0.0f, 0.0f});
-                    if(rect.d.controlOut.size() == m) rect.d.controlOut.insert(rect.d.controlOut.begin() + at, Vector2f{0.0f, 0.0f});
-                    if(rect.d.nodeType.size()   == m) rect.d.nodeType.insert(rect.d.nodeType.begin() + at, static_cast<uint8_t>(0));
+                    add_polygon_point(rect.d, after);   // de Casteljau split on curved edges
                     comp->obj->commit_update(drawP);
                     if(editTool) editTool->refresh_point_handles();
                     drawP.world.main.g.gui.set_to_layout();
                 }});
             }
 
-            // Make Curve / Make Corner — exactly one vertex selected.
+            // Make Curve / Make Corner — exactly one vertex selected. A curve node
+            // also offers a Smooth/Cusp toggle.
             if(selVerts.size() == 1 && n >= 3) {
                 const size_t vi = selVerts[0];
                 const bool isCurve = vi < a.d.nodeType.size() && a.d.nodeType[vi] != 0;
@@ -148,6 +180,25 @@ void RectDrawEditTool::edit_gui(Toolbar& t) {
                     if(editTool) editTool->refresh_point_handles();   // tangent handle count changed
                     drawP.world.main.g.gui.set_to_layout();
                 }});
+                if(isCurve) {
+                    const bool smooth = a.d.nodeType[vi] == 1;
+                    text_button(gui, "polygon node smooth toggle", smooth ? "Make Cusp" : "Make Smooth", { .wide = true, .onClick = [this, vi, smooth] {
+                        auto& rect = static_cast<RectangleCanvasComponent&>(comp->obj->get_comp());
+                        if(vi < rect.d.nodeType.size()) {
+                            if(smooth) {
+                                rect.d.nodeType[vi] = 2;   // cusp: tangents become independent
+                            }
+                            else {
+                                rect.d.nodeType[vi] = 1;   // smooth: mirror in <- -out
+                                if(vi < rect.d.controlOut.size() && vi < rect.d.controlIn.size())
+                                    rect.d.controlIn[vi] = Vector2f{-rect.d.controlOut[vi].x(), -rect.d.controlOut[vi].y()};
+                            }
+                        }
+                        comp->obj->commit_update(drawP);
+                        if(editTool) editTool->refresh_point_handles();   // mirror links change
+                        drawP.world.main.g.gui.set_to_layout();
+                    }});
+                }
             }
 
             if(selVerts.empty())
@@ -180,10 +231,14 @@ void RectDrawEditTool::register_handles(EditTool& editTool) {
                 continue;   // corner node — no tangents
             Affine2f m = Affine2f::Identity();
             m.translation() = a.d.points[i];
-            if(i < a.d.controlOut.size())
-                editTool.add_point_handle({&a.d.controlOut[i], nullptr, nullptr, MINIMUM_DISTANCE_BETWEEN_BOUNDS, MINIMUM_DISTANCE_BETWEEN_BOUNDS, m, &a.d.points[i]});
-            if(i < a.d.controlIn.size())
-                editTool.add_point_handle({&a.d.controlIn[i], nullptr, nullptr, MINIMUM_DISTANCE_BETWEEN_BOUNDS, MINIMUM_DISTANCE_BETWEEN_BOUNDS, m, &a.d.points[i]});
+            // Smooth nodes (type 1) mirror their two tangents; cusp (type 2) don't.
+            const bool smooth = a.d.nodeType[i] == 1;
+            const bool haveIn  = i < a.d.controlIn.size();
+            const bool haveOut = i < a.d.controlOut.size();
+            if(haveOut)
+                editTool.add_point_handle({&a.d.controlOut[i], nullptr, nullptr, MINIMUM_DISTANCE_BETWEEN_BOUNDS, MINIMUM_DISTANCE_BETWEEN_BOUNDS, m, &a.d.points[i], (smooth && haveIn) ? &a.d.controlIn[i] : nullptr});
+            if(haveIn)
+                editTool.add_point_handle({&a.d.controlIn[i], nullptr, nullptr, MINIMUM_DISTANCE_BETWEEN_BOUNDS, MINIMUM_DISTANCE_BETWEEN_BOUNDS, m, &a.d.points[i], (smooth && haveOut) ? &a.d.controlOut[i] : nullptr});
         }
     }
     else {

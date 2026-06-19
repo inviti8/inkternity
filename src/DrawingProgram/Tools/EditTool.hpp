@@ -19,6 +19,10 @@ class EditTool : public DrawingProgramToolBase {
             // from this anchor (a node position, component-local) to the handle
             // tip, and render the tip distinctly. nullptr = a normal anchor handle.
             Vector2f* armAnchor = nullptr;
+            // PHASE8: smooth nodes — when this tangent is dragged, set the opposite
+            // tangent to the negated offset (collinear, equal length = C1). nullptr
+            // = independent (cusp / non-tangent).
+            Vector2f* mirror = nullptr;
         };
 
         EditTool(DrawingProgram& initDrawP);

@@ -206,6 +206,10 @@ void EditTool::input_mouse_motion_callback(const InputManager::MouseMotionCallba
                 if(pointDragging->max)
                     newPos = cwise_vec_min((*pointDragging->max - Vector2f{pointDragging->minimumDistanceBetweenMaxAndPoint, pointDragging->minimumDistanceBetweenMaxAndPoint}).eval(), newPos);
                 *pointDragging->p = newPos;
+                // PHASE8: smooth node — mirror the opposite tangent (offsets, so
+                // negate). newPos is the dragged tangent's offset from its node.
+                if(pointDragging->mirror)
+                    *pointDragging->mirror = Vector2f{-newPos.x(), -newPos.y()};
                 objInfoBeingEdited->obj->commit_update(drawP);
             }
         }
