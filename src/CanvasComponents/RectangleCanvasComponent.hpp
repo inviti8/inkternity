@@ -3,6 +3,7 @@
 #include "CanvasComponent.hpp"
 #include "../CoordSpaceHelper.hpp"
 #include <include/core/SkPath.h>
+#include <vector>
 
 class RectangleCanvasComponent : public CanvasComponent {
     public:
@@ -25,6 +26,13 @@ class RectangleCanvasComponent : public CanvasComponent {
             Vector2f p1;
             Vector2f p2;
             uint8_t fillStrokeMode;
+            // PHASE6: polygon mode. When polygonMode is true the shape is the
+            // closed polygon defined by `points` (started as the dragged rect's
+            // 4 corners; vertices become editable in M2/M3). When false this is
+            // the legacy axis-aligned (rounded) rectangle from p1/p2 — old files
+            // load with polygonMode=false and are unchanged.
+            bool polygonMode = false;
+            std::vector<Vector2f> points;
             bool operator==(const Data& o) const = default;
         } d;
 

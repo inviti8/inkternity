@@ -23,6 +23,16 @@ class EllipseCanvasComponent : public CanvasComponent {
             Vector2f p1;
             Vector2f p2;
             uint8_t fillStrokeMode;
+            // PHASE6: shear/skew. When affineMode is true the ellipse is defined by
+            // center + two semi-axis tips (absolute, local space): semi-axis A =
+            // tipA - center, semi-axis B = tipB - center. Non-perpendicular axes =
+            // a sheared/skewed ellipse. When false this is the legacy axis-aligned
+            // ellipse from the p1/p2 bbox — old files load with affineMode=false and
+            // are unchanged; an ellipse converts (losslessly) to affine on first edit.
+            bool affineMode = false;
+            Vector2f center;
+            Vector2f tipA;
+            Vector2f tipB;
             bool operator==(const Data& o) const = default;
         } d;
 

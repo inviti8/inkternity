@@ -28,7 +28,8 @@ class ToolConfiguration {
             float relativeWidth = 15.0f;
             float relativeRadiusWidth = 10.0f;
             int fillStrokeMode = 1;
-            NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(RectDrawToolConfig, relativeWidth, relativeRadiusWidth, fillStrokeMode)
+            bool polygonMode = false;   // PHASE6: draw an editable polygon (4-corner quad) instead of a rect
+            NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(RectDrawToolConfig, relativeWidth, relativeRadiusWidth, fillStrokeMode, polygonMode)
         } rectDraw;
 
         struct EyeDropperToolConfig {

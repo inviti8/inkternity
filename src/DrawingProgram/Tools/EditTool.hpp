@@ -40,12 +40,33 @@ class EditTool : public DrawingProgramToolBase {
         void edit_start(CanvasComponentContainer::ObjInfo* comp, bool initUndoAfterEditDone = true);
         bool is_editable(CanvasComponentContainer::ObjInfo* comp);
 
+        // PHASE6: re-register handles after the editable point list changed size
+        // (clears handles + selection, asks the component edit tool to re-add).
+        void refresh_point_handles();
+        void toggle_handle_selection(size_t handleIndex);
+
         std::unique_ptr<DrawingProgramEditToolBase> compEditTool;
         std::vector<HandleData> pointHandles;
         CanvasComponentContainer::ObjInfo* objInfoBeingEdited = nullptr;
         HandleData* pointDragging = nullptr;
         std::any prevData;
         bool undoAfterEditDone;
+
+        // PHASE6 vertex selection: a click (press+release without dragging) on a
+        // handle toggles its selection; a drag moves it. selectedHandles holds
+        // indices into pointHandles.
+        std::vector<size_t> selectedHandles;
+        size_t pressedHandleIndex = 0;
+        Vector2f pointDownScreenPos{0.0f, 0.0f};
+        bool pointDragMoved = false;
+
+        // PHASE6: dragging on empty space (while editing) box-selects vertices —
+        // easier than tapping each handle, especially with a stylus. A click (no
+        // drag) on empty space still exits edit. Screen-space.
+        bool marqueeActive = false;
+        Vector2f marqueeStartScreen{0.0f, 0.0f};
+        Vector2f marqueeCurScreen{0.0f, 0.0f};
+        void select_handles_in_screen_rect(const Vector2f& a, const Vector2f& b);
 
         std::unique_ptr<CanvasComponent> oldData;
 };

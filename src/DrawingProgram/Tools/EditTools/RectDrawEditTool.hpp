@@ -10,9 +10,11 @@ class RectDrawEditTool : public DrawingProgramEditToolBase {
     public:
         RectDrawEditTool(DrawingProgram& initDrawP, CanvasComponentContainer::ObjInfo* initComp);
         virtual void edit_start(EditTool& editTool, std::any& prevData) override;
+        virtual void register_handles(EditTool& editTool) override;
         virtual void commit_edit_updates(std::any& prevData) override;
         virtual bool edit_update() override;
         virtual void edit_gui(Toolbar& t) override;
     private:
         std::optional<RectangleCanvasComponent::Data> oldData;
+        EditTool* editTool = nullptr;   // PHASE6: for polygon vertex selection / Add Point
 };
