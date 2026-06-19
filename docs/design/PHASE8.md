@@ -2,7 +2,15 @@
 
 ## Status
 
-**Design / scoping, pre-implementation.** Requested by zynx: let polygon
+**SHIPPED.** Implemented M1–M4: per-node `controlIn/controlOut/nodeType` data
+(append-and-gate, INFPNT000020 / 0.19.0, old polygons load all-corner); curved
+draw (cubic/line) + flattened collider; tangent handles with arms +
+Make Curve/Corner; smooth/cusp mirroring + de Casteljau Add-Point split. Tangent
+coupling uses `HandleData.coordMatrix` + refresh-on-drag (tangent dots snap on
+release after a vertex move). Post-impl fix: mask shapes are immune to the eraser
+(deletable only via select). Curves flow through masks/flatten/export for free.
+
+Original design (kept below). Requested by zynx: let polygon
 (Polygon-mode rectangle) vertices become **bezier curves selectively**, so a
 shape can mix straight edges and smooth curves — pen-tool power for organic and
 technical work. Benefits masks for free (a curved polygon is a curved mask).
