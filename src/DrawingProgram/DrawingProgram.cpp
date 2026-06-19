@@ -1145,38 +1145,38 @@ void DrawingProgram::draw_mask_outlines(SkCanvas* canvas, const DrawData& drawDa
     // Editing aid only: skip in exports and reader mode.
     if(drawData.takingScreenshot || world.readerMode.is_active())
         return;
-    std::vector<DrawingProgramLayerListItem*> layers = layerMan.get_flattened_layer_list();
+    // Only outline masks on the layer currently being edited — on other layers
+    // they clip silently so the art isn't cluttered with red dashes.
+    auto editLayer = layerMan.get_editing_layer().lock();
+    if(!editLayer || editLayer->is_folder() || !editLayer->get_visible())
+        return;
+    auto& components = editLayer->get_layer().components;
+    if(!components)
+        return;
     SkPaint paint;
     paint.setStyle(SkPaint::kStroke_Style);
     paint.setColor4f(SkColor4f{0.95f, 0.12f, 0.12f, 0.9f});   // red
     paint.setAntiAlias(true);
-    for(DrawingProgramLayerListItem* layer : layers) {
-        if(!layer || layer->is_folder() || !layer->get_visible())
+    for(auto& p : *components) {
+        CanvasComponentContainer& container = *p.obj;
+        CanvasComponent& comp = container.get_comp();
+        if(!comp.is_mask())
             continue;
-        auto& components = layer->get_layer().components;
-        if(!components)
+        std::optional<SkPath> localPath = comp.get_mask_path();
+        if(!localPath.has_value())
             continue;
-        for(auto& p : *components) {
-            CanvasComponentContainer& container = *p.obj;
-            CanvasComponent& comp = container.get_comp();
-            if(!comp.is_mask())
-                continue;
-            std::optional<SkPath> localPath = comp.get_mask_path();
-            if(!localPath.has_value())
-                continue;
-            // Keep the dash ~constant in screen pixels: transform_sk_canvas scales
-            // local->screen by `scale` screen px per local unit, so divide widths by it.
-            const float scale = container.calculate_draw_transform(drawData).scale;
-            if(scale <= 0.0f)
-                continue;
-            paint.setStrokeWidth(2.0f / scale);
-            const SkScalar dash[2] = {7.0f / scale, 5.0f / scale};
-            paint.setPathEffect(SkDashPathEffect::Make(SkSpan<const SkScalar>(dash, 2), 0.0f));
-            canvas->save();
-            container.coords.transform_sk_canvas(canvas, drawData);
-            canvas->drawPath(localPath.value(), paint);
-            canvas->restore();
-        }
+        // Keep the dash ~constant in screen pixels: transform_sk_canvas scales
+        // local->screen by `scale` screen px per local unit, so divide widths by it.
+        const float scale = container.calculate_draw_transform(drawData).scale;
+        if(scale <= 0.0f)
+            continue;
+        paint.setStrokeWidth(2.0f / scale);
+        const SkScalar dash[2] = {7.0f / scale, 5.0f / scale};
+        paint.setPathEffect(SkDashPathEffect::Make(SkSpan<const SkScalar>(dash, 2), 0.0f));
+        canvas->save();
+        container.coords.transform_sk_canvas(canvas, drawData);
+        canvas->drawPath(localPath.value(), paint);
+        canvas->restore();
     }
 }
 
