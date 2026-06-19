@@ -9,6 +9,18 @@
 #include "../../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/RadioButtonHelpers.hpp"
+#include "../../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
+
+namespace {
+// PHASE6: the polygon starts as the dragged rect's 4 corners, ordered
+// top-left -> top-right -> bottom-right -> bottom-left (p1 is the min corner,
+// p2 the max, so this winds clockwise in screen space).
+void set_polygon_to_rect_corners(RectangleCanvasComponent& rect) {
+    const Vector2f& p1 = rect.d.p1;
+    const Vector2f& p2 = rect.d.p2;
+    rect.d.points = {p1, Vector2f{p2.x(), p1.y()}, p2, Vector2f{p1.x(), p2.y()}};
+}
+}
 
 RectDrawTool::RectDrawTool(DrawingProgram& initDrawP):
     DrawingProgramToolBase(initDrawP)
@@ -28,7 +40,9 @@ void RectDrawTool::gui_toolbox(Toolbar& t) {
     auto& relativeRadiusWidth = toolConfig.rectDraw.relativeRadiusWidth;
     gui.new_id("rect draw tool", [&] {
         text_label_centered(gui, "Draw Rectangle");
-        slider_scalar_field(gui, "relradiuswidth", "Corner Radius", &relativeRadiusWidth, 0.0f, 40.0f);
+        checkbox_boolean_field(gui, "polygon mode", "Polygon mode", &toolConfig.rectDraw.polygonMode);
+        if(!toolConfig.rectDraw.polygonMode)
+            slider_scalar_field(gui, "relradiuswidth", "Corner Radius", &relativeRadiusWidth, 0.0f, 40.0f);
         radio_button_selector(gui, "fill type", &fillStrokeMode, {
             {"Fill only", 0},
             {"Outline only", 1},
@@ -48,7 +62,9 @@ void RectDrawTool::gui_phone_toolbox(PhoneDrawingProgramScreen& t) {
     auto& fillStrokeMode = toolConfig.rectDraw.fillStrokeMode;
     auto& relativeRadiusWidth = toolConfig.rectDraw.relativeRadiusWidth;
     gui.new_id("rect draw tool", [&] {
-        slider_scalar_field(gui, "relradiuswidth", "Corner Radius", &relativeRadiusWidth, 0.0f, 40.0f);
+        checkbox_boolean_field(gui, "polygon mode", "Polygon mode", &toolConfig.rectDraw.polygonMode);
+        if(!toolConfig.rectDraw.polygonMode)
+            slider_scalar_field(gui, "relradiuswidth", "Corner Radius", &relativeRadiusWidth, 0.0f, 40.0f);
         radio_button_selector(gui, "fill type", &fillStrokeMode, {
             {"Fill only", 0},
             {"Outline only", 1},
@@ -87,6 +103,9 @@ void RectDrawTool::input_mouse_button_on_canvas_callback(const InputManager::Mou
             newRectangle.d.p2 = startAt;
             newRectangle.d.p2 = ensure_points_have_distance(newRectangle.d.p1, newRectangle.d.p2, MINIMUM_DISTANCE_BETWEEN_BOUNDS);
             newRectangle.d.fillStrokeMode = static_cast<uint8_t>(fillStrokeMode);
+            newRectangle.d.polygonMode = toolConfig.rectDraw.polygonMode;   // PHASE6
+            if(newRectangle.d.polygonMode)
+                set_polygon_to_rect_corners(newRectangle);
             newContainer->coords = drawP.world.drawData.cam.c;
             objInfoBeingEdited = drawP.layerMan.add_component_to_layer_being_edited(newContainer);
         }
@@ -107,6 +126,8 @@ void RectDrawTool::input_mouse_motion_callback(const InputManager::MouseMotionCa
         rectangle.d.p1 = cwise_vec_min(startAt, newPos);
         rectangle.d.p2 = cwise_vec_max(startAt, newPos);
         rectangle.d.p2 = ensure_points_have_distance(rectangle.d.p1, rectangle.d.p2, MINIMUM_DISTANCE_BETWEEN_BOUNDS);
+        if(rectangle.d.polygonMode)   // PHASE6: keep the quad's corners in sync with the drag
+            set_polygon_to_rect_corners(rectangle);
         containerPtr->send_comp_update(drawP, false);
         containerPtr->commit_update(drawP);
     }

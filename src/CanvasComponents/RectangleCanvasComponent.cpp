@@ -4,6 +4,7 @@
 #include "Helpers/SCollision.hpp"
 #include <include/core/SkPaint.h>
 #include <include/core/SkPathBuilder.h>
+#include <cereal/types/vector.hpp>
 #include "../SharedTypes.hpp"
 #include "../DrawCollision.hpp"
 
@@ -12,19 +13,24 @@ CanvasComponentType RectangleCanvasComponent::get_type() const {
 }
 
 void RectangleCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode);
+    // Wire payload — peers run the same build, so the PHASE6 fields are always present.
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points);
 }
 
 void RectangleCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode);
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points);
 }
 
 void RectangleCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode);
+    a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode, d.polygonMode, d.points);
 }
 
 void RectangleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     a(d.strokeColor, d.fillColor, d.cornerRadius, d.strokeWidth, d.p1, d.p2, d.fillStrokeMode);
+    // PHASE6 (INFPNT000017 / 0.16.0): polygon fields appended. Pre-0.16 files
+    // have none — they keep polygonMode=false (default) and load unchanged.
+    if(version >= VersionNumber(0, 16, 0))
+        a(d.polygonMode, d.points);
 }
 
 void RectangleCanvasComponent::change_stroke_color(const Vector4f& newStrokeColor) {
@@ -75,6 +81,15 @@ bool RectangleCanvasComponent::collides_within_coords(const SCollision::Collider
 
 void RectangleCanvasComponent::create_draw_data() {
     SkPathBuilder rectPathBuilder;
+    if(d.polygonMode && d.points.size() >= 2) {
+        // PHASE6: closed polygon through the vertex list.
+        rectPathBuilder.moveTo(convert_vec2<SkPoint>(d.points[0]));
+        for(size_t i = 1; i < d.points.size(); ++i)
+            rectPathBuilder.lineTo(convert_vec2<SkPoint>(d.points[i]));
+        rectPathBuilder.close();
+        rectPath = rectPathBuilder.detach();
+        return;
+    }
     if(d.p1.x() == d.p2.x() || d.p1.y() == d.p2.y()) {
         rectPathBuilder.moveTo(convert_vec2<SkPoint>(d.p1));
         rectPathBuilder.lineTo(convert_vec2<SkPoint>(d.p2));
@@ -90,6 +105,22 @@ void RectangleCanvasComponent::create_draw_data() {
 void RectangleCanvasComponent::create_collider() {
     using namespace SCollision;
     ColliderCollection<float> strokeObjects;
+    if(d.polygonMode && d.points.size() >= 3) {
+        // PHASE6: outline -> closed polyline; fill (and fill+outline) -> fan
+        // triangulation. Fan is correct for the convex quad M1 produces;
+        // concave polygons (from M2/M3 vertex editing) need ear-clipping —
+        // tracked for M2.
+        if(d.fillStrokeMode == 1) {
+            generate_polyline(strokeObjects, d.points, d.strokeWidth, true);
+        }
+        else {
+            for(size_t i = 1; i + 1 < d.points.size(); ++i)
+                strokeObjects.triangle.emplace_back(d.points[0], d.points[i], d.points[i + 1]);
+        }
+        collisionTree.clear();
+        collisionTree.calculate_bvh_recursive(strokeObjects);
+        return;
+    }
     if(d.fillStrokeMode == 0) {
         std::array<Vector2f, 4> newT = triangle_from_rect_points(d.p1, d.p2);
         strokeObjects.triangle.emplace_back(newT[0], newT[1], newT[2]);
