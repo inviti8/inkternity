@@ -18,6 +18,7 @@
 #include <Helpers/NetworkingObjects/NetObjManager.hpp>
 #include <chrono>
 #include <filesystem>
+#include <sstream>
 #include "ClientData.hpp"
 #include "HostMode.hpp"
 
@@ -42,6 +43,12 @@ class World {
 
         void save_file(cereal::PortableBinaryOutputArchive& a) const;
         void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version);
+
+        // Serialize the canvas into an uncompressed binary cereal stream,
+        // SEH-guarded on Windows. Shared by save_to_file and autosave_tick.
+        // Throws std::runtime_error if serialization faults; the caller
+        // decides whether that is WORLDFATAL or a skipped autosave tick.
+        std::stringstream serialize_canvas_to_stream() const;
 
         MainProgram& main;
         DrawData drawData;
