@@ -72,26 +72,42 @@ unsigned long seh_guard_call(Fn&& fn) noexcept {
 
 #ifndef __EMSCRIPTEN__
 namespace {
-// Streams a zstd-compressed canvas file straight to `tmpPath`: writes the
-// version header, then the ZSTD frame produced from `uncompressed`, through a
-// small fixed-size (~ZSTD_CStreamOutSize) output buffer.
+// RAII: deletes a path on scope exit (success or exception). Used to clear the
+// uncompressed serialization spill file no matter how the save path unwinds.
+struct ScopedFileRemove {
+    std::filesystem::path path;
+    ~ScopedFileRemove() {
+        if(!path.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    }
+};
+
+// Stream-compresses the uncompressed cereal file `srcPath` into `tmpPath`:
+// writes the version header, then a ZSTD frame produced by reading `srcPath`
+// in fixed-size chunks through ZSTD_compressStream2. Peak memory is just the
+// two ~128KB I/O buffers + the zstd window, regardless of canvas size.
 //
-// This is the memory fix for large canvases: the previous one-shot path
-// allocated a ZSTD_compressBound buffer (~uncompressed size) AND copied the
-// whole compressed file into a stringstream before writing — so peak was
-// roughly uncompressed + uncompressed + compressed, each a single contiguous
-// block. Streaming keeps peak at ~uncompressed + ~128KB.
+// Why read from a file instead of a memory buffer: a large canvas serializes
+// to ~GBs, and holding that in a std::stringstream (which DOUBLES to grow)
+// blew past available RAM with bad_alloc. Spilling the uncompressed stream to
+// disk first removes the only remaining large allocation on the save path.
 //
-// The pledged source size is set so the resulting frame embeds its content
-// size in the header — World::load_from_file sizes its decompress buffer via
-// ZSTD_getFrameContentSize, which returns UNKNOWN for streamed frames unless
-// the size is pledged up front. We always know the full size here.
+// `srcSize` is pledged so the frame embeds its content size in the header —
+// World::load_from_file sizes its decompress buffer via ZSTD_getFrameContentSize
+// (UNKNOWN for streamed frames unless pledged), so the load path is unchanged
+// and no save-format bump is needed.
 //
 // Throws std::runtime_error on any failure. The caller's atomic .tmp->rename
 // finalization is unchanged.
-void write_compressed_canvas_to_tmp(const std::filesystem::path& tmpPath,
-                                    std::string_view header,
-                                    std::string_view uncompressed) {
+void write_compressed_file_to_tmp(const std::filesystem::path& tmpPath,
+                                  std::string_view header,
+                                  const std::filesystem::path& srcPath,
+                                  uint64_t srcSize) {
+    std::ifstream in(srcPath, std::ios::binary);
+    if(!in)
+        throw std::runtime_error("Could not open uncompressed temp for reading: " + srcPath.string());
     std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
     if(!out)
         throw std::runtime_error("Could not open temp file for writing: " + tmpPath.string());
@@ -105,22 +121,37 @@ void write_compressed_canvas_to_tmp(const std::filesystem::path& tmpPath,
         throw std::runtime_error("ZSTD_createCCtx failed");
 
     ZSTD_CCtx_setParameter(cctx.get(), ZSTD_c_compressionLevel, ZSTD_CLEVEL_DEFAULT);
-    if(ZSTD_isError(ZSTD_CCtx_setPledgedSrcSize(cctx.get(), uncompressed.size())))
+    if(ZSTD_isError(ZSTD_CCtx_setPledgedSrcSize(cctx.get(), srcSize)))
         throw std::runtime_error("ZSTD_CCtx_setPledgedSrcSize failed");
 
+    const size_t inCap = ZSTD_CStreamInSize();
+    std::vector<char> inBuf(inCap);
     std::vector<char> outBuf(ZSTD_CStreamOutSize());
-    ZSTD_inBuffer in{ uncompressed.data(), uncompressed.size(), 0 };
+
+    uint64_t totalRead = 0;
     for(;;) {
-        ZSTD_outBuffer outRec{ outBuf.data(), outBuf.size(), 0 };
-        const size_t remaining = ZSTD_compressStream2(cctx.get(), &outRec, &in, ZSTD_e_end);
-        if(ZSTD_isError(remaining))
-            throw std::runtime_error(std::string("ZSTD_compressStream2 failed: ") + ZSTD_getErrorName(remaining));
-        out.write(outBuf.data(), static_cast<std::streamsize>(outRec.pos));
-        if(!out)
-            throw std::runtime_error("Failed to write compressed data to " + tmpPath.string());
-        if(remaining == 0)
-            break;  // input fully consumed and frame flushed
+        in.read(inBuf.data(), static_cast<std::streamsize>(inCap));
+        const size_t got = static_cast<size_t>(in.gcount());
+        totalRead += got;
+        const bool lastChunk = (totalRead >= srcSize) || in.eof();
+        const ZSTD_EndDirective mode = lastChunk ? ZSTD_e_end : ZSTD_e_continue;
+
+        ZSTD_inBuffer zin{ inBuf.data(), got, 0 };
+        for(;;) {
+            ZSTD_outBuffer zout{ outBuf.data(), outBuf.size(), 0 };
+            const size_t rem = ZSTD_compressStream2(cctx.get(), &zout, &zin, mode);
+            if(ZSTD_isError(rem))
+                throw std::runtime_error(std::string("ZSTD_compressStream2 failed: ") + ZSTD_getErrorName(rem));
+            out.write(outBuf.data(), static_cast<std::streamsize>(zout.pos));
+            if(!out)
+                throw std::runtime_error("Failed to write compressed data to " + tmpPath.string());
+            if(mode == ZSTD_e_end) { if(rem == 0) break; }      // frame fully flushed
+            else if(zin.pos == zin.size) break;                 // chunk consumed
+        }
+        if(lastChunk) break;
     }
+    if(in.bad())
+        throw std::runtime_error("Read error on uncompressed temp: " + srcPath.string());
 
     out.flush();
     out.close();
@@ -743,8 +774,7 @@ void World::autosave_to_directory(const std::filesystem::path& directoryToSaveAt
     save_to_file(directoryToSaveAt / std::filesystem::path(nameToSaveUnder + "." + FILE_EXTENSION), true);
 }
 
-std::stringstream World::serialize_canvas_to_stream() const {
-    std::stringstream fWorldDataToCompress;
+void World::serialize_canvas_to_stream(std::ostream& out) const {
     #ifdef _WIN32
         // SEH-guard the cereal recursion: an access violation deep in
         // serialization (e.g. a null member ptr) becomes a catchable
@@ -753,7 +783,7 @@ std::stringstream World::serialize_canvas_to_stream() const {
         std::string cppExMsg;
         const unsigned long sehCode = seh_guard_call([&] {
             try {
-                cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
+                cereal::PortableBinaryOutputArchive a(out);
                 save_file(a);
             } catch (const std::exception& e) {
                 cppExMsg = e.what();
@@ -775,10 +805,9 @@ std::stringstream World::serialize_canvas_to_stream() const {
                 "dialogs and retry.");
         }
     #else
-        cereal::PortableBinaryOutputArchive a(fWorldDataToCompress);
+        cereal::PortableBinaryOutputArchive a(out);
         save_file(a);
     #endif
-    return fWorldDataToCompress;
 }
 
 void World::save_to_file(const std::filesystem::path& filePathToSaveAtRaw, bool disableThumbnailSaving) {
@@ -797,11 +826,6 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAtRaw, bool 
     try {
         filePath = filePathToSaveAt;
 
-        // Serialize once (SEH-guarded) into the uncompressed cereal stream.
-        std::stringstream fWorldDataToCompress = serialize_canvas_to_stream();
-
-        set_name(filePath.stem().string());
-
         const std::string_view header(
             VersionConstants::CURRENT_SAVEFILE_HEADER.c_str(),
             VersionConstants::SAVEFILE_HEADER_LEN);
@@ -809,6 +833,9 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAtRaw, bool 
         #ifdef __EMSCRIPTEN__
             // Browser builds can't stream to a temp file; build the whole
             // compressed buffer in memory and hand it to the download helper.
+            std::stringstream fWorldDataToCompress;
+            serialize_canvas_to_stream(fWorldDataToCompress);
+            set_name(filePath.stem().string());
             std::stringstream f;
             f.write(header.data(), header.size());
             std::vector<char> compressedData(ZSTD_compressBound(fWorldDataToCompress.view().size()));
@@ -820,13 +847,32 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAtRaw, bool 
                 f.view()
             );
         #else
-            // Atomic write: stream the compressed canvas to <path>.tmp
-            // first, then rename it over the target. A crash mid-write
-            // can no longer corrupt the prior good file at the same path,
-            // and a partial .tmp stays on disk for forensic recovery.
+            // Atomic write: spill the uncompressed cereal stream to a temp
+            // file, then stream-compress it into <path>.tmp and rename over
+            // the target. Spilling to disk (instead of an in-memory buffer)
+            // is what lets a multi-GB canvas save at all — a stringstream of
+            // that size fails with bad_alloc as it doubles to grow. A crash
+            // mid-write can't corrupt the prior good file at the target path.
             auto tmpPath = filePath;
             tmpPath += ".tmp";
-            write_compressed_canvas_to_tmp(tmpPath, header, fWorldDataToCompress.view());
+            auto uncompressedTmp = filePath;
+            uncompressedTmp += ".uncompressed.tmp";
+            ScopedFileRemove spillGuard{uncompressedTmp};
+            {
+                std::ofstream uout(uncompressedTmp, std::ios::binary | std::ios::trunc);
+                if(!uout)
+                    throw std::runtime_error("Could not open temp file for writing: " + uncompressedTmp.string());
+                serialize_canvas_to_stream(uout);
+                uout.flush();
+                if(!uout)
+                    throw std::runtime_error("Failed writing serialized canvas to " + uncompressedTmp.string());
+                uout.close();
+                if(uout.fail())
+                    throw std::runtime_error("Failed to finalize " + uncompressedTmp.string());
+            }
+            set_name(filePath.stem().string());
+            const uint64_t uncompressedSize = std::filesystem::file_size(uncompressedTmp);
+            write_compressed_file_to_tmp(tmpPath, header, uncompressedTmp, uncompressedSize);
             std::error_code rec;
             std::filesystem::rename(tmpPath, filePath, rec);
             if(rec) {
@@ -937,18 +983,33 @@ void World::autosave_tick() {
     // We deliberately don't call save_to_file: it would mutate filePath /
     // name / set_save_action and treat this snapshot as the artist's
     // canonical save. Reproduce just the serialize + atomic-write parts
-    // here, sharing serialize_canvas_to_stream + the streaming compressed
-    // write with save_to_file's main path.
+    // here, sharing serialize_canvas_to_stream + the file-spill streaming
+    // compress with save_to_file's main path (so autosave also survives
+    // multi-GB canvases instead of dying on a stringstream bad_alloc).
     try {
-        std::stringstream fWorldDataToCompress = serialize_canvas_to_stream();
-
         const std::string_view header(
             VersionConstants::CURRENT_SAVEFILE_HEADER.c_str(),
             VersionConstants::SAVEFILE_HEADER_LEN);
 
         auto tmpPath = path;
         tmpPath += ".tmp";
-        write_compressed_canvas_to_tmp(tmpPath, header, fWorldDataToCompress.view());
+        auto uncompressedTmp = path;
+        uncompressedTmp += ".uncompressed.tmp";
+        ScopedFileRemove spillGuard{uncompressedTmp};
+        {
+            std::ofstream uout(uncompressedTmp, std::ios::binary | std::ios::trunc);
+            if(!uout)
+                throw std::runtime_error("Could not open temp file for writing: " + uncompressedTmp.string());
+            serialize_canvas_to_stream(uout);
+            uout.flush();
+            if(!uout)
+                throw std::runtime_error("Failed writing serialized canvas to " + uncompressedTmp.string());
+            uout.close();
+            if(uout.fail())
+                throw std::runtime_error("Failed to finalize " + uncompressedTmp.string());
+        }
+        const uint64_t uncompressedSize = std::filesystem::file_size(uncompressedTmp);
+        write_compressed_file_to_tmp(tmpPath, header, uncompressedTmp, uncompressedSize);
         std::error_code rec;
         std::filesystem::rename(tmpPath, path, rec);
         if(rec) {
