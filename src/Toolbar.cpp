@@ -9,6 +9,7 @@
 #include "DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
 #include "DrawingProgram/RasterFlatten.hpp"
 #include "DrawingProgram/RasterResolution.hpp"
+#include "Armature/ArmatureSpike.hpp"  // PHASE9 M1 spike (temporary trigger)
 #include "Diagnostics/RenderStats.hpp"
 #include "FileHelpers.hpp"
 #include "GUIStuff/Elements/MemoryImageDisplay.hpp"
@@ -731,6 +732,11 @@ void Toolbar::top_toolbar() {
                                 });
                                 menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
                                     RasterResolution::halve_layer(main.world->drawProg);
+                                });
+                                // PHASE9 M1 spike (THE GATE) — temporary; remove
+                                // once the real armature modal lands.
+                                menu_popup_text_button("armature spike", "Armature Spike (M1)", [&] {
+                                    ArmatureSpike::run_spike(main.world->drawProg);
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {
