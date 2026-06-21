@@ -6,6 +6,7 @@
 #include "../GUIStuff/Elements/Element.hpp"
 #include "../GUIStuff/Elements/LayoutElement.hpp"
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
+#include "../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
 #include "Helpers/ConvertVec.hpp"
 #include "Waypoint.hpp"
 #include "WaypointGraph.hpp"
@@ -40,6 +41,15 @@ constexpr float EDGE_HIT_RADIUS = 6.0f;        // distance threshold for edge hi
 constexpr float ARROW_LEN = 8.0f;
 constexpr float ARROW_HALF = 5.0f;
 
+// Node-editor view zoom limits (graph scale, not canvas scale). 1.0 is the
+// default and the *most* zoomed-in we need (right end of the slider); the
+// whole range is dedicated to zooming out for navigating large trees. The
+// minimum is a small positive floor rather than 0 — scale 0 would collapse
+// the graph and divide-by-zero the screen->graph hit-testing.
+constexpr float MIN_ZOOM = 0.1f;
+constexpr float MAX_ZOOM = 1.0f;
+constexpr float WHEEL_ZOOM_STEP = 1.1f;  // per wheel tick
+
 // Squared distance from point p to segment ab.
 inline float dist_sq_point_to_segment(const Vector2f& p, const Vector2f& a, const Vector2f& b) {
     const Vector2f ab = b - a;
@@ -60,8 +70,9 @@ class TreeViewGraphElement : public GUIStuff::Element {
     public:
         explicit TreeViewGraphElement(GUIStuff::GUIManager& g) : Element(g) {}
 
-        void layout(const Clay_ElementId& id, World* w) {
+        void layout(const Clay_ElementId& id, World* w, TreeViewGraphView* v) {
             world = w;
+            view = v;
             CLAY(id, {
                 .layout = {.sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0)}},
                 .custom = {this}
@@ -69,10 +80,23 @@ class TreeViewGraphElement : public GUIStuff::Element {
         }
 
         void clay_draw(SkCanvas* canvas, GUIStuff::UpdateInputData&, Clay_RenderCommand*, bool skiaAA) override {
-            if (!boundingBox.has_value() || !world) return;
+            if (!boundingBox.has_value() || !world || !view) return;
             const auto& bb = boundingBox.value();
             const Vector2f panelOrigin = bb.min;
             const Vector2f panelSize = bb.max - bb.min;
+
+            // A scale change that wasn't anchored at the cursor (i.e. from the
+            // Zoom slider) is re-centered about the panel centre here, so the
+            // graph zooms in place instead of flying toward the origin. Wheel
+            // zoom anchors at the cursor itself and syncs lastScale to skip this.
+            if (view->scale != lastScale) {
+                const float ratio = (lastScale > 0.0f) ? (view->scale / lastScale) : 1.0f;
+                const float cx = panelSize.x() * 0.5f;
+                const float cy = panelSize.y() * 0.5f;
+                view->offsetX = cx - (cx - view->offsetX) * ratio;
+                view->offsetY = cy - (cy - view->offsetY) * ratio;
+                lastScale = view->scale;
+            }
 
             canvas->save();
             canvas->clipRect(SkRect::MakeLTRB(bb.min.x(), bb.min.y(), bb.max.x(), bb.max.y()), skiaAA);
@@ -84,6 +108,14 @@ class TreeViewGraphElement : public GUIStuff::Element {
             auto& nodes = world->wpGraph.get_nodes();
             auto& layout = world->wpGraph.mutable_layout();
             if (!nodes) { canvas->restore(); return; }
+
+            // Graph-space -> panel screen-space transform. Drawing everything
+            // in graph space under this matrix means node sizes, fonts, stroke
+            // widths and skins all scale with the zoom for free; the inverse
+            // (to_graph) maps input back for hit-testing.
+            canvas->save();
+            canvas->translate(panelOrigin.x() + view->offsetX, panelOrigin.y() + view->offsetY);
+            canvas->scale(view->scale, view->scale);
 
             // Auto-place + cache panel-local positions.
             const float stackX = (panelSize.x() - NODE_W) * 0.5f;
@@ -123,8 +155,8 @@ class TreeViewGraphElement : public GUIStuff::Element {
                     const Vector2f toPanel = toBox->topLeft + Vector2f(NODE_W * 0.5f, 0.0f);
                     edgeSegments.push_back({einfo.obj.get_net_id(), fromPanel, toPanel});
 
-                    const Vector2f from = panelOrigin + fromPanel;
-                    const Vector2f to = panelOrigin + toPanel;
+                    const Vector2f from = fromPanel;
+                    const Vector2f to = toPanel;
                     canvas->drawLine(from.x(), from.y(), to.x(), to.y(), edgePaint);
                     const Vector2f dir = (to - from).normalized();
                     const Vector2f perp(-dir.y(), dir.x());
@@ -142,8 +174,8 @@ class TreeViewGraphElement : public GUIStuff::Element {
             if (dragMode == DragMode::EDGE_CREATE) {
                 auto srcBox = find_node_box(dragSourceId);
                 if (srcBox) {
-                    const Vector2f src = panelOrigin + srcBox->topLeft + Vector2f(NODE_W * 0.5f, NODE_H);
-                    const Vector2f dst = panelOrigin + dragCurrentPanel;
+                    const Vector2f src = srcBox->topLeft + Vector2f(NODE_W * 0.5f, NODE_H);
+                    const Vector2f dst = dragCurrentGraph;
                     SkPaint preview;
                     preview.setAntiAlias(skiaAA);
                     preview.setStyle(SkPaint::kStroke_Style);
@@ -166,7 +198,7 @@ class TreeViewGraphElement : public GUIStuff::Element {
                 : std::nullopt;
 
             for (const auto& nb : nodeBoxes) {
-                const Vector2f topLeft = panelOrigin + nb.topLeft;
+                const Vector2f topLeft = nb.topLeft;
                 const bool selected = selectedOpt.has_value() && selectedOpt.value() == nb.id;
                 auto wpRef = world->netObjMan.get_obj_temporary_ref_from_id<Waypoint>(nb.id);
                 const bool hasSkin = wpRef && wpRef->has_skin();
@@ -266,26 +298,40 @@ class TreeViewGraphElement : public GUIStuff::Element {
                 canvas->drawCircle(port.x(), port.y(), PORT_RADIUS, portPaint);
             }
 
-            canvas->restore();
+            canvas->restore();  // graph-space transform
+            canvas->restore();  // panel clip
         }
 
         void input_mouse_button_callback(const InputManager::MouseButtonCallbackArgs& button) override {
-            if (!boundingBox.has_value() || !world) return;
-            const Vector2f panelLocal = button.pos - boundingBox.value().min;
+            if (!boundingBox.has_value() || !world || !view) return;
+            const Vector2f panelLocal = button.pos - boundingBox.value().min;  // screen, for panning
+            const Vector2f graphLocal = to_graph(button.pos);                  // for hit-testing
+
+            // Middle-button drag pans the view (matches the canvas pan idiom).
+            if (button.button == InputManager::MouseButton::MIDDLE) {
+                if (button.down && mouseHovering) {
+                    dragMode = DragMode::PAN;
+                    panStartCursor = panelLocal;
+                    panStartOffset = Vector2f(view->offsetX, view->offsetY);
+                } else if (!button.down && dragMode == DragMode::PAN) {
+                    dragMode = DragMode::NONE;
+                }
+                return;
+            }
 
             if (button.button == InputManager::MouseButton::LEFT) {
                 if (button.down) {
                     if (!mouseHovering) return;
                     // Port hit test first — has priority over node-body
                     // because port overlaps the node's bottom edge.
-                    if (auto portHit = hit_test_port(panelLocal)) {
+                    if (auto portHit = hit_test_port(graphLocal)) {
                         dragMode = DragMode::EDGE_CREATE;
                         dragSourceId = portHit.value();
-                        dragCurrentPanel = panelLocal;
+                        dragCurrentGraph = graphLocal;
                         gui.invalidate_draw_element(this);
                         return;
                     }
-                    if (auto nodeHit = hit_test_node(panelLocal)) {
+                    if (auto nodeHit = hit_test_node(graphLocal)) {
                         world->wpGraph.select(nodeHit.value().id);
                         // Selection change ripples to the WaypointTool
                         // settings panel in the right-side toolbar, which
@@ -312,13 +358,18 @@ class TreeViewGraphElement : public GUIStuff::Element {
                         // Otherwise begin REPOSITION drag.
                         dragMode = DragMode::REPOSITION;
                         dragSourceId = nodeHit.value().id;
-                        dragOffset = panelLocal - nodeHit.value().topLeft;
+                        dragOffset = graphLocal - nodeHit.value().topLeft;
                         return;
                     }
+                    // Empty space → pan the view (so complex trees can be
+                    // navigated by dragging the background, like a canvas).
+                    dragMode = DragMode::PAN;
+                    panStartCursor = panelLocal;
+                    panStartOffset = Vector2f(view->offsetX, view->offsetY);
                 } else {
                     // Mouse-up — finalize whatever was in progress.
                     if (dragMode == DragMode::EDGE_CREATE) {
-                        if (auto nodeHit = hit_test_node(panelLocal)) {
+                        if (auto nodeHit = hit_test_node(graphLocal)) {
                             if (nodeHit.value().id != dragSourceId) {
                                 world->wpGraph.add_edge_enforcing_invariant(
                                     dragSourceId, nodeHit.value().id, std::optional<std::string>{});
@@ -334,7 +385,7 @@ class TreeViewGraphElement : public GUIStuff::Element {
             if (button.button == InputManager::MouseButton::RIGHT && button.down && mouseHovering) {
                 // Right-click on an edge deletes it. Label-edit UI for
                 // edges is a follow-up.
-                if (auto edgeHitId = hit_test_edge(panelLocal)) {
+                if (auto edgeHitId = hit_test_edge(graphLocal)) {
                     auto& edges = world->wpGraph.get_edges();
                     auto it = edges->get(edgeHitId.value());
                     if (it != edges->end())
@@ -345,15 +396,42 @@ class TreeViewGraphElement : public GUIStuff::Element {
         }
 
         void input_mouse_motion_callback(const InputManager::MouseMotionCallbackArgs& motion) override {
-            if (!boundingBox.has_value() || !world) return;
-            const Vector2f panelLocal = motion.pos - boundingBox.value().min;
+            if (!boundingBox.has_value() || !world || !view) return;
+            const Vector2f panelLocal = motion.pos - boundingBox.value().min;  // screen
+            const Vector2f graphLocal = to_graph(motion.pos);
             if (dragMode == DragMode::REPOSITION) {
-                world->wpGraph.mutable_layout()[dragSourceId] = panelLocal - dragOffset;
+                world->wpGraph.mutable_layout()[dragSourceId] = graphLocal - dragOffset;
                 gui.invalidate_draw_element(this);
             } else if (dragMode == DragMode::EDGE_CREATE) {
-                dragCurrentPanel = panelLocal;
+                dragCurrentGraph = graphLocal;
+                gui.invalidate_draw_element(this);
+            } else if (dragMode == DragMode::PAN) {
+                const Vector2f delta = panelLocal - panStartCursor;
+                view->offsetX = panStartOffset.x() + delta.x();
+                view->offsetY = panStartOffset.y() + delta.y();
                 gui.invalidate_draw_element(this);
             }
+        }
+
+        void input_mouse_wheel_callback(const InputManager::MouseWheelCallbackArgs& wheel) override {
+            if (!boundingBox.has_value() || !world || !view) return;
+            if (!mouseHovering || wheel.tickAmount.y() == 0.0f) return;
+            const float oldScale = view->scale;
+            const float newScale = std::clamp(
+                oldScale * static_cast<float>(std::pow(WHEEL_ZOOM_STEP, wheel.tickAmount.y())),
+                MIN_ZOOM, MAX_ZOOM);
+            if (newScale == oldScale) return;
+            // Anchor the zoom at the cursor: keep the graph point under the
+            // pointer fixed on screen. Sync lastScale so clay_draw doesn't also
+            // re-centre this change about the panel middle.
+            const Vector2f panelLocal = wheel.mousePos - boundingBox.value().min;
+            const float gx = (panelLocal.x() - view->offsetX) / oldScale;
+            const float gy = (panelLocal.y() - view->offsetY) / oldScale;
+            view->offsetX = panelLocal.x() - gx * newScale;
+            view->offsetY = panelLocal.y() - gy * newScale;
+            view->scale = newScale;
+            lastScale = newScale;
+            gui.invalidate_draw_element(this);
         }
 
     private:
@@ -366,6 +444,14 @@ class TreeViewGraphElement : public GUIStuff::Element {
             Vector2f from;  // panel-local
             Vector2f to;    // panel-local
         };
+
+        // Map a screen position to graph space (inverse of the clay_draw
+        // matrix). Caller guarantees boundingBox + view are set.
+        Vector2f to_graph(const Vector2f& screenPos) const {
+            const Vector2f panelLocal = screenPos - boundingBox.value().min;
+            return Vector2f((panelLocal.x() - view->offsetX) / view->scale,
+                            (panelLocal.y() - view->offsetY) / view->scale);
+        }
 
         const NodeBox* find_node_box(NetworkingObjects::NetObjID id) const {
             for (const auto& nb : nodeBoxes) if (nb.id == id) return &nb;
@@ -400,14 +486,18 @@ class TreeViewGraphElement : public GUIStuff::Element {
         }
 
         World* world = nullptr;
-        std::vector<NodeBox> nodeBoxes;       // cached during clay_draw
-        std::vector<EdgeSegment> edgeSegments; // cached during clay_draw
+        TreeViewGraphView* view = nullptr;    // pan/zoom state owned by TreeView
+        float lastScale = 1.0f;               // detects slider zoom for re-centring
+        std::vector<NodeBox> nodeBoxes;       // cached during clay_draw (graph space)
+        std::vector<EdgeSegment> edgeSegments; // cached during clay_draw (graph space)
 
-        enum class DragMode { NONE, REPOSITION, EDGE_CREATE };
+        enum class DragMode { NONE, REPOSITION, EDGE_CREATE, PAN };
         DragMode dragMode = DragMode::NONE;
         NetworkingObjects::NetObjID dragSourceId{};
-        Vector2f dragOffset{0, 0};        // REPOSITION: cursor offset from node top-left
-        Vector2f dragCurrentPanel{0, 0};  // EDGE_CREATE: current cursor in panel-local
+        Vector2f dragOffset{0, 0};        // REPOSITION: cursor offset from node top-left (graph space)
+        Vector2f dragCurrentGraph{0, 0};  // EDGE_CREATE: current cursor in graph space
+        Vector2f panStartCursor{0, 0};    // PAN: cursor (panel/screen) at drag start
+        Vector2f panStartOffset{0, 0};    // PAN: view offset at drag start
 };
 
 TreeView::TreeView(World& w)
@@ -436,7 +526,22 @@ void TreeView::gui(GUIStuff::GUIManager& gui) {
             .cornerRadius = CLAY_CORNER_RADIUS(io.theme->windowCorners1)
         }) {
             text_label_centered(gui, "Tree");
-            gui.element<TreeViewGraphElement>("graph", &world);
+            // Zoom control for the node view — navigation is independent of the
+            // main canvas below (pinch over this panel no longer drives the
+            // canvas; see DrawCamera::input_multi_finger_touch_callback).
+            slider_scalar_field<float>(gui, "node zoom", "Zoom", &view.scale, MIN_ZOOM, MAX_ZOOM, {
+                .decimalPrecision = 2,
+                .onEdit = [&] {
+                    // Slider zoom isn't cursor-anchored; the graph element
+                    // re-centres about the panel middle on its next clay_draw.
+                    // Force that repaint (the element's bb is outside this row).
+                    gui.invalidate_draw_in_area(SCollision::AABB<float>{
+                        Vector2f{0.0f, 0.0f},
+                        world.main.window.size.cast<float>()
+                    });
+                }
+            });
+            gui.element<TreeViewGraphElement>("graph", &world, &view);
         }
     });
 }
