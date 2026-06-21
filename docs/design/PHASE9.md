@@ -9,6 +9,18 @@ first 3D subsystem. It is scheduled **first by choice** (zynx, 2026-06-21) — t
 carousel is the smaller, low-risk follow-on — so take a clean, deliberate run at
 this and gate it on the M1 spike.
 
+**✅ M1 GATE PASSED (2026-06-21).** The context spike (raw GL lit cube → own
+FBO → `resetContext()` → bake to a `MYPAINTLAYER`) renders and bakes correctly,
+and the canvas keeps drawing cleanly afterwards — the highest risk (#1) is
+retired. Implemented in `src/Armature/ArmatureSpike.cpp` behind a temporary
+"Armature Spike (M1)" menu button (throwaway; remove when the real modal lands).
+**Key finding for M2+:** a raw-GL pass on the shared Ganesh context **must fully
+specify its GL state** (depth/colour/stencil masks, depth func, clear-depth,
+scissor/blend/cull) before rendering — Skia leaves these in non-default states
+and `glClear`/draws silently honour them, which first showed up as a baked-but-
+invisible (fully transparent) result. `resetContext()` after the pass hands
+state back to Skia.
+
 **Planning session 2026-06-21** mapped the real rendering/screen/component/
 vendoring substrate (see "Grounded architecture" below) and **locked the four
 open decisions** (see "Decisions"). Net effect of the decisions: **ozz-animation

@@ -185,12 +185,24 @@ bool render_cube_to_pixels(int dim, std::vector<uint8_t>& outPixels) {
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
+    // Fully specify every piece of state the render+clear depends on — do NOT
+    // assume defaults. Skia/Ganesh leaves GL state in whatever its last batch
+    // needed (depth/colour/stencil masks off, scissor on, blend on, ...), and
+    // glClear/glDraw silently honour those masks. A left-disabled depth or
+    // colour mask is the classic "renders nothing into my FBO" trap. (M1
+    // finding: this is mandatory before any 3D pass on the shared context.)
     glViewport(0, 0, dim, dim);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glStencilMask(0xFF);
+    glDepthFunc(GL_LESS);
     glEnable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
     glDisable(GL_BLEND);  // opaque cube on transparent clear → no premul concerns
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_CULL_FACE);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     {
@@ -217,6 +229,20 @@ bool render_cube_to_pixels(int dim, std::vector<uint8_t>& outPixels) {
     outPixels.assign(static_cast<size_t>(dim) * dim * 4, 0);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, dim, dim, GL_RGBA, GL_UNSIGNED_BYTE, outPixels.data());
+    {
+        // Diagnostic: how many opaque pixels actually came back? 0 ⇒ the render
+        // produced nothing (state/matrix problem). >0 ⇒ render is fine and any
+        // "invisible" result is placement/import. Logged so we get a definitive
+        // signal from a single test run.
+        const GLenum err = glGetError();
+        size_t opaque = 0;
+        for (size_t i = 3; i < outPixels.size(); i += 4)
+            if (outPixels[i] != 0) ++opaque;
+        Logger::get().log("INFO",
+            "Armature spike: readback glGetError=" + std::to_string(err) +
+            ", opaque px=" + std::to_string(opaque) +
+            "/" + std::to_string(static_cast<size_t>(dim) * dim));
+    }
     ok = true;
 
 cleanup:
