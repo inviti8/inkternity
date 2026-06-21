@@ -243,7 +243,12 @@ void DrawCamera::input_mouse_wheel_callback(World& w, const InputManager::MouseW
 }
 
 void DrawCamera::input_multi_finger_touch_callback(World& w, const InputManager::MultiFingerTouchCallbackArgs& touch) {
-    if(!smoothMove.occurring && !isAccurateZooming && !isTouchTransforming && touch.down) {
+    // Multi-finger (pinch) events bypass the GUI dispatch that wheel zoom
+    // goes through, so without this guard a pinch over a GUI panel (e.g. the
+    // waypoint node editor) still drives the canvas camera. Gate the gesture
+    // *start* on cursor obstruction only: once a pinch legitimately begins
+    // over the canvas, isTouchTransforming lets the in-progress motion finish.
+    if(!smoothMove.occurring && !isAccurateZooming && !isTouchTransforming && touch.down && !w.main.g.gui.cursor_obstructed()) {
         touchInitialPositions = touch.pos;
         touchInitialC = c;
         isTouchTransforming = true;

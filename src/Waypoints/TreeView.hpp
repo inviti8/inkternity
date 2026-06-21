@@ -16,6 +16,18 @@ namespace GUIStuff { class GUIManager; }
 //       WaypointGraph::layout (auto-placed if no entry yet).
 // M6-c: drag-reposition, drag-from-port to create edge,
 //       double-click → focus canvas on the corresponding waypoint.
+// View transform for the node-graph editor. WaypointGraph layout positions
+// are stored in graph space; the editor maps graph->panel screen space as
+//   panel = panelOrigin + offset + graphPt * scale
+// so the whole graph can be zoomed (Zoom slider / mouse wheel) and panned
+// (drag empty background, or middle-drag) independently of the main canvas
+// underneath. Plain floats (not a Vector2f) keep this header dependency-free.
+struct TreeViewGraphView {
+    float scale = 1.0f;
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+};
+
 class TreeView {
     public:
         explicit TreeView(World& w);
@@ -32,4 +44,5 @@ class TreeView {
     private:
         World& world;
         bool visible = false;
+        TreeViewGraphView view;
 };
