@@ -19,6 +19,18 @@ single biggest de-risk the grounding surfaced: **the `World` is owned by
 `MainProgram`, not by the active `Screen`**, so the modal armature mode is a
 plain screen swap that never destroys or reloads the canvas.
 
+**Schema planning 2026-06-22** (zynx authoring the default model) added the
+**Skeleton schema & data model** section: a canonical humanoid bone taxonomy
+(VRM-Humanoid vocabulary, Mixamo-compatible names — Decisions §5/§6), locked
+authoring conventions (T-pose, 3-bone fingers, minimal facial morphs), a
+three-layer data model, and the morph/height/socket/variant/pose design. Net
+scope call (Decision §7, **revised**): model the armature as a **shape-family
+parametric component** (`ARMATURE` type) — its serialized struct **is** the
+pose/variant data, and double-click re-editing falls out of the existing
+`EditTool` dispatch (shapes already do this). So re-editability is a reasonable
+v1 target, not a deferred tier; the bounded costs are the raster preview, embedded
+rigs, and a save-format bump. See that section for the realistic/risky boundary.
+
 Requested by zynx: a **lightweight 3D armature program** for posing figure
 references. Flow: drop an **armature widget** on the canvas → opens a modal 3D
 view → load the **default rigged humanoid** or the user's own rigged model →
@@ -279,6 +291,179 @@ panels exactly like the toolbar does today (`gui.element<...>` in
 
 ---
 
+## Skeleton schema & data model (planning, 2026-06-22 — zynx)
+
+zynx is authoring the **default humanoid armature** (traditional wooden-mannequin
+style + extra posing joints) and designing its skeleton schema. The requirements
+gathered: morph targets (M/F, thin/muscular/fat, simple facial), procedural
+height, hand/head attachment sockets for props/hats, save/load of **armature
+variants** and **poses**, and a path to **animation loading** later.
+
+### The linchpin decision: a canonical humanoid bone taxonomy
+
+Pose save/load, variants, custom-model attach, **and** future animation are the
+**same mechanism** if data is stored against a **canonical humanoid bone enum**
+rather than raw glTF node indices. This is what VRM-Humanoid and Unity-Humanoid
+do: normalise any rig to a fixed named bone set, then keep a per-model map
+`canonicalBone → glTF node`. Consequences:
+
+- A **pose** = `{canonicalBone: quaternion}` → applies to *any* mapped model,
+  including a user's runtime import. Portable for free.
+- An **animation** = a time-series of the same data → retargeting onto arbitrary
+  models is the same code path as poses.
+- **Variants** = parameter presets bound to a rig, not a bespoke format.
+
+> **Decision §5 (LOCKED 2026-06-22): adopt the VRM-Humanoid bone taxonomy as our
+> internal canonical enum — but NOT full VRM.** We borrow the bone *vocabulary*
+> (hips, spine, chest, (upper)chest, neck, head, L/R shoulder→hand, 30 finger
+> bones, L/R upperLeg→toes) and the *retarget concept*; the container stays
+> glTF/`.glb` (cgltf parses it). We do **NOT** implement VRM spring bones, MToon,
+> constraints, or lookat — that's an engine we don't want. License-clean: glTF is
+> royalty-free, cgltf is MIT, and we write the mapping ourselves.
+
+> **Decision §6 (LOCKED 2026-06-22): author bones to a Mixamo-compatible naming
+> scheme.** It maps 1:1 onto the VRM/Unity humanoid enum *and* is what the
+> largest free animation library speaks — de-risks "animation later" at zero
+> cost. (We ship no Mixamo *assets* — see risk #5 — only speak its bone names.)
+
+### Authoring conventions (LOCKED 2026-06-22 — affect the asset being built now)
+
+| Choice | Locked value | Rationale |
+|---|---|---|
+| **Bind pose** | **T-pose** | VRM/Unity/Mixamo standard; cleanest retargeting. |
+| **Finger articulation** | **Full — 3 bones/finger** (15/hand) | Matches VRM finger enum; max FK fidelity. |
+| **Facial morphs** | **Minimal abstract slider set** (brow, jaw, mouth-open, eye…) | "Simple abstract" per request; low modeling burden, expandable. |
+| **Units / up-axis** | **metres, +Y up, right-handed** | glTF native; Blender export = apply transforms, Y-up. |
+| **Height** | **bone-length scaling** (not morph, not uniform root scale) | Proportional limb scaling; works with LBS (locals change, inverse-bind stays). |
+
+### Three-layer data model
+
+Separate *what the artist authors* from *what a canvas saves*:
+
+1. **Rig definition** (authored; ships inside the `.glb` / alongside it): the
+   skeleton, canonical-bone map, morph *catalog*, socket definitions, finger
+   setup. **This is the artifact zynx is building this week.**
+2. **Instance state** (saved per use, in the canvas): shape-parameter values,
+   height, current pose, attached props. References a rig.
+3. **Canonical map** — the glue that makes (1) reusable across many (2).
+
+### Feature → schema mapping (with realistic/risky boundary, standing rule)
+
+| Requirement | Schema mechanism | Confidence |
+|---|---|---|
+| Mannequin + extra posing joints | Canonical-mapped subset **+ free-form extra bones** the enum doesn't name (sternum/jaw/extra-spine). glTF allows any skeleton; map tags the humanoid subset. | ✅ Confident |
+| Morphs (M/F, build, face) | glTF morph targets (cgltf exposes `mesh.target_names`) + a **shape-parameter layer**: one slider → weighted combo of morphs across parts. **M2 impl note: apply morph deltas BEFORE LBS.** | ✅ Confident |
+| Procedural height | Bone-length scaling down the chain (see Authoring table). | ✅ Feasible; minor joint stretch, fine for a mannequin |
+| Hand/head sockets + props | Named **sockets** `{parentBone, localOffset}`; props are own `.glb` via the same cgltf path, **rigidly** parented to socket world matrix. **Embed prop bytes in the canvas** (PHASE5 `.tfx` precedent) — paths break. | ✅ Rigid props v1 / ⚠️ skinned props = future |
+| Armature variants | Shape values + enabled optional joints + socket/prop config + default pose, **bound to a base rig**. | ✅ Parameter/preset variants / ⚠️ **NO arbitrary re-rigging of a fixed mesh** — that's a Blender job, we'd do it badly. Flagged. |
+| Pose save/load | `{canonicalBone: rotation}` + named extras + optional root transform. Portable across mapped models. | ✅ Confident |
+| Animation (future) | Same canonical tracks, retargeted at load. Schema-ready now. | ✅ as schema / ⚠️ runtime deferred (post-v1) |
+
+**Additional won't-do-well callouts (standing rule):** full facial FACS rig
+(minimal sliders only); skinned/animated props (rigid sockets only in v1);
+physics/spring bones (hair, cloth — that's where VRM goes, we don't);
+auto-retarget of *non*-humanoid models (only canonical-mapped humanoids retarget;
+others pose by raw node).
+
+### Re-editability — the armature IS a shape-family editable component
+
+Idea raised (zynx, 2026-06-22): attach metadata to unbaked armature objects so a
+**double-click reopens the 3D editor** with the model loaded properly sized and
+posed (a "smart object", à la PS Smart Objects / editable text). zynx noted the
+**existing shapes already double-click-to-edit** — which is exactly right, and it
+**corrects an earlier mis-grounding in this doc** (a prior draft claimed "no
+double-click handler exists" — false; the grep only matched the literal string).
+Re-editability is therefore a **paved road**, not net-new plumbing:
+
+- **Double-click → edit is generic** (`src/DrawingProgram/Tools/EditTool.cpp:98`):
+  `button.clicks >= 2` → `selection.get_front_object_colliding_with_in_editing_layer`
+  → `is_editable(obj)` → `edit_start(obj)`. Hit-testing and routing already exist.
+- **Per-component edit behaviour is polymorphic**: `EditTool` delegates to a
+  `compEditTool` interface (`edit_gui`, `input_mouse_button_on_canvas_callback`,
+  `input_text_*`, `right_click_popup_gui`, …) with per-type implementations in
+  `src/DrawingProgram/Tools/EditTools/` (e.g. `TextBoxEditTool`). A new editable
+  component just **adds a `compEditTool` subclass + registers in `is_editable`/
+  `edit_start`** — that is THE extension point.
+- **Parametric, version-gated persistence is the established shape pattern**
+  (`RectangleCanvasComponent.cpp:90-101`): `save_file/load_file` serialize a `d`
+  struct; new fields are **appended and gated** (PHASE6 polygon fields gated
+  `>= 0.16.0`, PHASE7 mask flags gated `>= 0.18.0`; older files load with
+  defaults). This is precisely the "store editable metadata on the object" the
+  idea needs — already a paved convention.
+- **Precedent for a rich edit mode**: a placed TextBox **auto-enters** the Edit
+  tool (`MANUAL.md:45`) — a component whose "edit" is a whole mode, not just
+  handle-dragging. The armature's edit mode being a full-screen modal is the same
+  shape, one step bigger.
+
+> **Decision §7 (REVISED 2026-06-22): model the armature as a shape-family
+> parametric component (`CanvasComponentType::ARMATURE`), NOT a one-way bake with
+> a sidecar.** The component's `d` struct **is** the instance-state (rig ref,
+> pose as `{canonicalBone: rotation}`, shape params, height, camera, props),
+> serialized via the same append-and-gate convention as shapes. Its draw is the
+> cached **baked raster** (reuse the M1 bake). Its `compEditTool::edit_start`
+> **launches the modal 3D editor** seeded from `d` (instead of in-canvas
+> handles); on **Bake**, write `d` back + refresh the raster + undo entry. This
+> **collapses the old Tier 1/Tier 2 split** — there is no throwaway sidecar JSON
+> and no separate expensive "smart object" phase; double-click re-editing falls
+> out of the existing `EditTool` dispatch.
+
+**What's genuinely armature-specific (the real, bounded costs — NOT the
+double-click, which is free):**
+
+1. **Baked-raster preview cache** on the component (we already have the bake path
+   from M1; component holds the bitmap, re-bakes on edit-exit).
+2. **The modal as the "edit tool"** — `edit_start` is a thin adapter to
+   `MainProgram::set_screen(ArmatureModalScreen seeded from d)`. The modal is M5
+   regardless; this just wires the entry point to it.
+3. **Embedded custom-rig bytes** for portability (PHASE5 `.tfx` precedent) —
+   real **canvas-size** cost; consider content-hash dedup later (flagged, not v1).
+4. **Undo/metainfo Eigen gotcha** ([[project_layer_metainfo_eigen_gotcha]]): keep
+   `d` free of `WorldVec`/Eigen members in undo-tracked paths — use `WorldScalar`
+   pairs / plain float arrays for rotations.
+5. **Save-format bump**: a new `ARMATURE` type value → an `INFPNT0000xx` bump.
+   Unlike appended fields, a *new type* is read by the load-time type dispatch, so
+   **pre-PHASE9 builds can't open a canvas containing an armature** (standard
+   forward-incompat for a format-bumping feature). If graceful degradation in old
+   builds is wanted, the fallback is appended optional fields on an existing
+   raster type instead of a new type — decide at M5.
+
+Net: re-editability is now a **reasonable v1 target**, not a deferred tier,
+because it reuses shapes + `EditTool`. Author the **full schema now**; the asset
+zynx builds this week stays forward-compatible either way. Final v1-include call
+(esp. the embedded-rig size strategy) lands at **M5** when the modal firms up.
+
+### Square framing & 1:1 mapping (zynx, 2026-06-22)
+
+> **Decision §8 (LOCKED 2026-06-22): the armature object is aspect-locked to a
+> perfect square; the editor renders to a matching square.** The on-canvas
+> `ARMATURE` component is a **1:1 square**, seeded in **T-pose** (the bind pose) on
+> creation; the editor's **3D viewport region is square** and renders into a
+> square FBO (already the M1 shape). One uniform `inverseScale` maps the baked
+> square to its canvas frame — no aspect math, no distortion, WYSIWYG.
+
+Rationale & boundaries:
+
+- **T-pose ≈ square** (arm-span ≈ height, the Vitruvian property) → the default
+  figure fills a square frame with minimal wasted space. Square + T-pose-default
+  reinforce each other.
+- **Square = output *aspect*, not a posing clip.** Posed silhouettes vary (arms
+  down → tall; a reach/kick → wide). **Camera framing (part of instance-state)
+  controls fit**; the figure floats inside the square with transparent margins
+  (transparent PNG). The frame locks aspect; the camera decides what's in it.
+- **Uniform scale only.** A non-uniformly stretched square would distort the bake,
+  so the component is **aspect-locked** (no non-uniform handle). The existing
+  selection transform already scales uniformly
+  (`DrawingProgramSelection` — single scale multiplier), so square-stays-square is
+  natural. *Bake resolution* (pixels, e.g. 1024²) and *canvas footprint* (world
+  units) remain separate knobs — only the **aspect** is fixed at 1:1.
+- **"Square editor window" = square *viewport*, NOT a literal square OS window**
+  (standing rule — don't build what fights the model). The app is one SDL window;
+  resizing/letterboxing it per-mode would be janky. The modal keeps the full
+  window with a **square 3D viewport region** and Clay panels filling the
+  remainder — same 1:1 mapping, no window surgery.
+
+---
+
 ## Build (milestones, FK-first)
 
 1. **M1 — context spike (THE GATE).** Hand-written GL: render a lit spinning
@@ -298,11 +483,21 @@ panels exactly like the toolbar does today (`gui.element<...>` in
 4. **M4 — im3d gizmo + FK posing.** Vendor `deps/im3d`; joint picking
    (screen-ray vs. joint screen positions), rotate gizmo (im3d vertex buffers
    drawn in our pass), per-joint FK rotation, reset-pose.
-5. **M5 — modal shell + widget + Bake.** `ArmatureModalScreen : Screen`, entered
-   via `MainProgram::set_screen` (capture the outgoing screen, restore on
-   exit — `World` survives). On-canvas armature widget launches it; default +
-   runtime user-model load; Clay panels for camera/light/bake; **Bake** runs the
-   M1 export at the chosen canvas location (+ undo entry).
+5. **M5 — `ARMATURE` component + modal edit tool + widget + Bake.** Add
+   `CanvasComponentType::ARMATURE` with a parametric `d` struct (instance-state:
+   rig ref, pose keyed to canonical bones, shape params, height, camera, embedded
+   rig/props) serialized append-and-gate like shapes (`RectangleCanvasComponent`
+   template) → `INFPNT0000xx` bump. The component **draws** a cached baked raster.
+   Wire re-edit into the existing `EditTool` dispatch: `is_editable` true + an
+   `ArmatureEditTool : compEditTool` whose `edit_start` launches
+   `ArmatureModalScreen : Screen` via `MainProgram::set_screen` (capture outgoing
+   screen, restore on exit — `World` survives). On-canvas armature widget creates
+   one as a **1:1 square seeded in T-pose** (Decision §8); aspect-locked (uniform
+   scale only); square 3D viewport in the modal; default + runtime user-model load;
+   Clay panels for camera/light/bake;
+   **Bake** writes `d` back + refreshes the raster at the canvas location (+ undo).
+   Decide here: new type vs. appended-fields-on-raster (graceful degrade) and the
+   embedded-rig size strategy (content-hash dedup?).
 6. **M6 — polish + docs.** Edge cases, `third_party_licenses/` entries +
    `deps/<lib>/VENDORING.md` for cgltf & im3d, NOTICE line if the default asset
    is CC-BY, `MANUAL.md` / `README.md`, license audit, merge.
@@ -315,30 +510,49 @@ panels exactly like the toolbar does today (`gui.element<...>` in
 | M2 vendor cgltf, load default, hand-rolled FK/LBS skinning render | ~4–6 days |
 | M3 orbit camera + lighting | ~2–3 days |
 | M4 joint picking + im3d rotate gizmo + FK posing | ~4–6 days |
-| M5 modal screen + widget + Bake-to-canvas | ~3–4 days |
+| M5 `ARMATURE` component + serialization + modal edit tool + widget + Bake | ~5–7 days |
 | M6 edge cases + asset licensing + docs + merge | ~2–3 days |
 
-**Rough total: ~3–4 weeks.** Dropping ozz shifts ~1 day from integration/bake
+**Rough total: ~3.5–4.5 weeks.** Dropping ozz shifts ~1 day from integration/bake
 into owning the skinning math (M2), but removes the offline pipeline and unlocks
-runtime model loading. The gizmo/picking/FK UX (M4) and the modal shell (M5)
-still carry the weight; the context spike (M1) is the gate that must pass first.
+runtime model loading. M5 grew (~+2 days) when the armature became a re-editable
+`ARMATURE` component rather than a one-way bake — but that buys double-click
+re-editing almost free off the existing `EditTool` dispatch, plus pose/variant
+persistence, instead of a throwaway sidecar. The gizmo/picking/FK UX (M4) and the
+component+modal work (M5) carry the weight; M1 is the gate that must pass first.
 
 ## Out of scope (v1)
 
 - **IK posing** (deferred to PHASE9.x; re-evaluate ozz vs. hand-rolled
   CCD/FABRIK then — v1 ships hand-rolled FK only).
-- **Animation/timeline** — single static pose per bake, no keyframes.
+- **Animation/timeline runtime** — single static pose per bake, no keyframes.
+  (The *schema* is animation-ready via canonical tracks — see Skeleton schema —
+  but playback/import is post-v1.)
 - **PBR / textured materials / shadows** — matte + simple lighting only.
-- **In-app rigging/authoring** — we load rigs, we don't create them.
+- **In-app rigging/authoring** — we load rigs, we don't create them. No arbitrary
+  re-rigging of a fixed mesh (variants are parameter/preset presets, not bone
+  surgery — see Skeleton schema).
+- **Skinned/animated props** — socket attachments are **rigid** in v1.
 - **Multiple figures per scene** — one armature per modal session in v1.
-- **Re-editing a baked image as 3D** — Bake is one-way to a flat raster (like
-  flatten). The 3D scene isn't stored in the canvas file in v1.
+- **In scope (revised):** the armature is a re-editable **shape-family component**
+  (double-click → modal editor), not a one-way bake — re-editing reuses the
+  existing `EditTool` double-click dispatch (Decision §7). Bake still produces the
+  cached raster the component *draws*; what's new is persisting its parametric
+  struct (save-format bump) + the embedded-rig size strategy, both settled at M5.
 
 ## Backward compatibility
 
 The **Bake** output is a standard raster image component (same path as
 `RasterFlatten`), so it needs **no save-format change** and loads on any build.
-If a future version persists the live 3D scene (an armature *component* rather
-than a baked image), *that* would need an append-and-gate version bump — out of
-scope here. The armature widget/asset pipeline is build-bundled, not part of the
-canvas file format.
+The re-editable armature is a new **`ARMATURE` canvas component** (Decision §7),
+so v1 **does bump the save format** (next `INFPNT0000xx`, append-and-gate per
+[[project_layer_metainfo_eigen_gotcha]]). Because it's a new *type* (not just
+appended fields on a known type), **pre-PHASE9 builds can't open a canvas that
+contains an armature** — standard forward-incompat for a format-bumping feature;
+canvases without armatures are unaffected. The component **draws** a cached baked
+raster (same pixels as the old `RasterFlatten` path), so the visual result is
+identical to a flatten; the new bytes are its parametric struct (pose keyed to
+canonical bones, shape params, height, camera, embedded rig/props). If graceful
+degradation in old builds becomes a requirement, the fallback is appended optional
+fields on an existing raster type instead of a new type (decided at M5). The
+armature widget/asset pipeline is build-bundled, not part of the canvas format.
