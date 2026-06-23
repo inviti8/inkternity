@@ -7,9 +7,11 @@
 #include "../GUIStuff/Elements/LayoutElement.hpp"
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
+#include "../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
 #include "Helpers/ConvertVec.hpp"
 #include "Waypoint.hpp"
 #include "WaypointGraph.hpp"
+#include "../CanvasComponents/WaypointCanvasComponent.hpp"
 #include <Helpers/NetworkingObjects/NetObjTemporaryPtr.decl.hpp>
 
 #include <include/core/SkCanvas.h>
@@ -503,6 +505,28 @@ class TreeViewGraphElement : public GUIStuff::Element {
 TreeView::TreeView(World& w)
     : world(w) {}
 
+void TreeView::delete_selected_waypoint() {
+    if (!world.wpGraph.has_selection()) return;
+    const NetworkingObjects::NetObjID selId = world.wpGraph.get_selected();
+
+    // Erase the on-canvas marker for this node. DrawingProgramLayer's
+    // component-erase callback then calls erase_waypoint_by_id, which
+    // removes the graph node, its edges, its layout entry, and clears the
+    // selection. The component erase carries its own undo step.
+    std::vector<CanvasComponentContainer::ObjInfo*> toErase;
+    for (auto* c : world.drawProg.layerMan.get_flattened_component_list()) {
+        if (c->obj->get_comp().get_type() == CanvasComponentType::WAYPOINT &&
+            static_cast<const WaypointCanvasComponent&>(c->obj->get_comp()).get_waypoint_id() == selId) {
+            toErase.push_back(c);
+            break;
+        }
+    }
+    if (!toErase.empty())
+        world.drawProg.layerMan.erase_component_container(toErase);
+    else
+        world.wpGraph.erase_waypoint_by_id(selId);  // orphaned node, no marker
+}
+
 void TreeView::gui(GUIStuff::GUIManager& gui) {
     if (!visible) return;
     // Reader mode auto-hides the editor chrome (PHASE1.md §7).
@@ -540,6 +564,12 @@ void TreeView::gui(GUIStuff::GUIManager& gui) {
                         world.main.window.size.cast<float>()
                     });
                 }
+            });
+            // Delete the selected waypoint (graph node + its on-canvas
+            // marker). Sits under the Zoom slider; no-op without a selection.
+            text_button(gui, "delete waypoint", "Delete Selected Waypoint", {
+                .wide = true,
+                .onClick = [&] { delete_selected_waypoint(); }
             });
             gui.element<TreeViewGraphElement>("graph", &world, &view);
         }

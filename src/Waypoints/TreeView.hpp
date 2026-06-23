@@ -42,6 +42,12 @@ class TreeView {
         void gui(GUIStuff::GUIManager& gui);
 
     private:
+        // Deletes the currently-selected waypoint: erases its on-canvas
+        // marker (whose erase callback sweeps the graph node, edges, layout
+        // and selection) — undoable like any component removal. No-op when
+        // nothing is selected.
+        void delete_selected_waypoint();
+
         World& world;
         bool visible = false;
         TreeViewGraphView view;
