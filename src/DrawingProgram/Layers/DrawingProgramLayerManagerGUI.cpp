@@ -8,12 +8,14 @@
 #include "Helpers/NetworkingObjects/NetObjOrderedList.hpp"
 #include "SerializedBlendMode.hpp"
 #include <Helpers/Logger.hpp>
+#include <cstdio>
 
 #include "../../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/LayoutHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/TextBoxHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
+#include "../../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 #include "../../GUIStuff/Elements/SVGIcon.hpp"
 #include "../../GUIStuff/Elements/DropDown.hpp"
 
@@ -106,7 +108,18 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             .childAlignment = {.x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER}
                         },
                     }) {
-                        text_label(gui, layer->get_name());
+                        // PARALLAX-SCENES: row badge — parallax-scene folders
+                        // and depth-carrying layers, so it's obvious why
+                        // content pans "differently".
+                        std::string rowName = layer->get_name();
+                        if(layer->is_parallax_group())
+                            rowName += "  (parallax scene)";
+                        else if(!layer->is_folder() && layer->get_parallax_depth() != 0.0f) {
+                            char depthBuf[24];
+                            snprintf(depthBuf, sizeof(depthBuf), "  (depth %.2f)", layer->get_parallax_depth());
+                            rowName += depthBuf;
+                        }
+                        text_label(gui, rowName);
                     }
                     if(!layer->is_folder()) {
                         gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
@@ -445,13 +458,68 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     }
                 });
             });
-            // PHASE4 Part A: parallax depth — layers only (folders draw
-            // their subtree with the camera they're given). 0 = canvas
-            // plane (today's behavior); >0 = farther, pans less; <0 =
-            // nearer, pans more. The setter applies the no-jump anchor
-            // rule, so editing this never moves the layer on screen —
-            // it changes how the layer responds to panning afterward.
-            if(!editingLayerLock->is_folder()) {
+            // PARALLAX-SCENES (docs/design/PARALLAX-SCENES.md §6): parallax is
+            // now group-anchored. A FOLDER is the parallax *scene* — it holds
+            // the anchor (neutral-viewpoint position) + reference scale; a
+            // LAYER inside it gets a per-plane depth.
+            if(editingLayerLock->is_folder()) {
+                text_label_centered(gui, "Parallax Scene");
+                // Enable = capture the current camera as the scene's neutral
+                // viewpoint (anchor = cam.pos, refScale = cam.inverseScale).
+                // Because cam.pos == anchor at capture, every child registers
+                // at offset 0 → no jump. Untick disables (refScale = 0).
+                checkbox_field(gui, "parallax scene enable", "Parallax Scene (this folder)",
+                    [&]() -> bool {
+                        auto lk = editingLayer.lock();
+                        return lk && lk->is_parallax_group();
+                    },
+                    [&] {
+                        auto lk = editingLayer.lock();
+                        if(!lk) return;
+                        if(lk->is_parallax_group())
+                            lk->set_parallax_group(layerMan, WorldScalar{0}, lk->get_parallax_anchor());
+                        else {
+                            const CoordSpaceHelper& cam = world.drawData.cam.c;
+                            lk->set_parallax_group(layerMan, cam.inverseScale, cam.pos);
+                        }
+                    });
+                if(editingLayerLock->is_parallax_group()) {
+                    text_button(gui, "parallax set anchor", "Set Anchor and Scale to Current View", {
+                        .wide = true,
+                        .onClick = [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk) {
+                                const CoordSpaceHelper& cam = world.drawData.cam.c;
+                                lk->set_parallax_group(layerMan, cam.inverseScale, cam.pos);
+                            }
+                        }
+                    });
+                    // Live readout: how the current view's zoom compares to the
+                    // scene's neutral scale (1.00 = at neutral). >1 = zoomed
+                    // out from the scene; <1 = zoomed in past it.
+                    double rel = static_cast<double>(world.drawData.cam.c.inverseScale / editingLayerLock->get_parallax_ref_scale());
+                    char relBuf[80];
+                    if(rel >= 1000.0 || !(rel == rel))
+                        snprintf(relBuf, sizeof(relBuf), "View vs scene scale: >1000x (1.00 = neutral)");
+                    else
+                        snprintf(relBuf, sizeof(relBuf), "View vs scene scale: %.2fx (1.00 = neutral)", rel);
+                    text_label(gui, relBuf);
+                    text_button(gui, "parallax go neutral", "Go to Neutral View", {
+                        .wide = true,
+                        .onClick = [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk && lk->is_parallax_group()) {
+                                CoordSpaceHelper neutral{lk->get_parallax_anchor(), lk->get_parallax_ref_scale(), world.drawData.cam.c.rotation};
+                                world.drawData.cam.smooth_move_to(world, neutral, world.main.window.size.cast<float>());
+                            }
+                        }
+                    });
+                }
+            }
+            else {
+                // Layer depth: the plane within its group. 0 = canvas plane;
+                // >0 = farther (pans less); <0 = nearer (pans more). Inert
+                // unless the layer is inside an active parallax group.
                 slider_scalar_field(gui, "input parallax depth slider", "Parallax Depth", &depthValToEdit, -0.9f, 10.0f, {
                     .decimalPrecision = 2,
                     .onEdit = [&] {
@@ -460,8 +528,12 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             editingLayerLock->set_parallax_depth(layerMan, depthValToEdit);
                     }
                 });
-                if(depthValToEdit != 0.0f)
-                    text_label(gui, "Parallax active: editing this layer is\nlocked until depth returns to 0.");
+                if(depthValToEdit != 0.0f) {
+                    if(layerMan.editing_layer_in_active_parallax_group())
+                        text_label(gui, "Parallax active: editing this layer is\nlocked until depth returns to 0.");
+                    else
+                        text_label(gui, "Depth has no effect until this layer's\nfolder is a Parallax Scene.");
+                }
             }
             // PHASE4 Part C (§11): lossless merge into the layer below.
             // Shown for plain DEFAULT layers only (named layers respawn

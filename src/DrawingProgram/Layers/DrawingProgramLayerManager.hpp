@@ -66,9 +66,14 @@ class DrawingProgramLayerManager {
         // window/BVH caches while this holds (per-layer derived cameras
         // make cross-layer cached composites wrong).
         bool any_visible_parallax_layer();
-        // True if the current edit target has non-zero depth — editing is
-        // locked to depth-0 layers until M4's input remap (PHASE4.md §6).
+        // True if the current edit target actually parallaxes (non-zero
+        // depth AND inside an active parallax group) — editing is locked
+        // for such layers until edit-at-neutral lands (PARALLAX-SCENES §8).
         bool editing_layer_is_parallaxed();
+        // True if the current edit target sits under an active parallax
+        // group (nearest-ancestor rule). Drives the depth "no active group"
+        // hint in the layer panel.
+        bool editing_layer_in_active_parallax_group();
 
         // PHASE2: ensure exactly one of each named-kind layer exists at
         // root; lazy-create any that are missing. Sets editingLayer to

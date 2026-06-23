@@ -11,9 +11,11 @@
 using namespace NetworkingObjects;
 
 void DrawingProgramLayerListItemUndoData::scale_up(const WorldScalar& scaleUpAmount) {
-    // The parallax anchor is a world coordinate; depth is dimensionless.
+    // Group anchor is a world coordinate and refScale is a world-per-screen
+    // scale — both rescale with the canvas; depth is dimensionless.
     metaInfo.parallaxAnchorX = metaInfo.parallaxAnchorX * scaleUpAmount;
     metaInfo.parallaxAnchorY = metaInfo.parallaxAnchorY * scaleUpAmount;
+    metaInfo.parallaxRefScale = metaInfo.parallaxRefScale * scaleUpAmount;
     if(folderData) {
         for(auto& l : folderData.value())
             l.scale_up(scaleUpAmount);
@@ -144,11 +146,12 @@ uint32_t DrawingProgramLayerListItem::get_component_count() const {
 }
 
 void DrawingProgramLayerListItem::scale_up(const WorldScalar& scaleUpAmount) {
-    // World rescale moves every world coordinate — the parallax anchor
-    // included. Depth is a dimensionless ratio and stays put.
+    // World rescale moves every world coordinate — the group anchor and its
+    // reference scale included. Depth is a dimensionless ratio and stays put.
     if(displayData) {
         displayData->parallaxAnchorX = displayData->parallaxAnchorX * scaleUpAmount;
         displayData->parallaxAnchorY = displayData->parallaxAnchorY * scaleUpAmount;
+        displayData->parallaxRefScale = displayData->parallaxRefScale * scaleUpAmount;
     }
     if(folderData)
         folderData->scale_up(scaleUpAmount);
@@ -173,13 +176,22 @@ void DrawingProgramLayerListItem::load_file(cereal::PortableBinaryInputArchive& 
     a(*nameData);
 
     displayData = layerMan.drawP.world.netObjMan.make_obj<DisplayData>();
-    if(version >= VersionNumber(0, 12, 0))
-        a(*displayData);
+    if(version >= VersionNumber(0, 20, 0))
+        a(*displayData);  // PARALLAX-SCENES layout: depth + anchor + refScale
+    else if(version >= VersionNumber(0, 12, 0)) {
+        // INFPNT000013-20: parallax depth + per-layer anchor present, but no
+        // refScale. Consume those six fields to keep the stream aligned;
+        // refScale stays 0 → parallax inactive. Per the no-back-compat
+        // decision (zynx, 2026-06-22) the old per-layer anchor is NOT
+        // migrated to a group — depth survives but renders flat until the
+        // layer is put in a parallax group.
+        a(displayData->alpha, displayData->visible, displayData->blendMode,
+          displayData->parallaxDepth, displayData->parallaxAnchorX, displayData->parallaxAnchorY);
+    }
     else {
         // Pre-INFPNT000013 files stored only these three fields (no
         // parallax). Reading them individually replicates the old
-        // struct's byte layout exactly; depth/anchor stay at their
-        // zero defaults → identical behavior to before.
+        // struct's byte layout exactly; parallax stays at zero defaults.
         a(displayData->alpha, displayData->visible, displayData->blendMode);
     }
 
@@ -227,21 +239,47 @@ void DrawingProgramLayerListItem::draw(SkCanvas* canvas, const DrawData& drawDat
     if(kind == LayerKind::SKETCH && drawData.main && drawData.main->world && drawData.main->world->readerMode.is_active())
         return;
     if(displayData->visible) {
-        // PHASE4 Part A: a non-zero depth renders this layer through a
-        // DERIVED camera — same zoom/rotation, position pulled toward the
-        // anchor by 1/(1+depth), so camera pans produce parallax while
-        // zoom (uniform magnification) is untouched. Pure translation in
-        // world space → affine → works for the SVG render path too.
-        // v1: layers only; folders draw their subtree with the camera
-        // they were given (depth on folder rows isn't exposed in the UI).
+        // PARALLAX-SCENES (docs/design/PARALLAX-SCENES.md §3/§5): parallax is
+        // group-anchored. A parallax-group FOLDER injects its anchor/scale
+        // into the subtree; each depth!=0 LAYER inside renders through a
+        // derived camera pulled toward that anchor. Pure world-space
+        // translation → affine → works for the SVG path too.
         const DrawData* dd = &drawData;
         std::optional<DrawData> derived;
-        if(!folderData && displayData->parallaxDepth != 0.0f) {
-            const double invFactor = 1.0 + static_cast<double>(displayData->parallaxDepth);
+        if(folderData) {
+            if(is_parallax_group()) {
+                // Nearest ancestor wins: a nested group fully replaces the
+                // context for its own subtree.
+                derived = drawData;
+                derived->parallaxGroup.active = true;
+                derived->parallaxGroup.anchorX = displayData->parallaxAnchorX;
+                derived->parallaxGroup.anchorY = displayData->parallaxAnchorY;
+                derived->parallaxGroup.refScale = displayData->parallaxRefScale;
+                dd = &derived.value();
+            }
+        }
+        else if(displayData->parallaxDepth != 0.0f && drawData.parallaxGroup.active) {
+            // derived.pos = anchor + (cam.pos − anchor)·(1 − pull), where
+            //   pull = r·(1 − f(d)),  f(d) = 1/(1+d),  r = min(1, invScale/refScale)
+            // The min(1,·) clamp freezes the on-screen magnitude once zoomed
+            // in past the scene scale; the zoomed-out branch (r==1) reduces to
+            // the original parallax law (offset diminishes with distance).
+            // Zoom and rotation are deliberately untouched (uniform → no
+            // parallax). NB: scale the WorldVec delta with a direct WorldScalar
+            // multiply, NOT divide_double/multiply_double — those invert their
+            // argument for |a|<1 (wrong scaling), which is exactly our range.
+            const double depth = static_cast<double>(displayData->parallaxDepth);
+            const double f = 1.0 / (1.0 + depth);
+            double r = static_cast<double>(drawData.cam.c.inverseScale / drawData.parallaxGroup.refScale);
+            if(!(r < 1.0)) r = 1.0;   // r = min(1, ratio); also pins inf/NaN to 1
+            if(r < 0.0) r = 0.0;
+            const WorldScalar keep{1.0 - r * (1.0 - f)};
+            const WorldScalar& ax = drawData.parallaxGroup.anchorX;
+            const WorldScalar& ay = drawData.parallaxGroup.anchorY;
             derived = drawData;
             derived->cam.c.pos = WorldVec{
-                displayData->parallaxAnchorX + (drawData.cam.c.pos.x() - displayData->parallaxAnchorX).divide_double(invFactor),
-                displayData->parallaxAnchorY + (drawData.cam.c.pos.y() - displayData->parallaxAnchorY).divide_double(invFactor)};
+                ax + (drawData.cam.c.pos.x() - ax) * keep,
+                ay + (drawData.cam.c.pos.y() - ay) * keep};
             derived->refresh_draw_optimizing_values();
             dd = &derived.value();
         }
@@ -319,49 +357,31 @@ SerializedBlendMode DrawingProgramLayerListItem::get_blend_mode() const {
     return displayData->blendMode;
 }
 
-namespace {
-// Per-component WorldVec / double — parallax factors are bounded
-// doubles, so divide_double keeps everything in exact FixedPoint land.
-WorldVec worldvec_divide_double(const WorldVec& v, double s) {
-    return WorldVec{v.x().divide_double(s), v.y().divide_double(s)};
-}
-// Derived camera position for a layer at `depth` anchored at `A`:
-//   derived = A + (camPos - A) / (1 + depth)        (PHASE4.md §3)
-WorldVec parallax_derived_pos(const WorldVec& camPos, const WorldVec& A, float depth) {
-    return A + worldvec_divide_double(camPos - A, 1.0 + static_cast<double>(depth));
-}
-}  // namespace
-
 void DrawingProgramLayerListItem::set_parallax_depth(DrawingProgramLayerManager& layerMan, float newDepth) const {
     if(!displayData) return;
     newDepth = std::clamp(newDepth, -0.95f, 1000.0f);
-    const float oldDepth = displayData->parallaxDepth;
-    if(oldDepth == newDepth) return;
-
-    // No-jump rule: solve for the anchor that keeps the layer's derived
-    // camera position (and therefore its on-screen placement) unchanged
-    // at this exact moment. K = derived(A_old, d_old); then
-    //   A_new = (K·(1+d_new) − camPos) / d_new
-    // For d_new == 0 the anchor is irrelevant (factor 1); park it at the
-    // camera so a later depth edit pivots where the artist is looking.
-    const WorldVec camPos = layerMan.drawP.world.drawData.cam.c.pos;
-    const WorldVec K = parallax_derived_pos(camPos, get_parallax_anchor(), oldDepth);
-    WorldVec newAnchor;
-    if(newDepth == 0.0f)
-        newAnchor = camPos;
-    else {
-        const double dn = static_cast<double>(newDepth);
-        const WorldVec kScaled = worldvec_divide_double(K, 1.0 / (1.0 + dn));
-        newAnchor = worldvec_divide_double(kScaled - camPos, dn);
-    }
-    set_parallax_raw(layerMan, newDepth, newAnchor);
+    // PARALLAX-SCENES: depth is purely this layer's plane within its group;
+    // the anchor/scale live on the group folder, so there's no per-layer
+    // no-jump recompute. At the group's neutral viewpoint (cam.pos ==
+    // anchor) a depth change is jump-free regardless.
+    set_parallax_raw(layerMan, newDepth, displayData->parallaxRefScale, get_parallax_anchor());
 }
 
-void DrawingProgramLayerListItem::set_parallax_raw(DrawingProgramLayerManager& layerMan, float depth, const WorldVec& anchor) const {
+void DrawingProgramLayerListItem::set_parallax_group(DrawingProgramLayerManager& layerMan, const WorldScalar& refScale, const WorldVec& anchor) const {
+    if(!displayData) return;
+    // Capturing at the current camera (refScale = inverseScale, anchor =
+    // cam.pos) makes cam.pos == anchor at that instant → every child renders
+    // at offset 0 → no jump. refScale == 0 disables the group.
+    set_parallax_raw(layerMan, displayData->parallaxDepth, refScale, anchor);
+}
+
+void DrawingProgramLayerListItem::set_parallax_raw(DrawingProgramLayerManager& layerMan, float depth, const WorldScalar& refScale, const WorldVec& anchor) const {
     if(displayData && (displayData->parallaxDepth != depth ||
+                       displayData->parallaxRefScale != refScale ||
                        displayData->parallaxAnchorX != anchor.x() ||
                        displayData->parallaxAnchorY != anchor.y())) {
         displayData->parallaxDepth = depth;
+        displayData->parallaxRefScale = refScale;
         displayData->parallaxAnchorX = anchor.x();
         displayData->parallaxAnchorY = anchor.y();
         layerMan.drawP.drawCache.clear_own_cached_surfaces();
@@ -373,16 +393,49 @@ float DrawingProgramLayerListItem::get_parallax_depth() const {
     return displayData->parallaxDepth;
 }
 
+WorldScalar DrawingProgramLayerListItem::get_parallax_ref_scale() const {
+    return displayData->parallaxRefScale;
+}
+
 WorldVec DrawingProgramLayerListItem::get_parallax_anchor() const {
     return WorldVec{displayData->parallaxAnchorX, displayData->parallaxAnchorY};
+}
+
+bool DrawingProgramLayerListItem::is_parallax_group() const {
+    return displayData && displayData->parallaxRefScale != WorldScalar{0};
+}
+
+bool DrawingProgramLayerListItem::has_active_parallax_descendant(bool ancestorGroupActive) const {
+    // A hidden subtree doesn't draw, so it never needs the cache bypass.
+    if(!displayData || !displayData->visible) return false;
+    if(folderData) {
+        const bool groupActive = ancestorGroupActive || is_parallax_group();
+        for(auto& c : *folderData->folderList)
+            if(c.obj->has_active_parallax_descendant(groupActive))
+                return true;
+        return false;
+    }
+    return ancestorGroupActive && displayData->parallaxDepth != 0.0f;
+}
+
+bool DrawingProgramLayerListItem::target_in_active_parallax_group(NetworkingObjects::NetObjID targetId, bool ancestorGroupActive) const {
+    if(!folderData) return false;
+    const bool groupActive = ancestorGroupActive || is_parallax_group();
+    for(auto& c : *folderData->folderList) {
+        if(c.obj.get_net_id() == targetId)
+            return groupActive;
+        if(c.obj->target_in_active_parallax_group(targetId, groupActive))
+            return true;
+    }
+    return false;
 }
 
 void DrawingProgramLayerListItem::set_metainfo(DrawingProgramLayerManager& layerMan, const DrawingProgramLayerListItemMetaInfo& metaInfo) {
     set_blend_mode(layerMan, metaInfo.blendMode);
     set_alpha(layerMan, metaInfo.alpha);
-    // Raw restore — undo must bring back the exact depth+anchor pair,
-    // not re-run the no-jump recompute against wherever the camera is now.
-    set_parallax_raw(layerMan, metaInfo.parallaxDepth,
+    // Raw restore — undo must bring back the exact depth + refScale + anchor
+    // tuple, not re-derive anything against wherever the camera is now.
+    set_parallax_raw(layerMan, metaInfo.parallaxDepth, metaInfo.parallaxRefScale,
                      WorldVec{metaInfo.parallaxAnchorX, metaInfo.parallaxAnchorY});
     set_name(layerMan.drawP.world.delayedUpdateObjectManager, metaInfo.name);
 }
@@ -394,7 +447,8 @@ DrawingProgramLayerListItemMetaInfo DrawingProgramLayerListItem::get_metainfo() 
         .blendMode = get_blend_mode(),
         .parallaxDepth = get_parallax_depth(),
         .parallaxAnchorX = displayData->parallaxAnchorX,
-        .parallaxAnchorY = displayData->parallaxAnchorY
+        .parallaxAnchorY = displayData->parallaxAnchorY,
+        .parallaxRefScale = displayData->parallaxRefScale
     };
 }
 

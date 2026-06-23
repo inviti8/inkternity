@@ -26,6 +26,7 @@ VersionNumber header_to_version_number(const std::string& header) {
         m["INFPNT000018"] = VersionNumber(0, 17, 0); // PHASE6: ELLIPSE gains affineMode + center/tipA/tipB (shear/skew)
         m["INFPNT000019"] = VersionNumber(0, 18, 0); // PHASE7: RECTANGLE/ELLIPSE gain isMask + maskInvert (shape masks)
         m["INFPNT000020"] = VersionNumber(0, 19, 0); // PHASE8: polygon nodes gain bezier tangents (controlIn/controlOut/nodeType)
+        m["INFPNT000021"] = VersionNumber(0, 20, 0); // PARALLAX-SCENES: parallax moves to group level — folder DisplayData gains parallaxRefScale; layer keeps parallaxDepth (anchor now group-level)
     }
     auto it = m.find(header);
     if(it == m.end())

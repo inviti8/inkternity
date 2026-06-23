@@ -143,19 +143,25 @@ bool DrawingProgramLayerManager::layer_tree_root_exists() {
 
 bool DrawingProgramLayerManager::any_visible_parallax_layer() {
     if(!layerTreeRoot) return false;
-    std::vector<DrawingProgramLayerListItem*> layers;
-    layerTreeRoot->get_flattened_layer_list(layers);
-    // A parallax layer inside a hidden folder triggers the bypass
-    // needlessly (the walk still renders correctly — the folder is just
-    // skipped); not worth threading ancestor visibility through here.
-    return std::any_of(layers.begin(), layers.end(), [](DrawingProgramLayerListItem* l) {
-        return l->get_visible() && l->get_parallax_depth() != 0.0f;
-    });
+    // PARALLAX-SCENES: the cache can't represent per-layer derived cameras,
+    // so bypass it whenever a visible depth!=0 layer sits under an active
+    // parallax group. The recursive walk carries the group-active flag and
+    // skips hidden subtrees (they don't draw → no bypass needed).
+    return layerTreeRoot->has_active_parallax_descendant(false);
+}
+
+bool DrawingProgramLayerManager::editing_layer_in_active_parallax_group() {
+    if(editingLayer.expired() || !layerTreeRoot) return false;
+    return layerTreeRoot->target_in_active_parallax_group(editingLayer.get_net_id(), false);
 }
 
 bool DrawingProgramLayerManager::editing_layer_is_parallaxed() {
+    // PARALLAX-SCENES: a depth!=0 layer only actually parallaxes (and so is
+    // edit-locked) when it's inside an active parallax group. Depth on a
+    // layer with no group is inert → editing stays allowed.
     auto l = editingLayer.lock();
-    return l && !l->is_folder() && l->get_parallax_depth() != 0.0f;
+    if(!l || l->is_folder() || l->get_parallax_depth() == 0.0f) return false;
+    return editing_layer_in_active_parallax_group();
 }
 
 const DrawingProgramLayerListItem& DrawingProgramLayerManager::get_layer_root() {
