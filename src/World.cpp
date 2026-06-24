@@ -939,6 +939,43 @@ void World::save_to_file(const std::filesystem::path& filePathToSaveAtRaw, bool 
     }
 }
 
+void World::save_recovery_copy(const std::filesystem::path& out) const {
+    // Mirrors the atomic-write half of save_to_file / autosave_to_directory
+    // (spill uncompressed -> stream-compress -> rename) but to an explicit
+    // path, with NONE of save_to_file's stateful side effects. Safe to call
+    // from the headless recovery path without disturbing the source file.
+    const std::string_view header(
+        VersionConstants::CURRENT_SAVEFILE_HEADER.c_str(),
+        VersionConstants::SAVEFILE_HEADER_LEN);
+
+    auto tmpPath = out;
+    tmpPath += ".tmp";
+    auto uncompressedTmp = out;
+    uncompressedTmp += ".uncompressed.tmp";
+    ScopedFileRemove spillGuard{uncompressedTmp};
+    {
+        std::ofstream uout(uncompressedTmp, std::ios::binary | std::ios::trunc);
+        if(!uout)
+            throw std::runtime_error("Could not open temp file for writing: " + uncompressedTmp.string());
+        serialize_canvas_to_stream(uout);
+        uout.flush();
+        if(!uout)
+            throw std::runtime_error("Failed writing serialized canvas to " + uncompressedTmp.string());
+        uout.close();
+        if(uout.fail())
+            throw std::runtime_error("Failed to finalize " + uncompressedTmp.string());
+    }
+    const uint64_t uncompressedSize = std::filesystem::file_size(uncompressedTmp);
+    write_compressed_file_to_tmp(tmpPath, header, uncompressedTmp, uncompressedSize);
+    std::error_code rec;
+    std::filesystem::rename(tmpPath, out, rec);
+    if(rec) {
+        std::filesystem::copy_file(tmpPath, out,
+            std::filesystem::copy_options::overwrite_existing, rec);
+        std::filesystem::remove(tmpPath, rec);
+    }
+}
+
 std::filesystem::path World::autosave_file_path() const {
     return main.conf.configPath / "saves" / ".autosave" /
            (autosaveSessionId + DOT_FILE_EXTENSION);
@@ -1070,20 +1107,44 @@ void World::load_from_file(const std::filesystem::path& filePathToLoadFrom, std:
     std::string_view uncompressedDataView;
     std::vector<char> uncompressedDataVector;
 
+    // RECOVERY: pad the decompressed buffer with trailing zeros so that a
+    // tail over-read (load_file wanting a few more bytes than save wrote)
+    // reads zeros instead of throwing on EOF. Gated to recoveryLoad so
+    // normal loads keep their strict EOF behaviour. The per-subsystem
+    // position log (below + in load_file) reveals whether the parse stayed
+    // aligned to the very end (recovery trustworthy) or desynced early.
+    const size_t recoveryPad = recoveryLoad ? size_t(1) << 16 : 0; // 64 KiB
+    size_t trueUncompressedSize = 0;
+
     if(fileVersion < VersionNumber(0, 1, 0))
         uncompressedDataView = std::string_view(buffer.data() + VersionConstants::SAVEFILE_HEADER_LEN, buffer.size() - VersionConstants::SAVEFILE_HEADER_LEN);
     else {
-        uncompressedDataVector.resize(ZSTD_getFrameContentSize(buffer.data() + VersionConstants::SAVEFILE_HEADER_LEN, buffer.size() - VersionConstants::SAVEFILE_HEADER_LEN));
-        size_t trueUncompressedSize = ZSTD_decompress(uncompressedDataVector.data(), uncompressedDataVector.size(), buffer.data() + VersionConstants::SAVEFILE_HEADER_LEN, buffer.size() - VersionConstants::SAVEFILE_HEADER_LEN);
-        uncompressedDataView = std::string_view(uncompressedDataVector.data(), trueUncompressedSize);
+        const size_t fcs = ZSTD_getFrameContentSize(buffer.data() + VersionConstants::SAVEFILE_HEADER_LEN, buffer.size() - VersionConstants::SAVEFILE_HEADER_LEN);
+        uncompressedDataVector.assign(fcs + recoveryPad, '\0');
+        trueUncompressedSize = ZSTD_decompress(uncompressedDataVector.data(), fcs, buffer.data() + VersionConstants::SAVEFILE_HEADER_LEN, buffer.size() - VersionConstants::SAVEFILE_HEADER_LEN);
+        uncompressedDataView = std::string_view(uncompressedDataVector.data(), trueUncompressedSize + recoveryPad);
     }
 
     ByteMemStream f((char*)uncompressedDataView.data(), uncompressedDataView.size());
+    if(recoveryLoad) {
+        dbgLoadStream = &f;
+        Logger::get().log("INFO", "[recover] decompressed " + std::to_string(trueUncompressedSize) +
+            " bytes (+ " + std::to_string(recoveryPad) + " zero pad); beginning load_file");
+    }
 
     Logger::get().log("INFO", "Loading file from version " + version_numbers_to_version_str(fileVersion));
 
     cereal::PortableBinaryInputArchive a(f);
     load_file(a, fileVersion);
+
+    if(recoveryLoad) {
+        const long long consumed = f.bytes_consumed();
+        const long long over = consumed - static_cast<long long>(trueUncompressedSize);
+        Logger::get().log("INFO", "[recover] load_file finished: consumed " + std::to_string(consumed) +
+            " of " + std::to_string(trueUncompressedSize) + " real bytes (over-read into pad: " +
+            std::to_string(over) + " byte(s))");
+        dbgLoadStream = nullptr;
+    }
 
     Logger::get().log("USERINFO", "File loaded");
     set_name(filePath.stem().string());
@@ -1106,21 +1167,32 @@ void World::save_file(cereal::PortableBinaryOutputArchive& a) const {
 }
 
 void World::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
-    drawData.cam.load_file(a, version, *this);
-    canvasTheme.load_file(a, version);
-    drawProg.load_file(a, version);
-    bMan.load_file(a, version);
-    if (version >= VersionNumber(0, 5, 0))
-        wpGraph.load_file(a, version);
+    // RECOVERY: log the stream position at the start of each subsystem so a
+    // failed load points at the exact subsystem that over-reads, and a
+    // padded successful load shows each subsystem consumed a sane amount.
+    auto mark = [&](const char* what) {
+        if(recoveryLoad)
+            Logger::get().log("INFO", std::string("[recover]   @ ") +
+                (dbgLoadStream ? std::to_string(dbgLoadStream->bytes_consumed()) : std::string("?")) +
+                " -> " + what);
+    };
+    mark("cam");        drawData.cam.load_file(a, version, *this);
+    mark("canvasTheme"); canvasTheme.load_file(a, version);
+    mark("drawProg");   drawProg.load_file(a, version);
+    mark("bMan");       bMan.load_file(a, version);
+    if (version >= VersionNumber(0, 5, 0)) {
+        mark("wpGraph"); wpGraph.load_file(a, version);
+    }
     else
         wpGraph.server_init_no_file();  // M4-b will migrate from bMan instead
-    gridMan.load_file(a, version);
-    rMan.load_file(a, version);
+    mark("gridMan");    gridMan.load_file(a, version);
+    mark("rMan");       rMan.load_file(a, version);
     if (version >= VersionNumber(0, 11, 0)) {
-        a(canvasId);
-        a(artistMemberPubkey);
-        a(appPubkeyAtPublish);
+        mark("canvasId");          a(canvasId);
+        mark("artistMemberPubkey"); a(artistMemberPubkey);
+        mark("appPubkeyAtPublish"); a(appPubkeyAtPublish);
     }
+    mark("done");
     // Older files default to empty (unpublished) — exactly what we want.
 }
 

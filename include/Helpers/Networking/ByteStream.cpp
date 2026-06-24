@@ -3,10 +3,55 @@
 #include <cereal/types/string.hpp>
 #include "NetLibrary.hpp"
 #include <zstd.h>
+#include <cstring>
 
-ByteMemBuf::ByteMemBuf(char* p, size_t l) {
-    setg(p, p, p + l);
+// NOTE: deliberately does NOT call setg(). We keep our own 64-bit
+// [beg, cur, end) cursor and override the get virtuals so multi-GiB
+// buffers work (the base get-area is 32-bit-limited on MSVC). With the
+// base get area left null, sgetc/sbumpc/in_avail all fall through to
+// our underflow/uflow/showmanyc overrides.
+ByteMemBuf::ByteMemBuf(char* p, size_t l):
+    beg(p), cur(p), end(p + l)
+{
+}
 
+std::streamsize ByteMemBuf::xsgetn(char* s, std::streamsize n) {
+    if(n <= 0) return 0;
+    const std::streamsize avail = end - cur;
+    const std::streamsize cnt = n < avail ? n : avail;
+    if(cnt <= 0) return 0;
+    std::memcpy(s, cur, static_cast<size_t>(cnt));
+    cur += cnt;
+    return cnt;
+}
+
+ByteMemBuf::int_type ByteMemBuf::underflow() {
+    if(cur >= end) return traits_type::eof();
+    return traits_type::to_int_type(*cur);
+}
+
+ByteMemBuf::int_type ByteMemBuf::uflow() {
+    if(cur >= end) return traits_type::eof();
+    return traits_type::to_int_type(*cur++);
+}
+
+std::streamsize ByteMemBuf::showmanyc() {
+    return end - cur;
+}
+
+ByteMemBuf::pos_type ByteMemBuf::seekoff(off_type off, std::ios_base::seekdir dir,
+                                         std::ios_base::openmode /*which*/) {
+    char* base = (dir == std::ios_base::beg) ? beg
+               : (dir == std::ios_base::cur) ? cur
+                                             : end;
+    char* np = base + off;
+    if(np < beg || np > end) return pos_type(off_type(-1));
+    cur = np;
+    return pos_type(cur - beg);
+}
+
+ByteMemBuf::pos_type ByteMemBuf::seekpos(pos_type pos, std::ios_base::openmode which) {
+    return seekoff(off_type(pos), std::ios_base::beg, which);
 }
 
 ByteMemStream::ByteMemStream(char* p, size_t l):

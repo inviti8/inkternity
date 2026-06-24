@@ -23,6 +23,7 @@
 #include "HostMode.hpp"
 
 class MainProgram;
+class ByteMemStream;
 
 //#define ENABLE_ORDERED_LIST_TEST
 
@@ -30,6 +31,22 @@ struct WorldScreenshotInfo;
 
 class World {
     public:
+        // RECOVERY: when true, load_from_file pads the decompressed buffer
+        // with trailing zeros so a tail over-read returns zeros instead of
+        // throwing, and load_file logs per-subsystem stream positions. Set
+        // only by the --recover-canvas headless path; normal loads are
+        // unchanged. See HostOnly.cpp run_recover.
+        static inline bool recoveryLoad = false;
+        // RECOVERY: set during load_from_file so load_file can report how
+        // far each subsystem consumed. Null outside a load.
+        ByteMemStream* dbgLoadStream = nullptr;
+
+        // RECOVERY: write the current canvas to `out` as a normal compressed
+        // .inkternity, WITHOUT the save_to_file side effects (no filePath
+        // mutation, no autosave-breadcrumb deletion, no thumbnail). Used by
+        // the headless recovery path so it never disturbs the source file.
+        void save_recovery_copy(const std::filesystem::path& out) const;
+
         static constexpr std::string DOT_FILE_EXTENSION = ".inkternity";
         static constexpr std::string FILE_EXTENSION = "inkternity";
         // Pre-rebrand extension; readable for backward compat, never written.

@@ -400,15 +400,132 @@ int run_host(const Args& args) {
     return exit_code;
 }
 
+// RECOVERY: headlessly load a canvas with World::recoveryLoad enabled
+// (zero-pads the decompressed buffer so a tail over-read returns zeros
+// instead of throwing, and logs per-subsystem stream positions), then
+// write a clean copy to outPath. Mirrors run_host's minimal headless
+// init but skips the publish lock and the hosting loop. The per-subsystem
+// position log tells us whether the parse stayed aligned to the very end
+// (recovery trustworthy) or desynced early (a real serialization bug).
+int run_recover(const std::filesystem::path& inPath,
+                const std::filesystem::path& outPath) {
+    early_log("recover: in=" + inPath.string() + " out=" + outPath.string());
+    if (!std::filesystem::exists(inPath)) {
+        early_log("input canvas does not exist: " + inPath.string());
+        return 1;
+    }
+
+    switch_cwd();
+    if (!SDL_Init(SDL_INIT_EVENTS)) {
+        early_log(std::string("SDL_Init(SDL_INIT_EVENTS) failed: ") + SDL_GetError());
+        return 1;
+    }
+
+    static std::string icudt;
+    {
+        UErrorCode uerr = U_ZERO_ERROR;
+        try {
+            icudt = read_file_to_string("data/icudt77l-small.dat");
+            udata_setCommonData(static_cast<void*>(icudt.data()), &uerr);
+            if (U_FAILURE(uerr))
+                early_log(std::string("udata_setCommonData failed: ") + u_errorName(uerr));
+        } catch (const std::exception& e) {
+            early_log(std::string("could not load icudt77l-small.dat: ") +
+                      e.what() + " (continuing without ICU)");
+        }
+    }
+
+    CustomEvents::init();
+
+    auto configPath = resolve_config_path();
+    if (configPath.empty()) {
+        early_log("could not resolve config path");
+        SDL_Quit();
+        return 1;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(configPath / "logs", ec);
+    std::ofstream logFileStream(configPath / "logs" / "recover.log",
+                                std::ios::out | std::ios::trunc);
+    auto fanout = [&logFileStream](const char* tag, const std::string& text) {
+        if (logFileStream.is_open())
+            logFileStream << tag << " " << text << std::endl;
+        std::cerr << "[recover]" << tag << " " << text << std::endl;
+    };
+    Logger::get().add_log("INFO",       [&](const std::string& t){ fanout("[INFO]", t); });
+    Logger::get().add_log("USERINFO",   [&](const std::string& t){ fanout("[USERINFO]", t); });
+    Logger::get().add_log("WORLDFATAL", [&](const std::string& t){ fanout("[FATAL]", t); });
+    Logger::get().add_log("FATAL",      [&](const std::string& t){ fanout("[FATAL]", t); });
+
+    std::unique_ptr<MainProgram> m;
+    try {
+        m = build_headless_main(configPath, &logFileStream);
+    } catch (const std::exception& e) {
+        Logger::get().log("FATAL", std::string("MainProgram setup failed: ") + e.what());
+        SDL_Quit();
+        return 1;
+    }
+
+    World::recoveryLoad = true;
+    std::shared_ptr<World> world;
+    try {
+        CustomEvents::OpenInfiniPaintFileEvent openFile{};
+        openFile.isClient = false;
+        openFile.filePathSource = inPath;
+        world = std::make_shared<World>(*m, openFile);
+        m->worlds.emplace_back(world);
+        m->world = world;
+    } catch (const std::exception& e) {
+        Logger::get().log("FATAL", std::string("recover load FAILED (over-read exceeds pad): ") + e.what());
+        World::recoveryLoad = false;
+        SDL_Quit();
+        return 1;
+    }
+    World::recoveryLoad = false;
+
+    try {
+        world->save_recovery_copy(outPath);
+        Logger::get().log("USERINFO", "recovered canvas written to " + outPath.string());
+    } catch (const std::exception& e) {
+        Logger::get().log("FATAL", std::string("recover save failed: ") + e.what());
+        m->worlds.clear();
+        m->world.reset();
+        world.reset();
+        SDL_Quit();
+        return 1;
+    }
+
+    m->worlds.clear();
+    m->world.reset();
+    world.reset();
+    m.reset();
+    SDL_Quit();
+    return 0;
+}
+
 }  // anonymous namespace
 
 std::optional<int> dispatch(int argc, char** argv) {
     if (argc < 2) return std::nullopt;
-    if (std::string_view(argv[1]) != "--host-only") return std::nullopt;
+    const std::string_view cmd(argv[1]);
 
-    auto args = parse_args(argc, argv);
-    if (!args) return 1;
-    return run_host(*args);
+    if (cmd == "--host-only") {
+        auto args = parse_args(argc, argv);
+        if (!args) return 1;
+        return run_host(*args);
+    }
+
+    if (cmd == "--recover-canvas") {
+        if (argc < 4) {
+            early_log("usage: --recover-canvas <in-canvas> <out-canvas>");
+            return 1;
+        }
+        return run_recover(std::filesystem::path(argv[2]),
+                           std::filesystem::path(argv[3]));
+    }
+
+    return std::nullopt;
 }
 
 }  // namespace HostOnly
