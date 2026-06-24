@@ -95,6 +95,15 @@ public:
     // NetObj replication — see RASTER-WIRE-SYNC.md.
     void copy_tiles_from(const LibMyPaintSkiaSurface& other);
 
+    // LAYER-RESOLUTION.md — fill *this with a 2x box-downsample of `src`
+    // (drops any tiles this surface held). Averages four source texels per
+    // dest texel directly in the 16bpc premultiplied tile space (no 8-bit
+    // round-trip). The caller pairs this with doubling the owning
+    // component's coords.inverseScale so the layer keeps the same world size
+    // at 1/4 the tiles. Fully-transparent dest tiles are dropped to keep the
+    // store sparse.
+    void build_halved_from(const LibMyPaintSkiaSurface& src);
+
     // Inverse of composite_to_bitmap: read an 8bpc UNPREMULTIPLIED
     // kRGBA_8888 bitmap and write its pixels into this surface's tiles,
     // converting to the 16bpc-premultiplied tile format. (srcOriginPxX,

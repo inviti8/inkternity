@@ -26,6 +26,7 @@ class LegacyFxLibrary;
 class PhoneDrawingProgramScreen;
 class DrawingProgram;
 namespace RasterFlatten { void flatten_layer(DrawingProgram& drawP); }
+namespace RasterResolution { void halve_layer(DrawingProgram& drawP); }
 
 class DrawingProgram {
     public:
@@ -206,4 +207,7 @@ class DrawingProgram {
         // PHASE4 §10: flatten needs selection (skip mid-manipulation
         // comps) + droppedDownloadingFiles (skip still-loading images).
         friend void RasterFlatten::flatten_layer(DrawingProgram& drawP);
+        // LAYER-RESOLUTION.md: reduce needs selection (skip mid-manipulation
+        // comps) — same as flatten.
+        friend void RasterResolution::halve_layer(DrawingProgram& drawP);
 };

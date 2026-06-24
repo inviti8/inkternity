@@ -179,6 +179,71 @@ void LibMyPaintSkiaSurface::copy_tiles_from(const LibMyPaintSkiaSurface& other) 
     }
 }
 
+void LibMyPaintSkiaSurface::build_halved_from(const LibMyPaintSkiaSurface& src) {
+    // LAYER-RESOLUTION.md §"Resample math". Each source tile (tx,ty)
+    // downsamples to exactly one 32x32 quadrant of dest tile
+    // (floor(tx/2), floor(ty/2)) — no cross-tile sampling, because 64 is
+    // even so source pixels [tx*64, tx*64+64) map to dest pixels
+    // [floor(tx/2)*64 + (tx&1)*32, ...+32). We average 2x2 premultiplied
+    // texels (a straight per-channel mean is the correct box filter in
+    // premultiplied space).
+    constexpr int half = kTilePx / 2;  // 32: dest pixels each source tile feeds
+    tiles_.clear();
+
+    auto floor_div2 = [](int a) {  // floor(a/2), correct for negative a
+        return (a >= 0) ? (a >> 1) : -(((-a) + 1) >> 1);
+    };
+
+    for (const auto& [key, srcBufPtr] : src.tiles_) {
+        const int DX = floor_div2(key.tx);
+        const int DY = floor_div2(key.ty);
+        const int qx = key.tx - DX * 2;  // 0 or 1 (floor remainder, neg-safe)
+        const int qy = key.ty - DY * 2;
+
+        const TileKey dkey{DX, DY};
+        auto it = tiles_.find(dkey);
+        if (it == tiles_.end()) {
+            auto buf = std::make_unique<uint16_t[]>(kU16PerTile);
+            std::memset(buf.get(), 0, kU16PerTile * sizeof(uint16_t));
+            it = tiles_.emplace(dkey, std::move(buf)).first;
+        }
+        uint16_t* dst = it->second.get();
+        const uint16_t* s = srcBufPtr.get();
+
+        const int baseLX = qx * half;  // quadrant origin within the dest tile
+        const int baseLY = qy * half;
+        for (int dy = 0; dy < half; ++dy) {
+            const int sy = dy * 2;
+            const uint16_t* sRow0 = s + (static_cast<size_t>(sy) * kTilePx) * 4;
+            const uint16_t* sRow1 = sRow0 + kTilePx * 4;  // next source row
+            uint16_t* dRow = dst + (static_cast<size_t>(baseLY + dy) * kTilePx + baseLX) * 4;
+            for (int dx = 0; dx < half; ++dx) {
+                const uint16_t* a = sRow0 + (dx * 2) * 4;  // (sx,   sy)
+                const uint16_t* b = a + 4;                 // (sx+1, sy)
+                const uint16_t* c = sRow1 + (dx * 2) * 4;  // (sx,   sy+1)
+                const uint16_t* d = c + 4;                 // (sx+1, sy+1)
+                for (int ch = 0; ch < 4; ++ch) {
+                    const uint32_t sum = static_cast<uint32_t>(a[ch]) + b[ch] + c[ch] + d[ch];
+                    dRow[ch] = static_cast<uint16_t>(sum >> 2);
+                }
+                dRow += 4;
+            }
+        }
+    }
+
+    // Drop dest tiles that came out fully transparent (e.g. a dest tile whose
+    // only contributing source quadrant was transparent), preserving sparsity.
+    for (auto it = tiles_.begin(); it != tiles_.end();) {
+        const uint16_t* buf = it->second.get();
+        bool anyOpaque = false;
+        for (size_t i = 3; i < kU16PerTile; i += 4) {
+            if (buf[i] != 0) { anyOpaque = true; break; }
+        }
+        if (anyOpaque) ++it;
+        else it = tiles_.erase(it);
+    }
+}
+
 namespace {
 // Inverse of channel_to_8bit_unpremul. channel_to_8bit_unpremul does
 // a8 = a16 >> 8 and cu8 = ((c16 * 0xFFFF) / a16) >> 8. Using the 8->16
