@@ -336,6 +336,147 @@ do: normalise any rig to a fixed named bone set, then keep a per-model map
 | **Units / up-axis** | **metres, +Y up, right-handed** | glTF native; Blender export = apply transforms, Y-up. |
 | **Height** | **bone-length scaling** (not morph, not uniform root scale) | Proportional limb scaling; works with LBS (locals change, inverse-bind stays). |
 
+### Blender file & glTF export specs — build sheet (LOCKED 2026-06-24 — zynx)
+
+Firm specs for the asset being authored now. These are the **authoring contract**
+the M2 loader (cgltf + hand-rolled LBS) and M5 component depend on; getting them
+right in Blender means the rig drops in with zero conversion surprises. cgltf is
+**not vendored yet** (M2), so the loader cannot "fix up" a non-conforming export —
+the `.glb` must be correct at author time.
+
+#### Scene base units (Blender)
+
+| Setting | Value | Notes |
+|---|---|---|
+| Unit System | **Metric** | Scene Properties → Units. |
+| Unit Scale | **1.0** | Do not rescale; glTF positions are raw metres. |
+| Length | **Meters** | |
+| **Up axis (Blender native)** | **+Z up** | Model in Blender's normal Z-up. The exporter converts to glTF +Y-up — *do not* pre-rotate the mesh. |
+| **Front** | Figure faces **−Y** in Blender front view | Blender −Y → glTF +Z after the +Y-up convert, i.e. the figure faces glTF **+Z** (standard humanoid front). |
+| Standard height | **1.8 m** (feet on Z=0 → head ~1.8 m) | Fixes float precision (coords are O(1)) and gives procedural height a sane 100% baseline. Mannequin proportions, not anatomical. |
+| World placement | Feet on **Z=0** ground plane; centred on **X=0, Y=0** | Hips roughly on the vertical centreline so the T-pose fills the square frame (Decision §8). |
+
+#### Pre-export hygiene (in Blender, before export)
+
+- **Apply all transforms** on mesh *and* armature objects (`Ctrl+A → All Transforms`)
+  → object TRS is identity, **scale = 1.0, rotation = 0**. A non-identity object
+  scale silently bakes into node matrices and fights the inverse-bind math.
+- **Single deform mesh**, single material (matte). Triangulation is automatic on
+  glTF export (primitives are triangles), but a Triangulate modifier removes
+  ambiguity if you want to eyeball the result.
+- **Normalize vertex weights** and **limit to ≤ 4 influences/vertex**
+  (`Weights → Limit Total = 4`, then `Normalize All`). **Hard requirement:** the
+  LBS shader reads a single `JOINTS_0`/`WEIGHTS_0` vec4 (Decision §2). >4
+  influences makes Blender emit `JOINTS_1`/`WEIGHTS_1`, which the v1 shader
+  **ignores** → visibly wrong skinning. Cap at 4 now.
+- **No N-gons in the deform mesh** near high-weight areas (clean tri/quad topology
+  skins predictably).
+- **Bind/rest pose = T-pose** (Authoring table). Set the armature's **rest
+  position** to the T-pose; the exported inverse-bind matrices are captured from
+  rest, so this *is* the canonical bind.
+- **Bone names** = Mixamo-compatible (Decision §6), no `mixamorig:` prefix needed —
+  the canonical-bone map (Decision §5) resolves names → enum at load.
+- **Optional show/hide parts** (animal ears, human ears, …) = give each its own
+  **material slot** so the exporter splits it into a named, separately-toggleable
+  glTF primitive (Decision §9). Keep each part a clean **vertex island** weighted
+  to its parent bone (ears → head). Do **not** merge optional parts into the base
+  primitive, and do **not** tag them via `COLOR_0` vertex colors.
+- **Morph targets** = Blender **shape keys**, named with the canonical morph names
+  (M/F, thin/muscular/fat, brow/jaw/mouth-open/eye…). cgltf reads these via
+  `mesh.target_names`; names must survive export (see settings below).
+
+#### glTF 2.0 exporter settings (Blender 4.x — `File → Export → glTF 2.0`)
+
+| Group | Setting | Value | Why |
+|---|---|---|---|
+| **Format** | Format | **glTF Binary (`.glb`)** | Single self-contained file; bundles to `assets/data/models/`. |
+| **Include** | Limit to | Selected / Visible objects | Export only the rig + deform mesh; no stray scene objects. |
+| | Custom Properties | **On** | Lets us carry the canonical-bone map / sockets as `extras` if we author them in-file. |
+| **Transform** | **+Y Up** | **✅ On** | Performs the Z-up → glTF Y-up convert. Leave on; never pre-rotate. |
+| **Geometry** | Apply Modifiers | ✅ On | Bake the evaluated mesh. |
+| | UVs | ✅ On | |
+| | **Normals** | **✅ On** | Required — the renderer lights the figure (directional + ambient). |
+| | Tangents | **Off** | No normal maps (matte material). |
+| | Vertex Colors | Off | Unless deliberately used. |
+| | **Compression (Draco)** | **❌ Off** | **Hard requirement:** plain cgltf does not decode Draco. A Draco `.glb` fails to load. |
+| **Materials** | Materials | **Export** (single matte) | Base color comes through; renderer applies matte lighting over it. |
+| | Images | Embed in `.glb` (if any) | Self-contained file. |
+| **Data → Mesh** | Shape Keys (morphs) | **✅ On** | Exports morph targets. |
+| | Shape Key Normals | Off (recommended) | Saves size; renderer recomputes lighting. Turn on only if morphs visibly break shading. |
+| **Data → Armature** | **Use Rest Position Armature** | **✅ On** | Export at the **T-pose bind**, not the current frame. |
+| | Export Deformation Bones Only | **Off** | Keep extra posing helpers (sternum/jaw/extra-spine — the free-form bones the canonical enum doesn't name). |
+| | **Bone Influences (`Vertex group limit`)** | **4** | Matches the single-vec4 LBS shader. Do **not** select "All". |
+| **Data → Skinning** | Skinning | **✅ On** | **Critical (risk #5):** emits `skin`/`joints`/`WEIGHTS_0`. Verify present after export. |
+| **Animation** | Animation | **Off** for the rig asset | v1 bakes a single static pose; no clips needed. Schema stays animation-ready (canonical tracks) regardless. |
+
+#### Coordinate handedness summary
+
+| | Up | Forward (figure faces) | Hand | Units |
+|---|---|---|---|---|
+| **Blender (author in)** | +Z | −Y | right | metres |
+| **glTF/`.glb` (exported)** | +Y | +Z | right | metres |
+
+The **+Y Up** export option is the single switch that performs this conversion;
+everything downstream (cgltf, the LBS shader, the orbit camera) assumes the glTF
+column.
+
+#### Post-export validation checklist (do before committing the asset)
+
+1. File is `.glb`, opens in a third-party viewer (e.g. <https://gltf-viewer.donmccurdy.com>)
+   posed correctly (Y-up, facing the camera, standing on the floor).
+2. It contains a **skin** with **joints** and per-vertex **`WEIGHTS_0`/`JOINTS_0`**
+   (risk #5) — and **no** `WEIGHTS_1` (confirms the ≤4 cap).
+3. **No Draco** extension (`KHR_draco_mesh_compression` absent).
+4. Bind pose is the **T-pose**; bone names match the Mixamo-compatible scheme.
+5. Morph target names are present and readable.
+6. Bounding box ≈ 1.8 m tall, feet near Y=0, centred on X/Z origin.
+
+> **Soft budget (guidance, not a gate):** keep the deform mesh under **~50k
+> triangles** and the skeleton under **~80 bones** (humanoid + fingers + a few
+> extras is ~60–70). It's a single hand-skinned figure on a hand-written GL pass,
+> not an engine — modest geometry keeps the FBO render + readback snappy.
+
+### Optional mesh parts — show/hide (Decision §9, LOCKED 2026-06-24 — zynx)
+
+The default figure carries **optional swappable parts** — animal ears (top of
+head), human ears (sides), and similar — that the UI shows/hides per instance. The
+question raised (zynx): tag groups with **vertex colors** and `discard` them in
+the shader. **Resolved: NO vertex-color tagging — use separate named primitives.**
+
+> **Decision §9 (LOCKED 2026-06-24): discrete optional parts are authored as
+> separate glTF primitives (one Blender material slot each), toggled by draw/skip
+> in the app — NOT vertex-color + shader discard.** The mesh stays a single object
+> in a single `.glb`; the exporter splits each material slot into its own
+> primitive, all referencing the **same skin/joints** (so optional parts skin to
+> their parent bone like everything else). The app lists primitives by name and
+> draws or skips each per a visibility set. `COLOR_0` is reserved for continuous
+> masks (AO/blend), never boolean part toggles.
+
+Why not vertex colors (the standing-rule "won't-do-well" trail):
+
+- Vertex colors are **interpolated per-triangle**; a clean threshold cut requires
+  every vertex of every group triangle to carry the *identical* tag — true only if
+  the part is already a **separate vertex island**. Once it's an island you don't
+  need the tag. At shared boundary vertices the tag blends → jagged cut.
+- `discard` **disables early-Z** and adds per-fragment branching (cost for no gain
+  over simply not drawing the triangles).
+- **8-bit `COLOR_0` color-space conversion** through the exporter makes packed
+  integer group IDs fragile to read back exactly.
+- It burns the one standard glTF vertex-color slot on a tag, blocking real
+  per-part color later.
+
+Wins of separate primitives: **pixel-exact** edges, no discard, **per-part
+material** later (furry-matte ears) for free, trivial Blender authoring (assign
+faces to a slot), and a clean name → UI-toggle mapping. Cost is a few extra draw
+calls for a handful of parts — negligible on one hand-skinned figure.
+
+**Schema hook:** the visibility set is part of the `ARMATURE` component's `d`
+instance-state (the shape-parameter layer), so it round-trips through save/load and
+re-edit; it extends the "Armature variants" row's *enabled optional joints* to also
+cover **enabled optional mesh parts** (see the feature→schema table). Mapping is by
+**primitive/material name** (e.g. `AnimalEars`, `HumanEars`), resolved at load like
+the canonical-bone map.
+
 ### Three-layer data model
 
 Separate *what the artist authors* from *what a canvas saves*:
@@ -355,7 +496,7 @@ Separate *what the artist authors* from *what a canvas saves*:
 | Morphs (M/F, build, face) | glTF morph targets (cgltf exposes `mesh.target_names`) + a **shape-parameter layer**: one slider → weighted combo of morphs across parts. **M2 impl note: apply morph deltas BEFORE LBS.** | ✅ Confident |
 | Procedural height | Bone-length scaling down the chain (see Authoring table). | ✅ Feasible; minor joint stretch, fine for a mannequin |
 | Hand/head sockets + props | Named **sockets** `{parentBone, localOffset}`; props are own `.glb` via the same cgltf path, **rigidly** parented to socket world matrix. **Embed prop bytes in the canvas** (PHASE5 `.tfx` precedent) — paths break. | ✅ Rigid props v1 / ⚠️ skinned props = future |
-| Armature variants | Shape values + enabled optional joints + socket/prop config + default pose, **bound to a base rig**. | ✅ Parameter/preset variants / ⚠️ **NO arbitrary re-rigging of a fixed mesh** — that's a Blender job, we'd do it badly. Flagged. |
+| Armature variants | Shape values + enabled optional joints + **enabled optional mesh parts** (ears, etc. — toggled by primitive name, Decision §9) + socket/prop config + default pose, **bound to a base rig**. | ✅ Parameter/preset variants / ⚠️ **NO arbitrary re-rigging of a fixed mesh** — that's a Blender job, we'd do it badly. Flagged. |
 | Pose save/load | `{canonicalBone: rotation}` + named extras + optional root transform. Portable across mapped models. | ✅ Confident |
 | Animation (future) | Same canonical tracks, retargeted at load. Schema-ready now. | ✅ as schema / ⚠️ runtime deferred (post-v1) |
 
