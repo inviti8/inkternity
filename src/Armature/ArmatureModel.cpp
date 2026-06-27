@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <set>
 #include <string>
 
 // GL methods are desktop-GL-3.3 only (matches ArmatureSpike's guard). The CPU
@@ -77,6 +78,28 @@ bool is_stretch_bone(const std::string& raw) {
     return has("upperleg") || has("lowerleg") || has("upperarm") || has("lowerarm");
 }
 
+// Does this skin look like OUR armature (or a re-export of it)? Keyed off a few
+// distinctive canonical bone names (whitespace/case-insensitive). A match loads
+// through the poseable armature path; anything else is a static reference mesh.
+bool joints_match_canon(const cgltf_skin* skin) {
+    auto norm = [](const char* s) {
+        std::string n;
+        if (s) for (const char* c = s; *c; ++c)
+            if (!std::isspace(static_cast<unsigned char>(*c)))
+                n += static_cast<char>(std::tolower(static_cast<unsigned char>(*c)));
+        return n;
+    };
+    std::set<std::string> names;
+    for (size_t j = 0; j < skin->joints_count; ++j)
+        if (skin->joints[j]) names.insert(norm(skin->joints[j]->name));
+    auto has = [&](const char* n) { return names.count(n) > 0; };
+    const int core = (has("hips") ? 1 : 0) + (has("spine") ? 1 : 0) +
+                     (has("head") ? 1 : 0) + (has("neck") ? 1 : 0);
+    const bool limbs = (has("leftupperleg") || has("rightupperleg")) &&
+                       (has("leftupperarm") || has("rightupperarm"));
+    return core >= 4 && limbs;
+}
+
 }  // namespace
 
 ArmatureModel::~ArmatureModel() {
@@ -105,15 +128,21 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
         return false;
     }
 
-    // The skinned figure = the node carrying both a mesh and a skin (risk #5).
+    // Routing (PHASE9 M7): our default rig (and clean re-exports of it) load
+    // through the skinned, poseable armature path. Anything else — unskinned, or
+    // a skin whose bones don't match our canon — loads as a flattened STATIC
+    // reference mesh (M7: external model loading, drawing reference only).
     cgltf_node* meshNode = nullptr;
     for (size_t i = 0; i < gltf->nodes_count; ++i)
-        if (gltf->nodes[i].mesh && gltf->nodes[i].skin) { meshNode = &gltf->nodes[i]; break; }
-    if (!meshNode) { err = "no skinned mesh (a node with both mesh and skin) found"; return false; }
+        if (gltf->nodes[i].mesh && gltf->nodes[i].skin && gltf->nodes[i].skin->joints_count > 0) {
+            meshNode = &gltf->nodes[i]; break;
+        }
+    if (!meshNode || !joints_match_canon(meshNode->skin))
+        return load_static(gltf, err);
+    mIsStatic = false;
 
     cgltf_skin* skin = meshNode->skin;
     cgltf_mesh* mesh = meshNode->mesh;
-    if (skin->joints_count == 0) { err = "skin has no joints"; return false; }
     mJointCount = static_cast<int>(skin->joints_count);
 
     // Morph targets (shape keys): names from the mesh, deltas per primitive below.
@@ -335,6 +364,116 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
     Logger::get().log("INFO", "ArmatureModel: loaded " + std::to_string(mPrimitives.size()) +
         " primitives, " + std::to_string(mJointCount) + " joints, " +
         std::to_string(mPickableJoints.size()) + " pickable.");
+    return true;
+}
+
+// Static (non-armature) model load: flatten every mesh node by its WORLD transform
+// into one un-posable reference mesh (PHASE9 M7 — scene graph collapsed, no bones,
+// no morphs). At bind pose LBS is identity, so baking skinned meshes by their node
+// world transform reproduces the rest shape too — no bone evaluation needed. The
+// geometry is bound to a single identity "joint" so the existing skinning shader,
+// draw, and bake paths render it unchanged. Simple flat shading; no textures (v1).
+bool ArmatureModel::load_static(cgltf_data* gltf, std::string& err) {
+    mIsStatic = true;
+    const Eigen::Matrix4f I = Eigen::Matrix4f::Identity();
+
+    // One identity joint: the shader skins by uSkin[0] = identity.
+    mJointCount = 1;
+    mInverseBindFlat.assign(16, 0.0f); std::memcpy(mInverseBindFlat.data(), I.data(), 16 * sizeof(float));
+    mNodes.assign(1, NodeT{}); mNodes[0].joint = 0;
+    mJointToNode.assign(1, 0);
+    mJointNames.assign(1, "static");
+    mJointPose.assign(4, 0.0f); mJointPose[3] = 1.0f;
+    mStretchAxis.assign(3, 0.0f);
+    std::memcpy(mMeshWorldInv.data(), I.data(), 16 * sizeof(float));
+    mPickableJoints.clear();
+    mTargetCount = 0; mTargetNames.clear(); mTargetWeights.clear();
+
+    mPrimitives.clear(); mMaterialNames.clear(); mMatColor.clear(); mMatColorDefault.clear();
+    for (size_t ni = 0; ni < gltf->nodes_count; ++ni) {
+        cgltf_node& node = gltf->nodes[ni];
+        if (!node.mesh) continue;
+        cgltf_float wm[16];
+        cgltf_node_transform_world(&node, wm);
+        const Eigen::Matrix4f W = mat_from_cgltf(wm);
+        const Eigen::Matrix3f Nrm = W.block<3, 3>(0, 0).inverse().transpose();
+        cgltf_mesh* mesh = node.mesh;
+        for (size_t pi = 0; pi < mesh->primitives_count; ++pi) {
+            cgltf_primitive& prim = mesh->primitives[pi];
+            if (prim.type != cgltf_primitive_type_triangles) continue;
+            cgltf_accessor *pos = nullptr, *nrm = nullptr;
+            for (size_t a = 0; a < prim.attributes_count; ++a) {
+                if (prim.attributes[a].type == cgltf_attribute_type_position) pos = prim.attributes[a].data;
+                else if (prim.attributes[a].type == cgltf_attribute_type_normal) nrm = prim.attributes[a].data;
+            }
+            if (!pos) continue;
+            const size_t vcount = pos->count;
+            Primitive out;
+            out.verts.resize(vcount * FLOATS_PER_VERT);
+            for (size_t v = 0; v < vcount; ++v) {
+                float* d = &out.verts[v * FLOATS_PER_VERT];
+                cgltf_float p3[3] = {0, 0, 0};
+                cgltf_accessor_read_float(pos, v, p3, 3);
+                const Eigen::Vector4f wp = W * Eigen::Vector4f(p3[0], p3[1], p3[2], 1.0f);
+                d[0] = wp.x(); d[1] = wp.y(); d[2] = wp.z();
+                cgltf_float n3[3] = {0, 0, 1};
+                if (nrm) cgltf_accessor_read_float(nrm, v, n3, 3);
+                Eigen::Vector3f wn = Nrm * Eigen::Vector3f(n3[0], n3[1], n3[2]);
+                if (wn.squaredNorm() > 1e-20f) wn.normalize();
+                d[3] = wn.x(); d[4] = wn.y(); d[5] = wn.z();
+                d[6] = d[7] = d[8] = d[9] = 0.0f;                       // joint 0
+                d[10] = 1.0f; d[11] = d[12] = d[13] = 0.0f;            // weight 1 on joint 0
+            }
+            if (prim.indices) {
+                out.indices.resize(prim.indices->count);
+                for (size_t k = 0; k < prim.indices->count; ++k)
+                    out.indices[k] = static_cast<uint32_t>(cgltf_accessor_read_index(prim.indices, k));
+            } else {
+                out.indices.resize(vcount);
+                for (size_t k = 0; k < vcount; ++k) out.indices[k] = static_cast<uint32_t>(k);
+            }
+            out.indexCount = static_cast<int>(out.indices.size());
+            if (prim.material && prim.material->has_pbr_metallic_roughness) {
+                const cgltf_float* bc = prim.material->pbr_metallic_roughness.base_color_factor;
+                out.baseColor = Eigen::Vector4f(bc[0], bc[1], bc[2], bc[3]);
+            }
+            std::string matName = (prim.material && prim.material->name && prim.material->name[0])
+                                      ? std::string(prim.material->name)
+                                      : ("material_" + std::to_string(mMaterialNames.size()));
+            int mi = -1;
+            for (int k = 0; k < static_cast<int>(mMaterialNames.size()); ++k)
+                if (mMaterialNames[k] == matName) { mi = k; break; }
+            if (mi < 0) {
+                mi = static_cast<int>(mMaterialNames.size());
+                mMaterialNames.push_back(matName);
+                mMatColor.push_back({out.baseColor[0], out.baseColor[1], out.baseColor[2], out.baseColor[3]});
+            }
+            out.materialIndex = mi;
+            mPrimitives.push_back(std::move(out));
+        }
+    }
+    if (mPrimitives.empty()) { err = "no triangle geometry found in model"; return false; }
+    mMatColorDefault = mMatColor;
+
+    mSkinFlat.assign(16, 0.0f); std::memcpy(mSkinFlat.data(), I.data(), 16 * sizeof(float));
+    mJointWorldFlat.assign(16, 0.0f); std::memcpy(mJointWorldFlat.data(), I.data(), 16 * sizeof(float));
+
+    mBoundsMin = Eigen::Vector3f::Constant(std::numeric_limits<float>::max());
+    mBoundsMax = Eigen::Vector3f::Constant(-std::numeric_limits<float>::max());
+    for (const auto& prim : mPrimitives) {
+        const size_t vcount = prim.verts.size() / FLOATS_PER_VERT;
+        for (size_t v = 0; v < vcount; ++v) {
+            const float* d = &prim.verts[v * FLOATS_PER_VERT];
+            const Eigen::Vector3f p(d[0], d[1], d[2]);
+            mBoundsMin = mBoundsMin.cwiseMin(p);
+            mBoundsMax = mBoundsMax.cwiseMax(p);
+        }
+    }
+
+    mLoaded = true;
+    Logger::get().log("INFO", "ArmatureModel: loaded STATIC model, " +
+        std::to_string(mPrimitives.size()) + " primitives, " +
+        std::to_string(mMaterialNames.size()) + " materials.");
     return true;
 }
 

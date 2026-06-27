@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -37,6 +38,10 @@ public:
     // Create a new ARMATURE component at the view centre (T-pose, initial bake)
     // and place it on the active layer. The "Add Armature" action.
     static void add_armature_to_canvas(DrawingProgram& drawP);
+    // M7: load an external glTF/.glb from disk, embed it in the ResourceManager,
+    // and drop it on the canvas (poseable if it matches our rig, else a flattened
+    // static reference mesh). The "Load Model" action.
+    static void load_model_into_canvas(DrawingProgram& drawP, const std::filesystem::path& path);
 
     void update() override;
     void draw(SkCanvas* canvas) override;
@@ -61,7 +66,11 @@ private:
     std::unique_ptr<Screen> mPrev;            // the screen we replaced (restored on exit)
     DrawingProgram* mEditDrawP = nullptr;                       // bound component's program
     CanvasComponentContainer::ObjInfo* mEditTarget = nullptr;  // bound ARMATURE component
-    Armature::ArmatureModel* mModel = nullptr;  // borrowed (cached singleton)
+    Armature::ArmatureModel* mModel = nullptr;  // borrowed: owned model or the singleton
+    // Set when editing an embedded external model (loaded + GL-uploaded per-edit);
+    // mModel points into it. Null when using the shared bundled-default singleton.
+    std::unique_ptr<Armature::ArmatureModel> mOwnedModel;
+    bool mBundledDefault = true;   // false for any loaded model (gates Body tab)
     Armature::OrbitCamera mCamera;
     Armature::Lighting mLight;
     float mHeight = 1.0f;          // uniform bone-length scale (M5.1a)

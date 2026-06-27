@@ -17,6 +17,8 @@
 #include <string>
 #include <vector>
 
+struct cgltf_data;  // fwd-decl (cgltf.h is included only in the .cpp)
+
 namespace Armature {
 
 class ArmatureModel {
@@ -38,6 +40,9 @@ public:
 
     bool is_loaded() const { return mLoaded; }
     bool is_uploaded() const { return mUploaded; }
+    // A flattened static reference model (M7) — no skin/pose/morphs. The editor
+    // hides the Pose/Body tabs for these; only camera/light/materials/lens apply.
+    bool is_static() const { return mIsStatic; }
 
     // Draw every primitive with the current skin matrices. The CALLER owns GL
     // render state (FBO bound, depth test on, cull off, viewport set).
@@ -149,6 +154,9 @@ private:
     std::vector<float> mTargetWeights;
     void apply_morphs();   // rebuild VBOs from base + weighted deltas (GL)
 
+    // Flatten a non-armature glTF into one static reference mesh (M7).
+    bool load_static(cgltf_data* gltf, std::string& err);
+
     Eigen::Matrix4f node_local_matrix(int nodeIndex) const;
     void compute_node_worlds(std::vector<Eigen::Matrix4f>& world) const;
     void recompute_skin();
@@ -160,6 +168,7 @@ private:
 
     bool mLoaded = false;
     bool mUploaded = false;
+    bool mIsStatic = false;   // loaded via load_static (flattened, un-posable)
 };
 
 // Load + GL-upload the bundled default armature once (cached for the app's life).

@@ -7,6 +7,7 @@
 #include "../WorldUndoManager.hpp"
 #include "../CoordSpaceHelper.hpp"
 #include "../CanvasComponents/ArmatureCanvasComponent.hpp"
+#include "../ResourceManager.hpp"
 #include "../DrawingProgram/DrawingProgram.hpp"
 #include "../DrawingProgram/Layers/DrawingProgramLayerManager.hpp"
 #include "../DrawingProgram/Layers/DrawingProgramLayerListItem.hpp"
@@ -102,9 +103,27 @@ ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen>
                                          CanvasComponentContainer::ObjInfo* editTarget)
     : Screen(m), mPrev(std::move(prev)), mEditDrawP(editDrawP), mEditTarget(editTarget) {
     if (!mEditTarget) return;
-    mModel = Armature::default_model();
-    if (!mModel) return;
     const auto& d = static_cast<ArmatureCanvasComponent&>(mEditTarget->obj->get_comp()).d;
+    // Pick the model. An embedded external model ({} != id) is loaded + GL-uploaded
+    // here and owned by the modal; otherwise we borrow the shared default rig.
+    if (!(d.modelResourceId == NetworkingObjects::NetObjID{})) {
+        mBundledDefault = false;
+        auto ref = main.world->netObjMan.get_obj_temporary_ref_from_id<ResourceData>(d.modelResourceId);
+        if (ref && ref->data && !ref->data->empty()) {
+            auto owned = std::make_unique<Armature::ArmatureModel>();
+            std::string err;
+            if (owned->load_from_memory(ref->data->data(), ref->data->size(), err) &&
+                owned->upload_gl(err)) {
+                mOwnedModel = std::move(owned);
+                mModel = mOwnedModel.get();
+            } else {
+                Logger::get().log("USERINFO", "Armature: embedded model failed to load: " + err);
+            }
+        }
+    }
+    if (!mModel) mModel = Armature::default_model();
+    if (!mModel) return;
+    if (mModel->is_static()) mTab = 0;  // static models have no Pose/Body tabs
     // Seed the camera (frame_bounds first for a sane near/far fit, then override).
     mCamera.frame_bounds(mModel->bounds_min(), mModel->bounds_max());
     mCamera.yaw = d.camYaw;
@@ -359,10 +378,16 @@ void ArmatureModalScreen::gui_layout_run() {
                             {.isSelected = (mTab == t),
                              .onClick = [this, t] { mTab = t; request_redraw(); }});
             };
+            // Pose needs a skinned model; Body (height + the default rig's 22-slider
+            // shape config) only makes sense for the bundled default. Static/loaded
+            // models fall back to Camera/Light/Materials/Lens.
+            const bool poseable = mModel && !mModel->is_static();
+            if (mTab == 2 && !poseable) mTab = 0;
+            if (mTab == 3 && !mBundledDefault) mTab = 0;
             tab("arm tab camera", "Camera", 0);
             tab("arm tab light", "Light", 1);
-            tab("arm tab pose", "Pose", 2);
-            tab("arm tab body", "Body", 3);
+            if (poseable) tab("arm tab pose", "Pose", 2);
+            if (mBundledDefault) tab("arm tab body", "Body", 3);
             tab("arm tab materials", "Materials", 4);
             CLAY_AUTO_ID({ .layout = { .sizing = {.width = CLAY_SIZING_GROW(0)} } }) {}  // spacer
             if (mEditTarget)
@@ -737,7 +762,13 @@ void ArmatureModalScreen::open_for(DrawingProgram& drawP, CanvasComponentContain
     });
 }
 
-void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
+namespace {
+// Shared create → frame → bake → place for a 3D-model component (the Add-Armature
+// and Load-Model actions). `resourceId` is {} for the bundled default rig, else the
+// embedded glb's ResourceManager id; the model is rendered once at its rest pose
+// for the initial raster. Double-click reopens the editor seeded from the result.
+void place_model_component(DrawingProgram& drawP, Armature::ArmatureModel& model,
+                           const NetworkingObjects::NetObjID& resourceId) {
     auto& world = drawP.world;
     auto& main = world.main;
     auto editLayer = drawP.layerMan.get_editing_layer().lock();
@@ -745,19 +776,17 @@ void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
         Logger::get().log("USERINFO", "Armature: no active layer to add to.");
         return;
     }
-    Armature::ArmatureModel* model = Armature::default_model();
-    if (!model) return;  // already logged
-    model->reset_pose();
-    model->set_height(1.0f);          // default; clear any leftover scale from a prior edit
-    model->reset_material_colors();   // default; clear any leftover color overrides
-    model->reset_morphs();            // default; clear any leftover shape-key weights
+    model.reset_pose();
+    model.set_height(1.0f);          // clear any leftover state from a prior edit
+    model.reset_material_colors();   // (the default rig is a shared singleton)
+    model.reset_morphs();
     Armature::OrbitCamera cam;
-    cam.frame_bounds(model->bounds_min(), model->bounds_max());
+    cam.frame_bounds(model.bounds_min(), model.bounds_max());
     Armature::Lighting light;
 
     constexpr int DIM = 1024;
     std::vector<uint8_t> rgba;
-    if (!ArmatureSpike::render_armature_rgba(*model, cam.view_proj(1.0f), light.travel_dir(),
+    if (!ArmatureSpike::render_armature_rgba(model, cam.view_proj(1.0f), light.travel_dir(),
                                              light.ambient, light.intensity, light.sky, DIM, rgba))
         return;
 #ifdef ARMATURE_MODAL_GL
@@ -765,6 +794,7 @@ void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
 #endif
     auto* container = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::ARMATURE);
     auto& arm = static_cast<ArmatureCanvasComponent&>(container->get_comp());
+    arm.d.modelResourceId = resourceId;
     arm.d.camYaw = cam.yaw; arm.d.camPitch = cam.pitch; arm.d.camDist = cam.distance;
     arm.d.camTx = cam.target.x(); arm.d.camTy = cam.target.y(); arm.d.camTz = cam.target.z();
     arm.d.lightAz = light.azimuth; arm.d.lightEl = light.elevation; arm.d.lightInt = light.intensity;
@@ -788,5 +818,40 @@ void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
         if (pit->obj->get_world_bounds().has_value())
             drawP.layerMan.add_undo_place_component(&(*pit));
     }
+}
+}  // namespace
+
+void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
+    Armature::ArmatureModel* model = Armature::default_model();
+    if (!model) return;  // already logged
+    place_model_component(drawP, *model, NetworkingObjects::NetObjID{});
     Logger::get().log("USERINFO", "Added an armature — double-click it to pose.");
+}
+
+void ArmatureModalScreen::load_model_into_canvas(DrawingProgram& drawP,
+                                                 const std::filesystem::path& path) {
+    auto& world = drawP.world;
+    // Embed the file once in the shared ResourceManager (dedup-aware) so it persists
+    // and re-edits can reload it; the component references it by id.
+    auto res = world.rMan.add_resource_file(path);
+    if (!res || !res->data || res->data->empty()) {
+        Logger::get().log("USERINFO", "Load Model: could not read the file.");
+        return;
+    }
+    // Load + GL-upload an instance just for the initial bake (the on-canvas
+    // component re-loads from the embedded bytes when double-clicked to edit).
+    Armature::ArmatureModel model;
+    std::string err;
+    if (!model.load_from_memory(res->data->data(), res->data->size(), err)) {
+        Logger::get().log("USERINFO", "Load Model: " + err);
+        return;
+    }
+    if (!model.upload_gl(err)) {
+        Logger::get().log("USERINFO", "Load Model (GL): " + err);
+        return;
+    }
+    place_model_component(drawP, model, res.get_net_id());
+    Logger::get().log("USERINFO", model.is_static()
+        ? "Loaded a static reference model — double-click to adjust the view."
+        : "Loaded a posable model — double-click to pose.");
 }

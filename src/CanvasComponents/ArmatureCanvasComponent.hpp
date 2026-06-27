@@ -15,6 +15,7 @@
 #include "CanvasComponent.hpp"
 #include "../CoordSpaceHelper.hpp"
 
+#include <Helpers/NetworkingObjects/NetObjID.hpp>
 #include <include/core/SkImage.h>
 
 #include <cstdint>
@@ -30,6 +31,9 @@ public:
     virtual void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) override;
     std::unique_ptr<CanvasComponent> get_data_copy() const override;
     virtual void set_data_from(const CanvasComponent& other) override;
+    // Keep the embedded model resource alive across save/load + copy/paste (M7).
+    virtual void get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet) const override;
+    virtual void remap_resource_ids(const std::unordered_map<NetworkingObjects::NetObjID, NetworkingObjects::NetObjID>& resourceOldToNewMap) override;
 
     struct PoseEntry {
         std::string bone;
@@ -48,6 +52,11 @@ public:
 
     struct Data {
         int rigId = 0;                       // 0 = bundled default (custom rigs deferred)
+        // M7: an external model loaded from file, embedded once in the
+        // ResourceManager and referenced by id. {} (zero) = the bundled default
+        // rig. May be a poseable armature OR a flattened static reference mesh;
+        // which one is decided by the loader at edit time (ArmatureModel::is_static).
+        NetworkingObjects::NetObjID modelResourceId{};
         std::vector<PoseEntry> pose;         // only non-identity joints
 
         // Orbit camera (matches Armature::OrbitCamera).

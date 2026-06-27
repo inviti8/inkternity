@@ -610,6 +610,19 @@ void Toolbar::top_toolbar() {
                     });
                 #endif
 
+                // PHASE9 M7 -- Load an external 3D model (glTF/.glb) onto the
+                // canvas as a drawing reference (poseable if it matches our rig,
+                // else a flattened static mesh). Edit-mode only (adds to a layer);
+                // sits on the right by the avatar. Swappable icon.
+                if (showEditButtons) {
+                    icon_button_top_toolbar("Load Model Button", "data/icons/model.svg", false, [&] {
+                        open_file_selector("Load 3D Model", {{"glTF Model", "glb;gltf"}},
+                            [&](const std::filesystem::path& p, const auto&) {
+                                ArmatureModalScreen::load_model_into_canvas(main.world->drawProg, p);
+                            });
+                    });
+                }
+
                 // PHASE3 §4 B.M2 -- avatar tile (always visible; not
                 // tool-gated since the avatar is a per-artist identity
                 // surface, not a tool-specific control).

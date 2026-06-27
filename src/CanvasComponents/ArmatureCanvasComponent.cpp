@@ -22,14 +22,30 @@ void ArmatureCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const
     a(d.rigId, d.pose,
       d.camYaw, d.camPitch, d.camDist, d.camTx, d.camTy, d.camTz,
       d.lightAz, d.lightEl, d.lightInt, d.lightAmb, d.lightSky,
-      d.rasterDim, d.rasterRGBA, d.height, d.materialColors, d.shapeSliders);
+      d.rasterDim, d.rasterRGBA, d.height, d.materialColors, d.shapeSliders,
+      d.fovDeg, d.ortho, d.modelResourceId);
 }
 void ArmatureCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
     a(d.rigId, d.pose,
       d.camYaw, d.camPitch, d.camDist, d.camTx, d.camTy, d.camTz,
       d.lightAz, d.lightEl, d.lightInt, d.lightAmb, d.lightSky,
-      d.rasterDim, d.rasterRGBA, d.height, d.materialColors, d.shapeSliders);
+      d.rasterDim, d.rasterRGBA, d.height, d.materialColors, d.shapeSliders,
+      d.fovDeg, d.ortho, d.modelResourceId);
     cachedImage_ = nullptr;
+}
+
+void ArmatureCanvasComponent::get_used_resources(
+        std::unordered_set<NetworkingObjects::NetObjID>& resourceSet) const {
+    // Only the embedded-model case references a resource; the bundled default ({})
+    // is read from disk, so don't pin a phantom id.
+    if (!(d.modelResourceId == NetworkingObjects::NetObjID{}))
+        resourceSet.emplace(d.modelResourceId);
+}
+
+void ArmatureCanvasComponent::remap_resource_ids(
+        const std::unordered_map<NetworkingObjects::NetObjID, NetworkingObjects::NetObjID>& resourceOldToNewMap) {
+    auto it = resourceOldToNewMap.find(d.modelResourceId);
+    if (it != resourceOldToNewMap.end()) d.modelResourceId = it->second;
 }
 
 void ArmatureCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
@@ -41,6 +57,7 @@ void ArmatureCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) 
     a(d.materialColors);  // M5.1b (0.23.0+)
     a(d.shapeSliders);    // M5.1c (0.24.0+)
     a(d.fovDeg, d.ortho); // M6 camera lens (0.25.0+)
+    a(d.modelResourceId); // M7 embedded external model (0.26.0+)
 }
 void ArmatureCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     // PHASE9 (INFPNT000022 / 0.21.0): the armature type was introduced whole, so
@@ -59,6 +76,8 @@ void ArmatureCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, V
         a(d.shapeSliders);
     if (version >= VersionNumber(0, 25, 0))  // M6: camera lens (FOV + ortho)
         a(d.fovDeg, d.ortho);
+    if (version >= VersionNumber(0, 26, 0))  // M7: embedded external model id
+        a(d.modelResourceId);
     cachedImage_ = nullptr;
 }
 
