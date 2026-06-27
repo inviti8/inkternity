@@ -1,7 +1,15 @@
 #include "ArmatureModalScreen.hpp"
 
 #include "ArmatureModel.hpp"
+#include "ArmatureSpike.hpp"
 #include "../MainProgram.hpp"
+#include "../World.hpp"
+#include "../WorldUndoManager.hpp"
+#include "../CoordSpaceHelper.hpp"
+#include "../CanvasComponents/ArmatureCanvasComponent.hpp"
+#include "../DrawingProgram/DrawingProgram.hpp"
+#include "../DrawingProgram/Layers/DrawingProgramLayerManager.hpp"
+#include "../DrawingProgram/Layers/DrawingProgramLayerListItem.hpp"
 
 #include "../GUIStuff/GUIManager.hpp"
 #include "../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
@@ -35,8 +43,34 @@
 
 using namespace GUIStuff::ElementHelpers;
 
-ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen> prev)
-    : Screen(m), mPrev(std::move(prev)) {}
+ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen> prev,
+                                         DrawingProgram* editDrawP,
+                                         CanvasComponentContainer::ObjInfo* editTarget)
+    : Screen(m), mPrev(std::move(prev)), mEditDrawP(editDrawP), mEditTarget(editTarget) {
+    if (!mEditTarget) return;
+    mModel = Armature::default_model();
+    if (!mModel) return;
+    const auto& d = static_cast<ArmatureCanvasComponent&>(mEditTarget->obj->get_comp()).d;
+    // Seed the camera (frame_bounds first for a sane near/far fit, then override).
+    mCamera.frame_bounds(mModel->bounds_min(), mModel->bounds_max());
+    mCamera.yaw = d.camYaw;
+    mCamera.pitch = d.camPitch;
+    mCamera.distance = d.camDist;
+    mCamera.target = Eigen::Vector3f(d.camTx, d.camTy, d.camTz);
+    mFramed = true;
+    // Seed the light.
+    mLight.azimuth = d.lightAz;
+    mLight.elevation = d.lightEl;
+    mLight.intensity = d.lightInt;
+    mLight.ambient = d.lightAmb;
+    mLight.sky = d.lightSky;
+    // Seed the pose onto the shared model.
+    mModel->reset_pose();
+    for (const auto& pe : d.pose) {
+        const int j = mModel->find_joint(pe.bone);
+        if (j >= 0) mModel->set_joint_pose(j, Eigen::Quaternionf(pe.qw, pe.qx, pe.qy, pe.qz));
+    }
+}
 
 ArmatureModalScreen::~ArmatureModalScreen() { destroy_fbo(); }
 
@@ -235,6 +269,10 @@ void ArmatureModalScreen::gui_layout_run() {
             text_label(gui, (mModel && mSelectedJoint >= 0)
                                 ? ("Selected: " + mModel->joint_name(mSelectedJoint))
                                 : std::string("Selected: (grab a joint dot)"));
+            if (mEditTarget) {
+                text_button(gui, "armature bake", "Bake to Canvas",
+                            {.wide = true, .onClick = [this] { do_bake(); }});
+            }
             text_button(gui, "armature reset pose", "Reset Pose",
                         {.wide = true, .onClick = [this] {
                             if (mModel) { mModel->reset_pose(); request_redraw(); }
@@ -394,4 +432,130 @@ void ArmatureModalScreen::draw(SkCanvas* canvas) {
             }
         }
     }
+}
+
+namespace {
+// Swap-based edit undo (mirrors EditTool.cpp's local class): stores the pre-edit
+// data; undo/redo swaps the component's current data with the stored copy.
+class EditArmatureUndoAction : public WorldUndoAction {
+public:
+    EditArmatureUndoAction(std::unique_ptr<CanvasComponent> initData, WorldUndoManager::UndoObjectID id)
+        : data(std::move(initData)), undoID(id) {}
+    std::string get_name() const override { return "Edit Armature"; }
+    bool undo(WorldUndoManager& u) override { return swap(u); }
+    bool redo(WorldUndoManager& u) override { return swap(u); }
+    bool swap(WorldUndoManager& u) {
+        const auto netid = u.get_netid_from_undoid(undoID);
+        if (!netid.has_value()) return false;
+        auto objPtr = u.world.netObjMan.get_obj_temporary_ref_from_id<CanvasComponentContainer>(netid.value());
+        std::unique_ptr<CanvasComponent> cur = objPtr->get_comp().get_data_copy();
+        objPtr->get_comp().set_data_from(*data);
+        data = std::move(cur);
+        objPtr->commit_update(u.world.drawProg);
+        objPtr->send_comp_update(u.world.drawProg, true);
+        return true;
+    }
+    std::unique_ptr<CanvasComponent> data;
+    WorldUndoManager::UndoObjectID undoID;
+};
+}  // namespace
+
+void ArmatureModalScreen::do_bake() {
+    if (!mEditTarget || !mEditDrawP || !mModel) { mWantExit = true; return; }
+    constexpr int DIM = 1024;
+    std::vector<uint8_t> rgba;
+    if (!ArmatureSpike::render_armature_rgba(*mModel, mCamera.view_proj(1.0f), mLight.travel_dir(),
+                                             mLight.ambient, mLight.intensity, mLight.sky, DIM, rgba)) {
+        Logger::get().log("USERINFO", "Armature bake failed.");
+        mWantExit = true;
+        return;
+    }
+#ifdef ARMATURE_MODAL_GL
+    main.window.ctx->resetContext();  // hand GL state back to Skia
+#endif
+    auto& comp = static_cast<ArmatureCanvasComponent&>(mEditTarget->obj->get_comp());
+    std::unique_ptr<CanvasComponent> oldData = comp.get_data_copy();  // pre-edit snapshot
+
+    comp.d.camYaw = mCamera.yaw; comp.d.camPitch = mCamera.pitch; comp.d.camDist = mCamera.distance;
+    comp.d.camTx = mCamera.target.x(); comp.d.camTy = mCamera.target.y(); comp.d.camTz = mCamera.target.z();
+    comp.d.lightAz = mLight.azimuth; comp.d.lightEl = mLight.elevation; comp.d.lightInt = mLight.intensity;
+    comp.d.lightAmb = mLight.ambient; comp.d.lightSky = mLight.sky;
+    comp.d.pose.clear();
+    for (int j = 0; j < mModel->joint_count(); ++j) {
+        const Eigen::Quaternionf q = mModel->joint_pose(j);
+        if (q.vec().squaredNorm() > 1e-8f) {  // non-identity → store
+            ArmatureCanvasComponent::PoseEntry pe;
+            pe.bone = mModel->joint_name(j);
+            pe.qx = q.x(); pe.qy = q.y(); pe.qz = q.z(); pe.qw = q.w();
+            comp.d.pose.push_back(std::move(pe));
+        }
+    }
+    comp.set_raster(std::move(rgba), DIM);
+
+    mEditTarget->obj->commit_update(*mEditDrawP);
+    mEditTarget->obj->send_comp_update(*mEditDrawP, true);
+    mEditDrawP->world.undo.push(std::make_unique<EditArmatureUndoAction>(
+        std::move(oldData),
+        mEditDrawP->world.undo.get_undoid_from_netid(mEditTarget->obj.get_net_id())));
+
+    mWantExit = true;
+}
+
+void ArmatureModalScreen::open_for(DrawingProgram& drawP, CanvasComponentContainer::ObjInfo* target) {
+    MainProgram* mp = &drawP.world.main;
+    DrawingProgram* dp = &drawP;
+    mp->set_screen([mp, dp, target](std::unique_ptr<Screen> prev) -> std::unique_ptr<Screen> {
+        return std::make_unique<ArmatureModalScreen>(*mp, std::move(prev), dp, target);
+    });
+}
+
+void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
+    auto& world = drawP.world;
+    auto& main = world.main;
+    auto editLayer = drawP.layerMan.get_editing_layer().lock();
+    if (!editLayer || editLayer->is_folder()) {
+        Logger::get().log("USERINFO", "Armature: no active layer to add to.");
+        return;
+    }
+    Armature::ArmatureModel* model = Armature::default_model();
+    if (!model) return;  // already logged
+    model->reset_pose();
+    Armature::OrbitCamera cam;
+    cam.frame_bounds(model->bounds_min(), model->bounds_max());
+    Armature::Lighting light;
+
+    constexpr int DIM = 1024;
+    std::vector<uint8_t> rgba;
+    if (!ArmatureSpike::render_armature_rgba(*model, cam.view_proj(1.0f), light.travel_dir(),
+                                             light.ambient, light.intensity, light.sky, DIM, rgba))
+        return;
+#ifdef ARMATURE_MODAL_GL
+    main.window.ctx->resetContext();
+#endif
+    auto* container = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::ARMATURE);
+    auto& arm = static_cast<ArmatureCanvasComponent&>(container->get_comp());
+    arm.d.camYaw = cam.yaw; arm.d.camPitch = cam.pitch; arm.d.camDist = cam.distance;
+    arm.d.camTx = cam.target.x(); arm.d.camTy = cam.target.y(); arm.d.camTz = cam.target.z();
+    arm.d.lightAz = light.azimuth; arm.d.lightEl = light.elevation; arm.d.lightInt = light.intensity;
+    arm.d.lightAmb = light.ambient; arm.d.lightSky = light.sky;
+    arm.set_raster(std::move(rgba), DIM);
+
+    // Place as a square at the view centre, ~half the min window dimension.
+    const CoordSpaceHelper& camC = world.drawData.cam.c;
+    const float screenPx = 0.5f * std::min(static_cast<float>(main.window.size.x()),
+                                           static_cast<float>(main.window.size.y()));
+    const WorldVec centerWorld = camC.from_space(main.window.size.cast<float>() * 0.5f);
+    const WorldVec half = camC.dir_from_space(Vector2f(screenPx * 0.5f, screenPx * 0.5f));
+    const WorldScalar invScale = camC.inverseScale.divide_double(static_cast<double>(DIM) / screenPx);
+    container->coords = CoordSpaceHelper(centerWorld - half, invScale, 0.0);
+
+    std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
+    toPlace.emplace_back(drawP.layerMan.get_edited_layer_end_iterator(), container);
+    const auto placed = drawP.layerMan.add_many_components_to_specific_layer(*editLayer, toPlace);
+    for (auto& pit : placed) {
+        pit->obj->commit_update(drawP);
+        if (pit->obj->get_world_bounds().has_value())
+            drawP.layerMan.add_undo_place_component(&(*pit));
+    }
+    Logger::get().log("USERINFO", "Added an armature — double-click it to pose.");
 }

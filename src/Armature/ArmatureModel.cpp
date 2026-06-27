@@ -295,6 +295,18 @@ Eigen::Vector3f ArmatureModel::joint_world_pos(int jointIndex) const {
     return joint_world_matrix(jointIndex).col(3).head<3>();
 }
 
+Eigen::Quaternionf ArmatureModel::joint_pose(int jointIndex) const {
+    if (jointIndex < 0 || jointIndex >= mJointCount) return Eigen::Quaternionf::Identity();
+    const float* p = &mJointPose[static_cast<size_t>(jointIndex) * 4];
+    return Eigen::Quaternionf(p[3], p[0], p[1], p[2]);  // w,x,y,z
+}
+
+int ArmatureModel::find_joint(const std::string& name) const {
+    for (int j = 0; j < mJointCount; ++j)
+        if (mJointNames[j] == name) return j;
+    return -1;
+}
+
 void ArmatureModel::build_pickable_set() {
     mPickableJoints.clear();
     auto has = [](const std::string& s, const char* sub) { return s.find(sub) != std::string::npos; };

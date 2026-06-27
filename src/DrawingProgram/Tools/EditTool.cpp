@@ -16,6 +16,7 @@
 #include "EditTools/ImageEditTool.hpp"
 #include "EditTools/EllipseDrawEditTool.hpp"
 #include "EditTools/BrushEditTool.hpp"
+#include "../../Armature/ArmatureModalScreen.hpp"  // PHASE9 M5: armature re-edit modal
 
 #include "../../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 
@@ -100,7 +101,12 @@ void EditTool::input_mouse_button_on_canvas_callback(const InputManager::MouseBu
 
                     if(selectedObjectToEdit && is_editable(selectedObjectToEdit)) {
                         drawP.selection.deselect_all();
-                        edit_start(selectedObjectToEdit);
+                        // PHASE9 M5: an armature edits in the full-screen 3D modal,
+                        // not via the in-canvas compEditTool handle lifecycle.
+                        if(selectedObjectToEdit->obj->get_comp().get_type() == CanvasComponentType::ARMATURE)
+                            ArmatureModalScreen::open_for(drawP, selectedObjectToEdit);
+                        else
+                            edit_start(selectedObjectToEdit);
                         modifySelection = false;
                     }
                 }

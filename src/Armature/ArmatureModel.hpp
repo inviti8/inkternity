@@ -65,6 +65,11 @@ public:
     // (render space — same space the figure is drawn in). Valid after load/pose.
     Eigen::Vector3f joint_world_pos(int jointIndex) const;
     Eigen::Matrix4f joint_world_matrix(int jointIndex) const;
+
+    // Pose round-trip (M5 persistence): read a joint's local pose rotation, and
+    // resolve a joint index by name (for seeding a saved pose).
+    Eigen::Quaternionf joint_pose(int jointIndex) const;
+    int find_joint(const std::string& name) const;
     const std::string& joint_name(int jointIndex) const { return mJointNames[jointIndex]; }
 
 private:

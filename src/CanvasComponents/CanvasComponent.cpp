@@ -7,6 +7,7 @@
 #include "MyPaintLayerCanvasComponent.hpp"
 #include "WaypointCanvasComponent.hpp"
 #include "ParticleCanvasComponent.hpp"
+#include "ArmatureCanvasComponent.hpp"
 
 void CanvasComponent::update(DrawingProgram& drawP) {
 }
@@ -35,6 +36,8 @@ CanvasComponent* CanvasComponent::allocate_comp(CanvasComponentType type) {
             return new WaypointCanvasComponent;
         case CanvasComponentType::PARTICLE:
             return new ParticleCanvasComponent;
+        case CanvasComponentType::ARMATURE:
+            return new ArmatureCanvasComponent;
     }
     return nullptr;
 }

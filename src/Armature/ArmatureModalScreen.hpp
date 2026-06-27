@@ -10,6 +10,7 @@
 // the widget, and the Bake button. This screen is the shell those build on.
 
 #include "../Screens/Screen.hpp"
+#include "../CanvasComponents/CanvasComponentContainer.hpp"
 #include "ArmatureView.hpp"
 
 #include <cstdint>
@@ -17,11 +18,23 @@
 #include <vector>
 
 namespace Armature { class ArmatureModel; }
+class DrawingProgram;
 
 class ArmatureModalScreen : public Screen {
 public:
-    ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen> prev);
+    // `editTarget`/`editDrawP` bind the editor to an on-canvas ARMATURE component:
+    // the modal seeds from its saved state and Bake writes it back. Both null =
+    // the standalone (dev) editor with no write-back.
+    ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen> prev,
+                        DrawingProgram* editDrawP = nullptr,
+                        CanvasComponentContainer::ObjInfo* editTarget = nullptr);
     ~ArmatureModalScreen() override;
+
+    // Open the editor on an existing ARMATURE component (double-click re-edit).
+    static void open_for(DrawingProgram& drawP, CanvasComponentContainer::ObjInfo* target);
+    // Create a new ARMATURE component at the view centre (T-pose, initial bake)
+    // and place it on the active layer. The "Add Armature" action.
+    static void add_armature_to_canvas(DrawingProgram& drawP);
 
     void update() override;
     void draw(SkCanvas* canvas) override;
@@ -37,10 +50,13 @@ private:
     void request_redraw();          // mark dirty + ask the app to redraw
     void render_3d();               // raw-GL render into the FBO + readback (GL builds only)
     void destroy_fbo();
+    void do_bake();                 // render at bake res → write d + raster back → exit
 
     static constexpr float PANEL_W = 270.0f;  // left controls strip (px)
 
     std::unique_ptr<Screen> mPrev;            // the screen we replaced (restored on exit)
+    DrawingProgram* mEditDrawP = nullptr;                       // bound component's program
+    CanvasComponentContainer::ObjInfo* mEditTarget = nullptr;  // bound ARMATURE component
     Armature::ArmatureModel* mModel = nullptr;  // borrowed (cached singleton)
     Armature::OrbitCamera mCamera;
     Armature::Lighting mLight;

@@ -9,5 +9,6 @@ enum class CanvasComponentType : uint8_t {
     IMAGE,
     MYPAINTLAYER,
     WAYPOINT,
-    PARTICLE
+    PARTICLE,
+    ARMATURE  // PHASE9: re-editable posed-figure component (draws a baked raster)
 };

@@ -734,21 +734,14 @@ void Toolbar::top_toolbar() {
                                 menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
                                     RasterResolution::halve_layer(main.world->drawProg);
                                 });
-                                // PHASE9 M1 spike (THE GATE) — temporary; remove
-                                // once the real armature modal lands.
+                                // PHASE9 M5 — drop a re-editable armature on the canvas
+                                // (double-click it to open the 3D editor).
+                                menu_popup_text_button("add armature", "Add Armature", [&] {
+                                    ArmatureModalScreen::add_armature_to_canvas(main.world->drawProg);
+                                });
+                                // PHASE9 M1 spike (THE GATE) — throwaway; removed at M6.
                                 menu_popup_text_button("armature spike", "Armature Spike (M1)", [&] {
                                     ArmatureSpike::run_spike(main.world->drawProg);
-                                });
-                                // PHASE9 M2 — bake the loaded default figure. Temporary.
-                                menu_popup_text_button("armature render", "Armature Render (M2)", [&] {
-                                    ArmatureSpike::run_armature_render(main.world->drawProg);
-                                });
-                                // PHASE9 M3 — open the live armature editor modal. Temporary.
-                                menu_popup_text_button("armature editor", "Armature Editor (M3)", [&] {
-                                    main.set_screen([mp = &main](std::unique_ptr<Screen> prev)
-                                                        -> std::unique_ptr<Screen> {
-                                        return std::make_unique<ArmatureModalScreen>(*mp, std::move(prev));
-                                    });
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {

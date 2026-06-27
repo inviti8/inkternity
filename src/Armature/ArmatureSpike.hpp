@@ -19,9 +19,23 @@
 // M2 replaces the cube with a cgltf-loaded skinned figure. If it fails, we
 // learn it here for ~2 days of cost instead of mid-phase.
 
+#include <Eigen/Dense>
+#include <cstdint>
+#include <vector>
+
 class DrawingProgram;
+namespace Armature { class ArmatureModel; }
 
 namespace ArmatureSpike {
+
+// PHASE9 M5: render `model` at the given view-projection + lighting into a
+// `dim`×`dim` RGBA8 buffer, **top-down** (ready for an SkBitmap / component
+// raster). Own FBO + own depth + resetContext(), like the rest of the 3D path.
+// Returns false (and leaves `outTopDown` empty) on GL failure or non-GL builds.
+bool render_armature_rgba(Armature::ArmatureModel& model, const Eigen::Matrix4f& viewProj,
+                          const Eigen::Vector3f& lightDir, float ambient, float diffuse,
+                          float sky, int dim, std::vector<uint8_t>& outTopDown);
+
 
 // Render a lit cube to an offscreen FBO via raw GL, reset the Ganesh context,
 // read the pixels back, and bake them to a raster component centred in the
