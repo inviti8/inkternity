@@ -2,12 +2,17 @@
 
 ## Status
 
-**IN PROGRESS — M1–M5 done; re-editable `ARMATURE` component shipped (drop on
-canvas → draws baked raster → double-click → 3D editor seeded from saved state →
-Bake writes back; save-format bumped to INFPNT000022/0.21.0). Remaining: M5.1
-customization (shape-key sliders, material colors, height — each needs new
-renderer features) and M6 polish/cleanup (remove the throwaway M1 spike, licenses,
-docs).** Note: M4's gizmo is **hand-rolled as a
+**IN PROGRESS — M1–M5 + M5.1 done; re-editable `ARMATURE` component + full
+customization shipped.** Drop on canvas → draws baked raster → double-click → 3D
+editor (top-bar tabs: Camera/Light/Pose/Body/Materials) seeded from saved state →
+Bake writes back. Customization: **height** (natural per-chain bone-length scaling
++ stretchy bones so limb meshes elongate; feet stay grounded — deep-research
+2026-06-27), **per-material colors**, and the **22-slider shape-key system** (40
+glTF morph targets applied before LBS; collapsible groups). Save format at
+INFPNT000025 / 0.24.0. "Add Armature" is a tool-palette icon button
+(assets/data/icons/armature.svg). Remaining: **M6** polish — remove the throwaway
+M1 spike + `ArmatureSpike` cruft, verify/tweak subtle morph deltas in the source
+.glb, `third_party_licenses`/VENDORING audit, MANUAL/README. Note: M4's gizmo is **hand-rolled as a
 2D Skia overlay (RGB axis grab-dots), NOT im3d** — Decision §3 superseded, because
 the editor composites the GL render back through Skia (per-frame readback), so a
 Skia-overlay manipulator integrates far more cleanly than wiring im3d's GL
