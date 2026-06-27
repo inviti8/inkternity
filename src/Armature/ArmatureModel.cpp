@@ -262,12 +262,17 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
                 if (at.type == cgltf_attribute_type_position) tp = at.data;
                 else if (at.type == cgltf_attribute_type_normal) tn = at.data;
             }
+            // Morph deltas are usually SPARSE accessors (Blender stores each
+            // target dense or sparse, whichever is smaller; pure-sparse targets
+            // even omit the bufferView). cgltf_accessor_read_float() refuses
+            // sparse accessors outright (returns 0, leaving the output zeroed),
+            // which silently turned every sparse shape key into a no-op. Unpack
+            // the whole accessor instead: cgltf_accessor_unpack_floats() does the
+            // dense base + sparse-substitution passes and handles base==0.
             out.posDelta[t].assign(vcount * 3, 0.0f);
-            if (tp) for (size_t v = 0; v < vcount; ++v)
-                cgltf_accessor_read_float(tp, v, &out.posDelta[t][v * 3], 3);
+            if (tp) cgltf_accessor_unpack_floats(tp, out.posDelta[t].data(), vcount * 3);
             out.nrmDelta[t].assign(vcount * 3, 0.0f);
-            if (tn) for (size_t v = 0; v < vcount; ++v)
-                cgltf_accessor_read_float(tn, v, &out.nrmDelta[t][v * 3], 3);
+            if (tn) cgltf_accessor_unpack_floats(tn, out.nrmDelta[t].data(), vcount * 3);
         }
 
         if (prim.indices) {
