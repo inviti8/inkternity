@@ -22,13 +22,13 @@ void ArmatureCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const
     a(d.rigId, d.pose,
       d.camYaw, d.camPitch, d.camDist, d.camTx, d.camTy, d.camTz,
       d.lightAz, d.lightEl, d.lightInt, d.lightAmb, d.lightSky,
-      d.rasterDim, d.rasterRGBA);
+      d.rasterDim, d.rasterRGBA, d.height, d.materialColors);
 }
 void ArmatureCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
     a(d.rigId, d.pose,
       d.camYaw, d.camPitch, d.camDist, d.camTx, d.camTy, d.camTz,
       d.lightAz, d.lightEl, d.lightInt, d.lightAmb, d.lightSky,
-      d.rasterDim, d.rasterRGBA);
+      d.rasterDim, d.rasterRGBA, d.height, d.materialColors);
     cachedImage_ = nullptr;
 }
 
@@ -37,17 +37,22 @@ void ArmatureCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) 
       d.camYaw, d.camPitch, d.camDist, d.camTx, d.camTy, d.camTz,
       d.lightAz, d.lightEl, d.lightInt, d.lightAmb, d.lightSky,
       d.rasterDim, d.rasterRGBA);
+    a(d.height);          // M5.1a (0.22.0+)
+    a(d.materialColors);  // M5.1b (0.23.0+)
 }
 void ArmatureCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     // PHASE9 (INFPNT000022 / 0.21.0): the armature type was introduced whole, so
-    // a file containing one is always >= 0.21.0 (older builds can't open it). The
-    // gate is here for the append-and-gate convention when fields are added later.
+    // a file containing one is always >= 0.21.0 (older builds can't open it).
     if (version >= VersionNumber(0, 21, 0)) {
         a(d.rigId, d.pose,
           d.camYaw, d.camPitch, d.camDist, d.camTx, d.camTy, d.camTz,
           d.lightAz, d.lightEl, d.lightInt, d.lightAmb, d.lightSky,
           d.rasterDim, d.rasterRGBA);
     }
+    if (version >= VersionNumber(0, 22, 0))  // M5.1a: uniform bone-length height
+        a(d.height);
+    if (version >= VersionNumber(0, 23, 0))  // M5.1b: per-material color overrides
+        a(d.materialColors);
     cachedImage_ = nullptr;
 }
 

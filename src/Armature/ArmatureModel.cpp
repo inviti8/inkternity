@@ -6,6 +6,7 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -122,6 +123,9 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
     // Geometry. JOINTS_0 indices are already indices into skin->joints, so they
     // map straight onto skinMats / the uSkin[] uniform.
     mPrimitives.clear();
+    mMaterialNames.clear();
+    mMatColor.clear();
+    mMatColorDefault.clear();
     for (size_t pi = 0; pi < mesh->primitives_count; ++pi) {
         cgltf_primitive& prim = mesh->primitives[pi];
         if (prim.type != cgltf_primitive_type_triangles) continue;
@@ -176,9 +180,23 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
             const cgltf_float* bc = prim.material->pbr_metallic_roughness.base_color_factor;
             out.baseColor = Eigen::Vector4f(bc[0], bc[1], bc[2], bc[3]);
         }
+        // Map this primitive to a distinct material (by name) with a live color.
+        std::string matName = (prim.material && prim.material->name && prim.material->name[0])
+                                  ? std::string(prim.material->name)
+                                  : ("material_" + std::to_string(pi));
+        int mi = -1;
+        for (int k = 0; k < static_cast<int>(mMaterialNames.size()); ++k)
+            if (mMaterialNames[k] == matName) { mi = k; break; }
+        if (mi < 0) {
+            mi = static_cast<int>(mMaterialNames.size());
+            mMaterialNames.push_back(matName);
+            mMatColor.push_back({out.baseColor[0], out.baseColor[1], out.baseColor[2], out.baseColor[3]});
+        }
+        out.materialIndex = mi;
         mPrimitives.push_back(std::move(out));
     }
     if (mPrimitives.empty()) { err = "no triangle primitives found"; return false; }
+    mMatColorDefault = mMatColor;  // snapshot glb defaults for reset_material_colors()
 
     // Bounds of the figure AS RENDERED: CPU-skin each vertex with the rest skin
     // matrices and expand the AABB (correct even when rest pose != bind pose).
@@ -224,7 +242,11 @@ Eigen::Matrix4f ArmatureModel::node_local_matrix(int nodeIndex) const {
     Eigen::Matrix4f m = Eigen::Matrix4f::Identity();
     m.block<3, 3>(0, 0) = q.normalized().toRotationMatrix() *
         Eigen::DiagonalMatrix<float, 3>(n.s[0], n.s[1], n.s[2]);
-    m(0, 3) = n.t[0]; m(1, 3) = n.t[1]; m(2, 3) = n.t[2];
+    // Height = uniform bone-length scale: scale every node's local translation,
+    // so the whole skeleton scales about the root (limbs lengthen proportionally).
+    m(0, 3) = n.t[0] * mHeightScale;
+    m(1, 3) = n.t[1] * mHeightScale;
+    m(2, 3) = n.t[2] * mHeightScale;
     return m;
 }
 
@@ -284,6 +306,17 @@ void ArmatureModel::reset_pose() {
     }
     recompute_skin();
 }
+
+void ArmatureModel::set_height(float scale) {
+    mHeightScale = std::clamp(scale, 0.2f, 5.0f);
+    recompute_skin();
+}
+
+void ArmatureModel::set_material_color(int i, float r, float g, float b, float a) {
+    if (i >= 0 && i < static_cast<int>(mMatColor.size())) mMatColor[i] = {r, g, b, a};
+}
+
+void ArmatureModel::reset_material_colors() { mMatColor = mMatColorDefault; }
 
 Eigen::Matrix4f ArmatureModel::joint_world_matrix(int jointIndex) const {
     if (jointIndex < 0 || static_cast<size_t>(jointIndex) * 16 + 16 > mJointWorldFlat.size())
@@ -457,8 +490,8 @@ void ArmatureModel::draw(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f&
     if (mLocSkin >= 0 && !mSkinFlat.empty())
         glUniformMatrix4fv(mLocSkin, mJointCount, GL_FALSE, mSkinFlat.data());
     for (const auto& p : mPrimitives) {
-        const Eigen::Vector3f col = p.baseColor.head<3>();
-        glUniform3fv(mLocColor, 1, col.data());
+        // Live material color (rgba; the shader's uColor reads the first 3).
+        glUniform3fv(mLocColor, 1, mMatColor[p.materialIndex].data());
         glBindVertexArray(p.vao);
         glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
     }

@@ -39,6 +39,13 @@ public:
         template <class Archive> void serialize(Archive& a) { a(bone, qx, qy, qz, qw); }
     };
 
+    struct MatColor {
+        std::string material;
+        float r = 0.8f, g = 0.8f, b = 0.8f, a = 1.0f;
+        bool operator==(const MatColor&) const = default;
+        template <class Archive> void serialize(Archive& ar) { ar(material, r, g, b, a); }
+    };
+
     struct Data {
         int rigId = 0;                       // 0 = bundled default (custom rigs deferred)
         std::vector<PoseEntry> pose;         // only non-identity joints
@@ -49,6 +56,11 @@ public:
 
         // Lighting (matches Armature::Lighting).
         float lightAz = 0.3f, lightEl = 0.6f, lightInt = 0.95f, lightAmb = 0.5f, lightSky = 0.18f;
+
+        // Customization (M5.1). height = uniform bone-length scale (0.22.0+).
+        float height = 1.0f;
+        // Per-material color overrides (0.23.0+); empty = use the glb defaults.
+        std::vector<MatColor> materialColors;
 
         // Baked raster the component draws (square, unpremultiplied RGBA8).
         int rasterDim = 0;

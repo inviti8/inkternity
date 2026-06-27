@@ -13,6 +13,7 @@
 
 #include "../GUIStuff/GUIManager.hpp"
 #include "../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
+#include "../GUIStuff/ElementHelpers/ColorPickerHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 
@@ -69,6 +70,24 @@ ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen>
     for (const auto& pe : d.pose) {
         const int j = mModel->find_joint(pe.bone);
         if (j >= 0) mModel->set_joint_pose(j, Eigen::Quaternionf(pe.qw, pe.qx, pe.qy, pe.qz));
+    }
+    // Seed customization.
+    mHeight = d.height;
+    mModel->set_height(mHeight);
+    // Material colors: reset to glb defaults, apply saved overrides, then mirror
+    // the model's live colors into the editable swatches.
+    mModel->reset_material_colors();
+    for (const auto& mc : d.materialColors) {
+        for (int i = 0; i < mModel->material_count(); ++i)
+            if (mModel->material_name(i) == mc.material) {
+                mModel->set_material_color(i, mc.r, mc.g, mc.b, mc.a);
+                break;
+            }
+    }
+    mMatColors.clear();
+    for (int i = 0; i < mModel->material_count(); ++i) {
+        const auto c = mModel->material_color(i);
+        mMatColors.emplace_back(c[0], c[1], c[2], c[3]);
     }
 }
 
@@ -266,6 +285,25 @@ void ArmatureModalScreen::gui_layout_run() {
                                        &mLight.intensity, 0.0f, 2.0f, {.onEdit = markDirty});
             slider_scalar_field<float>(gui, "light ambient", "Ambient",
                                        &mLight.ambient, 0.0f, 1.0f, {.onEdit = markDirty});
+            slider_scalar_field<float>(gui, "armature height", "Height",
+                                       &mHeight, 0.5f, 2.0f, {.onEdit = [this] {
+                                           if (mModel) mModel->set_height(mHeight);
+                                           request_redraw();
+                                       }});
+            // Material colors (M5.1b): one picker per material.
+            if (mModel) {
+                static const char* kMatIds[8] = {"armmat0", "armmat1", "armmat2", "armmat3",
+                                                 "armmat4", "armmat5", "armmat6", "armmat7"};
+                const int n = std::min(mModel->material_count(), 8);
+                for (int i = 0; i < n && i < static_cast<int>(mMatColors.size()); ++i) {
+                    color_picker_button_field(gui, kMatIds[i], mModel->material_name(i), &mMatColors[i],
+                        {.hasAlpha = false, .onEdit = [this, i] {
+                            const Vector4f& c = mMatColors[i];
+                            mModel->set_material_color(i, c[0], c[1], c[2], c[3]);
+                            request_redraw();
+                        }});
+                }
+            }
             text_label(gui, (mModel && mSelectedJoint >= 0)
                                 ? ("Selected: " + mModel->joint_name(mSelectedJoint))
                                 : std::string("Selected: (grab a joint dot)"));
@@ -480,6 +518,12 @@ void ArmatureModalScreen::do_bake() {
     comp.d.camTx = mCamera.target.x(); comp.d.camTy = mCamera.target.y(); comp.d.camTz = mCamera.target.z();
     comp.d.lightAz = mLight.azimuth; comp.d.lightEl = mLight.elevation; comp.d.lightInt = mLight.intensity;
     comp.d.lightAmb = mLight.ambient; comp.d.lightSky = mLight.sky;
+    comp.d.height = mHeight;
+    comp.d.materialColors.clear();
+    for (int i = 0; i < mModel->material_count(); ++i) {
+        const auto c = mModel->material_color(i);
+        comp.d.materialColors.push_back({mModel->material_name(i), c[0], c[1], c[2], c[3]});
+    }
     comp.d.pose.clear();
     for (int j = 0; j < mModel->joint_count(); ++j) {
         const Eigen::Quaternionf q = mModel->joint_pose(j);
@@ -520,6 +564,8 @@ void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
     Armature::ArmatureModel* model = Armature::default_model();
     if (!model) return;  // already logged
     model->reset_pose();
+    model->set_height(1.0f);          // default; clear any leftover scale from a prior edit
+    model->reset_material_colors();   // default; clear any leftover color overrides
     Armature::OrbitCamera cam;
     cam.frame_bounds(model->bounds_min(), model->bounds_max());
     Armature::Lighting light;

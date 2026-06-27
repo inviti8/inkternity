@@ -11,6 +11,7 @@
 
 #include "../Screens/Screen.hpp"
 #include "../CanvasComponents/CanvasComponentContainer.hpp"
+#include "../SharedTypes.hpp"
 #include "ArmatureView.hpp"
 
 #include <cstdint>
@@ -60,6 +61,8 @@ private:
     Armature::ArmatureModel* mModel = nullptr;  // borrowed (cached singleton)
     Armature::OrbitCamera mCamera;
     Armature::Lighting mLight;
+    float mHeight = 1.0f;          // uniform bone-length scale (M5.1a)
+    std::vector<Vector4f> mMatColors;  // editable per-material colors (M5.1b)
     bool mFramed = false;
 
     // Offscreen target (square). Persisted across frames; rebuilt on size change.

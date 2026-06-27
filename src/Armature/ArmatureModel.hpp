@@ -58,6 +58,19 @@ public:
     void set_joint_pose(int jointIndex, const Eigen::Quaternionf& localPose);
     void reset_pose();
 
+    // Uniform bone-length scale (height). 1.0 = authored size. Scales the skeleton
+    // about the root, so limbs lengthen proportionally (PHASE9 height = bone-length).
+    void set_height(float scale);
+    float height() const { return mHeightScale; }
+
+    // Material colors (M5.1b): per-material live base color (rgba). Default is the
+    // glb's baseColorFactor; the editor can override it per material.
+    int material_count() const { return static_cast<int>(mMaterialNames.size()); }
+    const std::string& material_name(int i) const { return mMaterialNames[i]; }
+    std::array<float, 4> material_color(int i) const { return mMatColor[i]; }
+    void set_material_color(int i, float r, float g, float b, float a);
+    void reset_material_colors();   // restore the glb defaults (shared model hygiene)
+
     // The curated set of joints the poser exposes (Decision Q1): core + fingers,
     // toes collapsed, helper/ear/neutral bones excluded. Indices into joints.
     const std::vector<int>& pickable_joints() const { return mPickableJoints; }
@@ -80,6 +93,7 @@ private:
         std::vector<float> verts;
         std::vector<uint32_t> indices;
         Eigen::Vector4f baseColor{0.8f, 0.8f, 0.8f, 1.0f};
+        int materialIndex = 0;        // into mMaterialNames / mMatColor
         unsigned vao = 0, vbo = 0, ebo = 0;
         int indexCount = 0;
     };
@@ -110,6 +124,10 @@ private:
     std::vector<float> mJointWorldFlat;   // 16/joint, current pose (render space)
     std::vector<int> mPickableJoints;
     std::array<float, 16> mMeshWorldInv = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    float mHeightScale = 1.0f;            // uniform bone-length scale (height)
+    std::vector<std::string> mMaterialNames;
+    std::vector<std::array<float, 4>> mMatColor;         // live rgba per material
+    std::vector<std::array<float, 4>> mMatColorDefault;  // glb baseColors (for reset)
 
     Eigen::Matrix4f node_local_matrix(int nodeIndex) const;
     void compute_node_worlds(std::vector<Eigen::Matrix4f>& world) const;
