@@ -402,7 +402,7 @@ void ArmatureModalScreen::gui_layout_run() {
                             .layoutDirection = CLAY_LEFT_TO_RIGHT,
                         },
                     }) {
-                        camToolBtn("arm cam orbit", "data/icons/refresh-line.svg", CamTool::ORBIT);
+                        camToolBtn("arm cam orbit", "data/icons/RemixIcon/refresh-line.svg", CamTool::ORBIT);
                         camToolBtn("arm cam pan", "data/icons/hand.svg", CamTool::PAN);
                         camToolBtn("arm cam zoom", "data/icons/zoom.svg", CamTool::ZOOM);
                     }
