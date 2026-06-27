@@ -293,6 +293,14 @@ panels exactly like the toolbar does today (`gui.element<...>` in
 
 ## Skeleton schema & data model (planning, 2026-06-22 — zynx)
 
+> **Update 2026-06-26 — alpha model delivered.** The default armature is built
+> (`assets/data/models/inkternity_default_armature.glb`) and inspected. The
+> **ground-truth schema** (verified bone list, 40 morphs, the 22-slider system,
+> loader/orientation requirements, arbitrary-mesh loading, discrepancies, and the
+> locked decisions) now lives in **[ARMATURE-SCHEMA.md](ARMATURE-SCHEMA.md)**. The
+> planning notes below remain the rationale trail; where they disagree with the
+> built model, ARMATURE-SCHEMA.md wins (e.g. forward axis is **+X**, not +Z).
+
 zynx is authoring the **default humanoid armature** (traditional wooden-mannequin
 style + extra posing joints) and designing its skeleton schema. The requirements
 gathered: morph targets (M/F, thin/muscular/fat, simple facial), procedural
@@ -352,8 +360,8 @@ the `.glb` must be correct at author time.
 | Unit Scale | **1.0** | Do not rescale; glTF positions are raw metres. |
 | Length | **Meters** | |
 | **Up axis (Blender native)** | **+Z up** | Model in Blender's normal Z-up. The exporter converts to glTF +Y-up — *do not* pre-rotate the mesh. |
-| **Front** | Figure faces **−Y** in Blender front view | Blender −Y → glTF +Z after the +Y-up convert, i.e. the figure faces glTF **+Z** (standard humanoid front). |
-| Standard height | **1.8 m** (feet on Z=0 → head ~1.8 m) | Fixes float precision (coords are O(1)) and gives procedural height a sane 100% baseline. Mannequin proportions, not anatomical. |
+| **Front** | Figure faces **glTF +X** (Blender +X with +Y-up export) | **+X is the front and faces the default camera** (locked against the delivered model — [ARMATURE-SCHEMA.md](ARMATURE-SCHEMA.md) §6 D1). The loader's default camera sits on +X looking toward −X. |
+| Standard height | **~1.74 m** (feet on the ground → head ~1.74 m) | Fixes float precision (coords are O(1)) and gives procedural height a 100% baseline. The delivered default model is **1.737 m**. Mannequin proportions, not anatomical. |
 | World placement | Feet on **Z=0** ground plane; centred on **X=0, Y=0** | Hips roughly on the vertical centreline so the T-pose fills the square frame (Decision §8). |
 
 #### Pre-export hygiene (in Blender, before export)
@@ -413,12 +421,13 @@ the `.glb` must be correct at author time.
 
 | | Up | Forward (figure faces) | Hand | Units |
 |---|---|---|---|---|
-| **Blender (author in)** | +Z | −Y | right | metres |
-| **glTF/`.glb` (exported)** | +Y | +Z | right | metres |
+| **Blender (author in)** | +Z | +X | right | metres |
+| **glTF/`.glb` (exported)** | +Y | **+X** | right | metres |
 
-The **+Y Up** export option is the single switch that performs this conversion;
-everything downstream (cgltf, the LBS shader, the orbit camera) assumes the glTF
-column.
+The **+Y Up** export option converts up-axis (Blender +Z → glTF +Y); the figure's
+forward stays **+X** through the convert. Everything downstream (cgltf, the LBS
+shader, the orbit camera) assumes the glTF column, and the default camera looks
+down **+X** at the figure's front.
 
 #### Post-export validation checklist (do before committing the asset)
 
