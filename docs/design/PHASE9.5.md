@@ -3,8 +3,10 @@
 ## Status
 
 **SHIPPED (2026-06-27).** M1 storage module (`ArmaturePresets`) + M2 Scene tab +
-M3 Character tab + M4 docs all landed. Follow-on to PHASE9 (the armature poser +
-external model loading, see [PHASE9.md]). Adds two new tabs to the armature editor —
+M3 Character tab + M4 docs all landed, **plus M5: Pose presets** (save/load named
+poses by bone name, added to the existing Pose tab — same machinery, third preset
+kind). Follow-on to PHASE9 (the armature poser + external model loading, see
+[PHASE9.md]). Adds two new tabs to the armature editor —
 **Character** and **Scene** — where the artist saves and loads reusable presets.
 Presets live at the **app/user level** (not inside any `.inkternity` file), so a
 character look or a camera+light setup carries across every file and project.

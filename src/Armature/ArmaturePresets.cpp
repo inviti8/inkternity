@@ -14,6 +14,7 @@ constexpr const char* THUMB_EXT = ".thumb.png";
 constexpr int JSON_FMT_VERSION  = 1;
 constexpr const char* CHAR_TAG  = "inkternity-armature-character";
 constexpr const char* SCENE_TAG = "inkternity-armature-scene";
+constexpr const char* POSE_TAG  = "inkternity-armature-pose";
 
 bool write_file_bytes(const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
@@ -98,6 +99,9 @@ std::filesystem::path characters_root(const std::filesystem::path& configPath) {
 std::filesystem::path scenes_root(const std::filesystem::path& configPath) {
     return configPath / "armature_scenes";
 }
+std::filesystem::path poses_root(const std::filesystem::path& configPath) {
+    return configPath / "armature_poses";
+}
 
 std::string filename_slug(std::string_view name) {
     std::string out;
@@ -124,6 +128,9 @@ bool character_exists(const std::filesystem::path& configPath, std::string_view 
 }
 bool scene_exists(const std::filesystem::path& configPath, std::string_view name) {
     return exists_common(scenes_root(configPath), name);
+}
+bool pose_exists(const std::filesystem::path& configPath, std::string_view name) {
+    return exists_common(poses_root(configPath), name);
 }
 
 std::vector<Character> scan_characters(const std::filesystem::path& configPath) {
@@ -191,6 +198,36 @@ std::vector<Scene> scan_scenes(const std::filesystem::path& configPath) {
     return out;
 }
 
+std::vector<Pose> scan_poses(const std::filesystem::path& configPath) {
+    std::vector<Pose> out;
+    const auto root = poses_root(configPath);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(root, ec)) return out;
+    for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+        if (ec) break;
+        if (!entry.is_regular_file()) continue;
+        const auto& path = entry.path();
+        if (path.extension() != JSON_EXT) continue;
+        auto jOpt = read_json(path);
+        if (!jOpt) continue;
+        const nlohmann::json& j = *jOpt;
+        Pose p;
+        p.name = j.value("name", path.stem().string());
+        if (j.contains("joints") && j["joints"].is_array()) {
+            for (const auto& jj : j["joints"]) {
+                JointPose jp;
+                jp.bone = jj.value("bone", std::string());
+                jp.qx = jj.value("qx", 0.0f); jp.qy = jj.value("qy", 0.0f);
+                jp.qz = jj.value("qz", 0.0f); jp.qw = jj.value("qw", 1.0f);
+                if (!jp.bone.empty()) p.joints.push_back(std::move(jp));
+            }
+        }
+        p.thumbPath = sibling_thumb(path);
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
 bool save_character(const std::filesystem::path& configPath, const Character& preset,
                     const std::optional<std::vector<uint8_t>>& thumbPng) {
     nlohmann::json j;
@@ -219,11 +256,26 @@ bool save_scene(const std::filesystem::path& configPath, const Scene& preset,
     return save_common(scenes_root(configPath), preset.name, j, thumbPng);
 }
 
+bool save_pose(const std::filesystem::path& configPath, const Pose& preset,
+               const std::optional<std::vector<uint8_t>>& thumbPng) {
+    nlohmann::json j;
+    j["version"] = JSON_FMT_VERSION;
+    j["format"]  = POSE_TAG;
+    j["name"]    = preset.name;
+    j["joints"]  = nlohmann::json::array();
+    for (const auto& p : preset.joints)
+        j["joints"].push_back({{"bone", p.bone}, {"qx", p.qx}, {"qy", p.qy}, {"qz", p.qz}, {"qw", p.qw}});
+    return save_common(poses_root(configPath), preset.name, j, thumbPng);
+}
+
 bool remove_character(const std::filesystem::path& configPath, std::string_view nameOrSlug) {
     return remove_common(characters_root(configPath), nameOrSlug);
 }
 bool remove_scene(const std::filesystem::path& configPath, std::string_view nameOrSlug) {
     return remove_common(scenes_root(configPath), nameOrSlug);
+}
+bool remove_pose(const std::filesystem::path& configPath, std::string_view nameOrSlug) {
+    return remove_common(poses_root(configPath), nameOrSlug);
 }
 
 }  // namespace ArmaturePresets

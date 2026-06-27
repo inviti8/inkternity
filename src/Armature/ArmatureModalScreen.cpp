@@ -156,6 +156,51 @@ void ArmatureModalScreen::save_scene_preset() {
     request_redraw();
 }
 
+void ArmatureModalScreen::save_pose_preset() {
+    if (!mModel) return;
+    if (mPoseName.empty()) { Logger::get().log("USERINFO", "Name the pose before saving."); return; }
+    if (ArmaturePresets::pose_exists(main.conf.configPath, mPoseName)) {
+        Logger::get().log("USERINFO",
+            "A pose named \"" + mPoseName + "\" already exists — pick a different name.");
+        return;
+    }
+    ArmaturePresets::Pose p;
+    p.name = mPoseName;
+    for (int j = 0; j < mModel->joint_count(); ++j) {  // store only non-identity joints
+        const Eigen::Quaternionf q = mModel->joint_pose(j);
+        if (q.vec().squaredNorm() > 1e-8f) {
+            ArmaturePresets::JointPose jp;
+            jp.bone = mModel->joint_name(j);
+            jp.qx = q.x(); jp.qy = q.y(); jp.qz = q.z(); jp.qw = q.w();
+            p.joints.push_back(std::move(jp));
+        }
+    }
+    // Thumbnail = the posed figure under the current view.
+    std::optional<std::vector<uint8_t>> thumb;
+    std::vector<uint8_t> rgba;
+    if (ArmatureBake::render_armature_rgba(*mModel, mCamera.view_proj(1.0f), mLight.travel_dir(),
+                                           mLight.ambient, mLight.intensity, mLight.sky, THUMB_DIM, rgba)) {
+#ifdef ARMATURE_MODAL_GL
+        main.window.ctx->resetContext();
+#endif
+        auto png = encode_rgba_png(rgba, THUMB_DIM);
+        if (!png.empty()) thumb = std::move(png);
+    }
+    ArmaturePresets::save_pose(main.conf.configPath, p, thumb);
+    mPoseName.clear();
+    request_redraw();
+}
+
+void ArmatureModalScreen::apply_pose_preset(const ArmaturePresets::Pose& p) {
+    if (!mModel) return;
+    mModel->reset_pose();
+    for (const auto& jp : p.joints) {
+        const int j = mModel->find_joint(jp.bone);
+        if (j >= 0) mModel->set_joint_pose(j, Eigen::Quaternionf(jp.qw, jp.qx, jp.qy, jp.qz));
+    }
+    request_redraw();
+}
+
 void ArmatureModalScreen::apply_scene_preset(const ArmaturePresets::Scene& s) {
     mCamera.yaw = s.camYaw; mCamera.pitch = s.camPitch; mCamera.distance = s.camDist;
     mCamera.target = Eigen::Vector3f(s.camTx, s.camTy, s.camTz);
@@ -620,6 +665,33 @@ void ArmatureModalScreen::gui_layout_run() {
                                 {.wide = true, .onClick = [this] {
                                     if (mModel) { mModel->reset_pose(); request_redraw(); }
                                 }});
+                    // PHASE9.5 — save/load named poses (app-level, by bone name).
+                    text_label(gui, "Pose presets:");
+                    input_text_field(gui, "pose name", "Name", &mPoseName, {.emptyText = "Pose name"});
+                    text_button(gui, "save pose", "Save Pose",
+                                {.wide = true, .onClick = [this] { save_pose_preset(); }});
+                    gui.clipping_element<ScrollArea>("pose scroll", ScrollArea::Options{
+                        .scrollVertical = true,
+                        .clipVertical = true,
+                        .scrollbarY = ScrollArea::ScrollbarType::NORMAL,
+                        .innerContent = [&](const ScrollArea::InnerContentParameters&) {
+                            CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+                                                     .childGap = gui.io.theme->childGap1,
+                                                     .layoutDirection = CLAY_TOP_TO_BOTTOM}}) {
+                                auto poses = ArmaturePresets::scan_poses(main.conf.configPath);
+                                if (poses.empty()) text_label(gui, "No saved poses yet.");
+                                for (auto& po : poses) {
+                                    const int64_t tid = 7000 + static_cast<int64_t>(
+                                        std::hash<std::string>{}(po.name) & 0x7fffffff);
+                                    ArmaturePresets::Pose pp = po;   // value-copy for the capture
+                                    const std::string nm = po.name;
+                                    preset_tile(tid, po.name, po.thumbPath,
+                                        [this, pp] { apply_pose_preset(pp); },
+                                        [this, nm] { ArmaturePresets::remove_pose(main.conf.configPath, nm);
+                                                     request_redraw(); });
+                                }
+                            }
+                        }});
                 } else if (mTab == 3) {  // Body — height + shape keys (scrollable)
                     gui.clipping_element<ScrollArea>("armature body scroll", ScrollArea::Options{
                         .scrollVertical = true,

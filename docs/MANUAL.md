@@ -270,7 +270,7 @@ Folder-panel controls (shown when the folder is a Parallax Scene):
 - The editor has tabbed controls along the top:
   - **Camera** — **Orbit / Pan / Zoom** drag-tool buttons (like the canvas tools), plus a **Field of View** slider and a **Perspective ⇄ Orthographic** toggle (orthographic removes foreshortening — handy for clean reference)
   - **Light** — direction, intensity, ambient, and a soft sky fill
-  - **Pose** — click a joint dot, then drag the **red / green / blue axis handles** to rotate it (X/Y/Z); **Reset Pose** clears it
+  - **Pose** — click a joint dot, then drag the **red / green / blue axis handles** to rotate it (X/Y/Z); **Reset Pose** clears it. **Pose presets** save/load named poses (by bone name, so they apply to any compatible figure) with a thumbnail per pose
   - **Body** — a **Height** slider (limbs lengthen naturally) and **shape-key sliders** (gender, build, head/eye/nose/mouth shape, expressions) in collapsible groups
   - **Materials** — per-material colors via the color picker
 - The square outline marks exactly what will be captured. **Bake** writes the posed figure back to the canvas as an image and returns you to the drawing; everything (pose, camera, light, lens, customization) is saved, so you can **double-click to re-edit** any time. Move/scale/rotate the baked figure with the Edit tool like any object

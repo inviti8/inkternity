@@ -21,7 +21,7 @@
 #include <vector>
 
 namespace Armature { class ArmatureModel; }
-namespace ArmaturePresets { struct Character; struct Scene; }  // PHASE9.5
+namespace ArmaturePresets { struct Character; struct Scene; struct Pose; }  // PHASE9.5
 class DrawingProgram;
 
 class ArmatureModalScreen : public Screen {
@@ -82,11 +82,13 @@ private:
     // Collapsible shape-key groups (Body/Head/Eyes/Nose/Mouth/Expression).
     std::array<bool, 6> mGroupOpen{true, false, false, false, false, false};
     // PHASE9.5 — app-level Character/Scene preset tabs: name inputs + save/apply.
-    std::string mCharName, mSceneName;
+    std::string mCharName, mSceneName, mPoseName;
     void save_character_preset();
     void save_scene_preset();
+    void save_pose_preset();
     void apply_character_preset(const ArmaturePresets::Character& c);
     void apply_scene_preset(const ArmaturePresets::Scene& s);
+    void apply_pose_preset(const ArmaturePresets::Pose& p);
     bool mFramed = false;
 
     // Offscreen target (square). Persisted across frames; rebuilt on size change.

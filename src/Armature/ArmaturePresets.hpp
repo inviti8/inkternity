@@ -42,6 +42,20 @@ struct Character {
     std::string thumbPath;                 // sidecar .thumb.png abs path; "" if none
 };
 
+// One joint's local-space pose rotation (quaternion xyzw), relative to bind.
+struct JointPose {
+    std::string bone;
+    float qx = 0.0f, qy = 0.0f, qz = 0.0f, qw = 1.0f;
+};
+
+// A saved "pose": non-identity joint rotations keyed by bone name. Applies to any
+// skeleton whose bone names match (the bundled rig + clean re-exports).
+struct Pose {
+    std::string name;
+    std::vector<JointPose> joints;  // only non-identity joints
+    std::string thumbPath;
+};
+
 // A saved "scene": the view (camera + lens + light). Model-agnostic.
 struct Scene {
     std::string name;
@@ -53,9 +67,10 @@ struct Scene {
     std::string thumbPath;
 };
 
-// <configPath>/armature_characters , <configPath>/armature_scenes
+// <configPath>/armature_characters , /armature_scenes , /armature_poses
 std::filesystem::path characters_root(const std::filesystem::path& configPath);
 std::filesystem::path scenes_root(const std::filesystem::path& configPath);
+std::filesystem::path poses_root(const std::filesystem::path& configPath);
 
 // Replace filesystem-forbidden chars with '_' (no silent drop → distinct names
 // stay distinct). Trims leading/trailing whitespace + dots; "" → "preset".
@@ -64,11 +79,13 @@ std::string filename_slug(std::string_view name);
 // True if a preset whose slug matches `name` already exists (save-collision check).
 bool character_exists(const std::filesystem::path& configPath, std::string_view name);
 bool scene_exists(const std::filesystem::path& configPath, std::string_view name);
+bool pose_exists(const std::filesystem::path& configPath, std::string_view name);
 
 // Load every <slug>.json under the library root; thumbPath is the sibling
 // .thumb.png when present, "" otherwise. Filesystem natural order.
 std::vector<Character> scan_characters(const std::filesystem::path& configPath);
 std::vector<Scene> scan_scenes(const std::filesystem::path& configPath);
+std::vector<Pose> scan_poses(const std::filesystem::path& configPath);
 
 // Write the preset JSON (path from name's slug) and, if thumbPng is non-empty, a
 // sibling .thumb.png; an empty/absent thumb removes any pre-existing one. Creates
@@ -77,9 +94,12 @@ bool save_character(const std::filesystem::path& configPath, const Character& pr
                     const std::optional<std::vector<uint8_t>>& thumbPng);
 bool save_scene(const std::filesystem::path& configPath, const Scene& preset,
                 const std::optional<std::vector<uint8_t>>& thumbPng);
+bool save_pose(const std::filesystem::path& configPath, const Pose& preset,
+               const std::optional<std::vector<uint8_t>>& thumbPng);
 
 // Remove the preset JSON + any sibling .thumb.png. Idempotent.
 bool remove_character(const std::filesystem::path& configPath, std::string_view nameOrSlug);
 bool remove_scene(const std::filesystem::path& configPath, std::string_view nameOrSlug);
+bool remove_pose(const std::filesystem::path& configPath, std::string_view nameOrSlug);
 
 }  // namespace ArmaturePresets
