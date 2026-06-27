@@ -2,7 +2,12 @@
 
 ## Status
 
-**IN PROGRESS — M1–M3 done (load, skinned render/bake, live orbit+lighting modal); M4 next.** First half of the
+**IN PROGRESS — M1–M4 done (load, skinned render/bake, live orbit+lighting modal,
+FK posing with a 3-axis gizmo); M5 next.** Note: M4's gizmo is **hand-rolled as a
+2D Skia overlay (RGB axis grab-dots), NOT im3d** — Decision §3 superseded, because
+the editor composites the GL render back through Skia (per-frame readback), so a
+Skia-overlay manipulator integrates far more cleanly than wiring im3d's GL
+draw-lists into that pass. im3d is therefore not vendored. First half of the
 PHASE9/10 split (the other half is the lobby carousel, [PHASE10.md]). This is the
 **large, architecturally-novel** phase: Inkternity is a 2D app and gains its
 first 3D subsystem. It is scheduled **first by choice** (zynx, 2026-06-21) — the
