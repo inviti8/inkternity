@@ -337,7 +337,7 @@ void ArmatureModalScreen::gui_layout_run() {
                                 }});
                 } else if (mTab == 3) {  // Body
                     slider_scalar_field<float>(gui, "armature height", "Height",
-                                               &mHeight, 0.5f, 2.0f, {.onEdit = [this] {
+                                               &mHeight, 0.7f, 1.4f, {.onEdit = [this] {
                                                    if (mModel) mModel->set_height(mHeight);
                                                    request_redraw();
                                                }});

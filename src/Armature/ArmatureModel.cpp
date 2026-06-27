@@ -7,6 +7,7 @@
 #include <cgltf.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -27,6 +28,35 @@ namespace {
 // map reads them identically. (Unaligned map → no alignment requirement.)
 Eigen::Matrix4f mat_from_cgltf(const cgltf_float m[16]) {
     return Eigen::Map<const Eigen::Matrix4f>(m);
+}
+
+// Height = natural bone-length scaling: only the vertical STATURE chains scale —
+// the spine/torso/neck and the legs (thigh/shin/foot offset) — while the head,
+// hands, feet, fingers, and arms keep constant length. This reproduces the
+// anthropometric head-canon (extra stature from chest + longer legs; head/hands/
+// feet are the constant measuring unit) and, by scaling local TRANSLATIONS (not
+// non-uniform Transform scale), never introduces shear in rotated children.
+// (Deep-research 2026-06-27.) Name match is whitespace/case-insensitive to
+// tolerate the asset's bone-name quirks (trailing spaces, "leftlowerLeg").
+bool is_stature_joint(const std::string& raw) {
+    std::string n;
+    for (char c : raw)
+        if (!std::isspace(static_cast<unsigned char>(c)))
+            n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    // hips: scaling the pelvis-off-root offset by the same factor RAISES the
+    // pelvis to match the lengthened legs, so the feet stay grounded (the legs
+    // hang ~pelvis-height downward, so this cancels the leg drop) — the figure
+    // grows upward from the floor instead of sinking through it.
+    if (n == "hips") return true;
+    // Torso/neck: spine + chest + neck. upperChest is deliberately EXCLUDED — it
+    // sits between the shoulders and neck, and scaling it over-stretches the neck.
+    if (n == "spine" || n == "chest" || n == "neck") return true;
+    auto has = [&](const char* s) { return n.find(s) != std::string::npos; };
+    // Legs (thigh/shin; "toes" = foot offset) and arms (upper arm/forearm; "hand"
+    // = forearm offset, so the arm lengthens proportionally). Hands/feet/fingers/
+    // toes themselves stay constant size.
+    return has("upperleg") || has("lowerleg") || has("toes") ||
+           has("upperarm") || has("lowerarm") || has("hand");
 }
 
 }  // namespace
@@ -101,8 +131,11 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
     for (int j = 0; j < mJointCount; ++j) {
         const int ni = static_cast<int>(skin->joints[j] - gltf->nodes);
         mJointToNode[j] = ni;
-        if (ni >= 0 && ni < static_cast<int>(nodeCount)) mNodes[ni].joint = j;
         mJointNames[j] = skin->joints[j]->name ? skin->joints[j]->name : "";
+        if (ni >= 0 && ni < static_cast<int>(nodeCount)) {
+            mNodes[ni].joint = j;
+            mNodes[ni].scalesHeight = is_stature_joint(mJointNames[j]);
+        }
     }
 
     mJointPose.assign(static_cast<size_t>(mJointCount) * 4, 0.0f);
@@ -242,11 +275,12 @@ Eigen::Matrix4f ArmatureModel::node_local_matrix(int nodeIndex) const {
     Eigen::Matrix4f m = Eigen::Matrix4f::Identity();
     m.block<3, 3>(0, 0) = q.normalized().toRotationMatrix() *
         Eigen::DiagonalMatrix<float, 3>(n.s[0], n.s[1], n.s[2]);
-    // Height = uniform bone-length scale: scale every node's local translation,
-    // so the whole skeleton scales about the root (limbs lengthen proportionally).
-    m(0, 3) = n.t[0] * mHeightScale;
-    m(1, 3) = n.t[1] * mHeightScale;
-    m(2, 3) = n.t[2] * mHeightScale;
+    // Height: scale local translation ONLY for stature-chain joints (spine/legs),
+    // so head/hands/feet keep constant size — natural proportions, no shear.
+    const float hs = n.scalesHeight ? mHeightScale : 1.0f;
+    m(0, 3) = n.t[0] * hs;
+    m(1, 3) = n.t[1] * hs;
+    m(2, 3) = n.t[2] * hs;
     return m;
 }
 

@@ -111,6 +111,7 @@ private:
     struct NodeT {
         int parent = -1;
         int joint = -1;          // index into joints, or -1
+        bool scalesHeight = false;  // part of the spine/leg stature chain (M5.1a redesign)
         bool hasMatrix = false;
         float t[3] = {0, 0, 0};
         float r[4] = {0, 0, 0, 1};  // quaternion xyzw
