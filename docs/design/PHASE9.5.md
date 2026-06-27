@@ -214,25 +214,23 @@ infra, thumbnails reuse the existing bake.
 
 ---
 
-## 9. Decisions & open questions
+## 9. Decisions (LOCKED 2026-06-27 — zynx)
 
-- **D1 — Presets are app-level, local, per-user.** Sidecars under `configPath`,
-  exactly like brush presets; not synced, not in the `.inkternity` file. *(locked)*
-- **D2 — Character presets target the bundled default rig.** Material colors key
-  by material *name* and shape sliders by the default 22-slider config, so they
-  only fully apply to the default mannequin. The Character tab is hidden for
-  loaded/custom models (Scene stays available). *Open:* do we instead allow
-  best-effort apply (match materials by name, sliders by index) on custom rigs,
-  or keep it gated? Recommend gated for v1.
-- **D3 — No "new figure from preset" entry yet.** You add an armature, open the
+- **D1 — Presets are app-level, local, per-user.** ✅ Sidecars under `configPath`,
+  exactly like brush presets; not synced, not in the `.inkternity` file.
+- **D2 — Character presets target the bundled default mannequin (this phase).**
+  ✅ Material colors key by material *name* and shape sliders by the default
+  22-slider config, so they only fully apply to the default rig. The Character
+  tab is **hidden for loaded/custom models**; Scene stays available for any model.
+  (Best-effort apply to custom rigs is explicitly deferred.)
+- **D3 — No "new figure from preset" entry yet.** ✅ You add an armature, open the
   editor, then load. A top-toolbar "new from character" is a later nicety.
-- **D4 — Thumbnail size = 128².** Bigger than brush icons (64²) since a figure
-  needs more detail; still tiny on disk. *Open:* 96² vs 128².
-- **D5 — Naming UX.** v1: inline text field + Save; slug collision = error
-  toast (no overwrite), mirroring brushes. Rename = delete + re-save.
-- **D6 — One module vs two.** Single `ArmaturePresets` file with shared helpers
-  and two type-specific namespaces (vs. genericized template). Pragmatic for two
-  types; revisit if a third preset kind appears.
+- **D4 — Thumbnail size = 128².** ✅ Bigger than brush icons (64²) since a figure
+  needs more detail; still tiny on disk.
+- **D5 — Naming UX.** ✅ Inline text field + Save; slug collision = error toast
+  (no overwrite), mirroring brushes. Rename = delete + re-save.
+- **D6 — One `ArmaturePresets` module, two type-specific namespaces.** ✅ Shared
+  private helpers; genericize only if a third preset kind appears.
 
 ---
 
