@@ -53,7 +53,9 @@ private:
     void destroy_fbo();
     void do_bake();                 // render at bake res → write d + raster back → exit
 
-    static constexpr float PANEL_W = 270.0f;  // left controls strip (px)
+    static constexpr float PANEL_W = 270.0f;     // left controls strip (logical px)
+    static constexpr float TOP_BAR_H = 40.0f;    // top tab bar height (logical px)
+    int mTab = 2;                                // active tab: 0 Camera 1 Light 2 Pose 3 Body 4 Materials
 
     std::unique_ptr<Screen> mPrev;            // the screen we replaced (restored on exit)
     DrawingProgram* mEditDrawP = nullptr;                       // bound component's program

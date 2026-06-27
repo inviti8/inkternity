@@ -101,10 +101,13 @@ void ArmatureModalScreen::request_redraw() {
 void ArmatureModalScreen::view_rect(float& x, float& y, float& size) const {
     const float w = static_cast<float>(main.window.size.x());
     const float h = static_cast<float>(main.window.size.y());
-    const float panelPx = PANEL_W * main.g.final_gui_scale();
-    size = std::max(1.0f, std::min(w - panelPx, h));
-    x = panelPx + (w - panelPx - size) * 0.5f;
-    y = (h - size) * 0.5f;
+    const float scale = main.g.final_gui_scale();
+    const float panelPx = PANEL_W * scale;   // left controls strip
+    const float topPx = TOP_BAR_H * scale;   // top tab bar
+    const float availW = w - panelPx, availH = h - topPx;
+    size = std::max(1.0f, std::min(availW, availH));
+    x = panelPx + (availW - size) * 0.5f;
+    y = topPx + (availH - size) * 0.5f;
 }
 
 // Project a render-space point to device pixels within the view rect.
@@ -254,74 +257,107 @@ void ArmatureModalScreen::input_mouse_wheel_callback(const InputManager::MouseWh
 
 void ArmatureModalScreen::gui_layout_run() {
     auto& gui = main.g.gui;
-    // Match the app's panels: backColor1 background + text_label's frontColor1
-    // text is the toolbar's designed-readable combo. Use the same converter the
-    // rest of the UI uses (Clay_Color here is 0..1, so don't hand-scale).
+    // backColor1 panel + text_label's frontColor1 text is the toolbar's readable
+    // combo. convert_vec4 handles the SkColor4f→Clay_Color mapping (0..1 here).
     const Clay_Color panelBg = convert_vec4<Clay_Color>(gui.io.theme->backColor1);
+    const std::function<void()> markDirty = [this] { request_redraw(); };
+
     CLAY_AUTO_ID({
         .layout = {
             .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0)},
-            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
     }) {
-        // Left controls strip.
+        // ---- top tab bar: category buttons + Bake/Close ----
         CLAY_AUTO_ID({
             .layout = {
-                .sizing = {.width = CLAY_SIZING_FIXED(PANEL_W), .height = CLAY_SIZING_GROW(0)},
+                .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIXED(TOP_BAR_H)},
                 .padding = CLAY_PADDING_ALL(gui.io.theme->padding1),
                 .childGap = gui.io.theme->childGap1,
-                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
             .backgroundColor = panelBg,
         }) {
-            const std::function<void()> markDirty = [this] { request_redraw(); };
-            text_label(gui, "Armature Editor (M3)");
-            text_label(gui, "Drag: orbit   Shift+drag: pan   Wheel: zoom");
-            slider_scalar_field<float>(gui, "light azimuth", "Light azimuth",
-                                       &mLight.azimuth, -3.1416f, 3.1416f, {.onEdit = markDirty});
-            slider_scalar_field<float>(gui, "light elevation", "Light elevation",
-                                       &mLight.elevation, -1.5f, 1.5f, {.onEdit = markDirty});
-            slider_scalar_field<float>(gui, "light intensity", "Light intensity",
-                                       &mLight.intensity, 0.0f, 2.0f, {.onEdit = markDirty});
-            slider_scalar_field<float>(gui, "light ambient", "Ambient",
-                                       &mLight.ambient, 0.0f, 1.0f, {.onEdit = markDirty});
-            slider_scalar_field<float>(gui, "armature height", "Height",
-                                       &mHeight, 0.5f, 2.0f, {.onEdit = [this] {
-                                           if (mModel) mModel->set_height(mHeight);
-                                           request_redraw();
-                                       }});
-            // Material colors (M5.1b): one picker per material.
-            if (mModel) {
-                static const char* kMatIds[8] = {"armmat0", "armmat1", "armmat2", "armmat3",
-                                                 "armmat4", "armmat5", "armmat6", "armmat7"};
-                const int n = std::min(mModel->material_count(), 8);
-                for (int i = 0; i < n && i < static_cast<int>(mMatColors.size()); ++i) {
-                    color_picker_button_field(gui, kMatIds[i], mModel->material_name(i), &mMatColors[i],
-                        {.hasAlpha = false, .onEdit = [this, i] {
-                            const Vector4f& c = mMatColors[i];
-                            mModel->set_material_color(i, c[0], c[1], c[2], c[3]);
-                            request_redraw();
-                        }});
+            auto tab = [&](const char* id, std::string_view label, int t) {
+                text_button(gui, id, label,
+                            {.isSelected = (mTab == t),
+                             .onClick = [this, t] { mTab = t; request_redraw(); }});
+            };
+            tab("arm tab camera", "Camera", 0);
+            tab("arm tab light", "Light", 1);
+            tab("arm tab pose", "Pose", 2);
+            tab("arm tab body", "Body", 3);
+            tab("arm tab materials", "Materials", 4);
+            CLAY_AUTO_ID({ .layout = { .sizing = {.width = CLAY_SIZING_GROW(0)} } }) {}  // spacer
+            if (mEditTarget)
+                text_button(gui, "armature bake", "Bake", {.onClick = [this] { do_bake(); }});
+            text_button(gui, "armature close", "Close", {.onClick = [this] { mWantExit = true; }});
+        }
+
+        // ---- body: left controls panel (active tab) + 3D view shows through ----
+        CLAY_AUTO_ID({
+            .layout = {
+                .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0)},
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            },
+        }) {
+            CLAY_AUTO_ID({
+                .layout = {
+                    .sizing = {.width = CLAY_SIZING_FIXED(PANEL_W), .height = CLAY_SIZING_GROW(0)},
+                    .padding = CLAY_PADDING_ALL(gui.io.theme->padding1),
+                    .childGap = gui.io.theme->childGap1,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+                .backgroundColor = panelBg,
+            }) {
+                if (mTab == 0) {  // Camera
+                    text_label(gui, "Drag: orbit");
+                    text_label(gui, "Shift+drag: pan");
+                    text_label(gui, "Wheel: zoom");
+                    text_button(gui, "armature reset view", "Reset View",
+                                {.wide = true, .onClick = [this] { mFramed = false; request_redraw(); }});
+                } else if (mTab == 1) {  // Light
+                    slider_scalar_field<float>(gui, "light azimuth", "Azimuth",
+                                               &mLight.azimuth, -3.1416f, 3.1416f, {.onEdit = markDirty});
+                    slider_scalar_field<float>(gui, "light elevation", "Elevation",
+                                               &mLight.elevation, -1.5f, 1.5f, {.onEdit = markDirty});
+                    slider_scalar_field<float>(gui, "light intensity", "Intensity",
+                                               &mLight.intensity, 0.0f, 2.0f, {.onEdit = markDirty});
+                    slider_scalar_field<float>(gui, "light ambient", "Ambient",
+                                               &mLight.ambient, 0.0f, 1.0f, {.onEdit = markDirty});
+                } else if (mTab == 2) {  // Pose
+                    text_label(gui, (mModel && mSelectedJoint >= 0)
+                                        ? ("Selected: " + mModel->joint_name(mSelectedJoint))
+                                        : std::string("Grab a joint dot in the view,"));
+                    text_label(gui, "then a colored axis ring to rotate.");
+                    text_button(gui, "armature reset pose", "Reset Pose",
+                                {.wide = true, .onClick = [this] {
+                                    if (mModel) { mModel->reset_pose(); request_redraw(); }
+                                }});
+                } else if (mTab == 3) {  // Body
+                    slider_scalar_field<float>(gui, "armature height", "Height",
+                                               &mHeight, 0.5f, 2.0f, {.onEdit = [this] {
+                                                   if (mModel) mModel->set_height(mHeight);
+                                                   request_redraw();
+                                               }});
+                    text_label(gui, "Shape keys: coming soon");
+                } else if (mTab == 4 && mModel) {  // Materials
+                    static const char* kMatIds[8] = {"armmat0", "armmat1", "armmat2", "armmat3",
+                                                     "armmat4", "armmat5", "armmat6", "armmat7"};
+                    const int n = std::min(mModel->material_count(), 8);
+                    for (int i = 0; i < n && i < static_cast<int>(mMatColors.size()); ++i) {
+                        color_picker_button_field(gui, kMatIds[i], mModel->material_name(i), &mMatColors[i],
+                            {.hasAlpha = false, .onEdit = [this, i] {
+                                const Vector4f& c = mMatColors[i];
+                                mModel->set_material_color(i, c[0], c[1], c[2], c[3]);
+                                request_redraw();
+                            }});
+                    }
                 }
             }
-            text_label(gui, (mModel && mSelectedJoint >= 0)
-                                ? ("Selected: " + mModel->joint_name(mSelectedJoint))
-                                : std::string("Selected: (grab a joint dot)"));
-            if (mEditTarget) {
-                text_button(gui, "armature bake", "Bake to Canvas",
-                            {.wide = true, .onClick = [this] { do_bake(); }});
-            }
-            text_button(gui, "armature reset pose", "Reset Pose",
-                        {.wide = true, .onClick = [this] {
-                            if (mModel) { mModel->reset_pose(); request_redraw(); }
-                        }});
-            text_button(gui, "armature reset view", "Reset View",
-                        {.wide = true, .onClick = [this] { mFramed = false; request_redraw(); }});
-            text_button(gui, "armature close", "Close",
-                        {.wide = true, .onClick = [this] { mWantExit = true; }});
+            CLAY_AUTO_ID({ .layout = { .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0)} } }) {}
         }
-        // Right area is left empty so the composited 3D view shows through.
-        CLAY_AUTO_ID({ .layout = { .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0)} } }) {}
     }
 }
 
