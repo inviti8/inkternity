@@ -14,8 +14,9 @@
 #include <set>
 #include <string>
 
-// GL methods are desktop-GL-3.3 only (matches ArmatureSpike's guard). The CPU
-// loader below compiles on every backend; only upload_gl/draw need GL.
+// GL methods are desktop-GL-3.3 only (same guard family as the rest of the
+// armature code). The CPU loader below compiles on every backend; only
+// upload_gl/draw need GL.
 #if defined(USE_BACKEND_OPENGL) && !defined(__EMSCRIPTEN__) && \
     !defined(USE_BACKEND_OPENGLES_3_0) && !defined(USE_BACKEND_OPENGL_2_1)
 #define ARMATURE_MODEL_GL 1

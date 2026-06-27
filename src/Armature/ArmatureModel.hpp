@@ -9,7 +9,7 @@
 //
 // Loading (`load_from_memory`) is pure CPU (cgltf + Eigen) and builds on any
 // backend; the GL methods (`upload_gl`, `draw`) are desktop-GL-3.3 only and are
-// no-ops elsewhere (matching ArmatureSpike's guard).
+// no-ops elsewhere (same GL guard as the rest of the armature code).
 
 #include <Eigen/Dense>
 #include <array>

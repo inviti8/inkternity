@@ -9,8 +9,7 @@
 #include "DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
 #include "DrawingProgram/RasterFlatten.hpp"
 #include "DrawingProgram/RasterResolution.hpp"
-#include "Armature/ArmatureSpike.hpp"  // PHASE9 M1 spike (temporary trigger)
-#include "Armature/ArmatureModalScreen.hpp"  // PHASE9 M3 modal (temporary trigger)
+#include "Armature/ArmatureModalScreen.hpp"  // PHASE9: armature editor + add/load actions
 #include "Diagnostics/RenderStats.hpp"
 #include "FileHelpers.hpp"
 #include "GUIStuff/Elements/MemoryImageDisplay.hpp"
@@ -544,6 +543,22 @@ void Toolbar::top_toolbar() {
                                             false, [&] {
                         ArmatureModalScreen::add_armature_to_canvas(main.world->drawProg);
                     });
+                    // PHASE9 M7 -- Load an external 3D model (glTF/.glb) as a drawing
+                    // reference (poseable if it matches our rig, else a flattened
+                    // static mesh). Sits just right of the Add Armature button. The
+                    // native file-dialog callback can fire off the main/GL thread, so
+                    // defer the load to the main loop via the add-file event (handled
+                    // GL-current; .glb/.gltf is routed to the 3D-model loader there).
+                    icon_button_top_toolbar("Load Model Button", "data/icons/model.svg", false, [&] {
+                        open_file_selector("Load 3D Model", {{"glTF Model", "glb;gltf"}},
+                            [&](const std::filesystem::path& p, const auto&) {
+                                CustomEvents::emit_event<CustomEvents::AddFileToCanvasEvent>({
+                                    .type = CustomEvents::AddFileToCanvasEvent::Type::PATH,
+                                    .filePath = p,
+                                    .pos = main.window.size.cast<float>() / 2.0f
+                                });
+                            });
+                    });
                 } else {
                     // Tool button hidden mid-popup: auto-close so the
                     // popup body doesn't render attached to a vanished
@@ -609,27 +624,6 @@ void Toolbar::top_toolbar() {
                         else                       fxLibraryMenuPopupOpen = true;
                     });
                 #endif
-
-                // PHASE9 M7 -- Load an external 3D model (glTF/.glb) onto the
-                // canvas as a drawing reference (poseable if it matches our rig,
-                // else a flattened static mesh). Edit-mode only (adds to a layer);
-                // sits on the right by the avatar. Swappable icon.
-                if (showEditButtons) {
-                    icon_button_top_toolbar("Load Model Button", "data/icons/model.svg", false, [&] {
-                        // The native file-dialog callback can fire off the main/GL
-                        // thread, so we must NOT touch GL there. Defer to the main
-                        // loop via the add-file event (handled GL-current); .glb/
-                        // .gltf is routed to the 3D-model loader there.
-                        open_file_selector("Load 3D Model", {{"glTF Model", "glb;gltf"}},
-                            [&](const std::filesystem::path& p, const auto&) {
-                                CustomEvents::emit_event<CustomEvents::AddFileToCanvasEvent>({
-                                    .type = CustomEvents::AddFileToCanvasEvent::Type::PATH,
-                                    .filePath = p,
-                                    .pos = main.window.size.cast<float>() / 2.0f
-                                });
-                            });
-                    });
-                }
 
                 // PHASE3 §4 B.M2 -- avatar tile (always visible; not
                 // tool-gated since the avatar is a per-artist identity
@@ -762,12 +756,6 @@ void Toolbar::top_toolbar() {
                                 });
                                 menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
                                     RasterResolution::halve_layer(main.world->drawProg);
-                                });
-                                // PHASE9: "Add Armature" now lives in the tool palette
-                                // (DrawingProgram::toolbar_gui) as an icon button.
-                                // PHASE9 M1 spike (THE GATE) — throwaway; removed at M6.
-                                menu_popup_text_button("armature spike", "Armature Spike (M1)", [&] {
-                                    ArmatureSpike::run_spike(main.world->drawProg);
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {

@@ -2,17 +2,22 @@
 
 ## Status
 
-**IN PROGRESS — M1–M5 + M5.1 done; re-editable `ARMATURE` component + full
-customization shipped.** Drop on canvas → draws baked raster → double-click → 3D
+**SHIPPED — M1–M7 done; re-editable `ARMATURE` component + full customization +
+external model loading.** Drop on canvas → draws baked raster → double-click → 3D
 editor (top-bar tabs: Camera/Light/Pose/Body/Materials) seeded from saved state →
 Bake writes back. Customization: **height** (natural per-chain bone-length scaling
 + stretchy bones so limb meshes elongate; feet stay grounded — deep-research
 2026-06-27), **per-material colors**, and the **22-slider shape-key system** (40
-glTF morph targets applied before LBS; collapsible groups). Save format at
-INFPNT000025 / 0.24.0. "Add Armature" is a tool-palette icon button
-(assets/data/icons/armature.svg). Remaining: **M6** polish — remove the throwaway
-M1 spike + `ArmatureSpike` cruft, verify/tweak subtle morph deltas in the source
-.glb, `third_party_licenses`/VENDORING audit, MANUAL/README. Note: M4's gizmo is **hand-rolled as a
+glTF morph targets applied before LBS; collapsible groups). **Camera**: Orbit/Pan/
+Zoom drag tools + FOV/orthographic lens. **M7 — Load Model**: import an external
+glTF/.glb as a drawing reference — a clean re-export of our rig loads poseable,
+anything else flattens to a static reference mesh (scene graph collapsed, simple
+flat shading, no textures/animation v1); Draco-compressed assets are rejected with
+a clear message. The `.glb` is embedded once in the ResourceManager and referenced
+by id. Save format at **INFPNT000027 / 0.26.0**. **"Add Armature" and "Load Model"
+are top-toolbar icon buttons** (assets/data/icons/armature.svg, model.svg). The
+throwaway M1 spike is removed; the shared bake helper lives in `ArmatureBake`.
+Remaining polish: `third_party_licenses`/VENDORING audit, MANUAL/README. Note: M4's gizmo is **hand-rolled as a
 2D Skia overlay (RGB axis grab-dots), NOT im3d** — Decision §3 superseded, because
 the editor composites the GL render back through Skia (per-frame readback), so a
 Skia-overlay manipulator integrates far more cleanly than wiring im3d's GL
@@ -26,8 +31,9 @@ this and gate it on the M1 spike.
 **✅ M1 GATE PASSED (2026-06-21).** The context spike (raw GL lit cube → own
 FBO → `resetContext()` → bake to a `MYPAINTLAYER`) renders and bakes correctly,
 and the canvas keeps drawing cleanly afterwards — the highest risk (#1) is
-retired. Implemented in `src/Armature/ArmatureSpike.cpp` behind a temporary
-"Armature Spike (M1)" menu button (throwaway; remove when the real modal lands).
+retired. (Originally implemented as a throwaway `ArmatureSpike` cube behind a temp
+menu button; both were removed in M6 once the real editor landed. The shared
+own-FBO render+readback helper it proved out now lives in `ArmatureBake`.)
 **Key finding for M2+:** a raw-GL pass on the shared Ganesh context **must fully
 specify its GL state** (depth/colour/stencil masks, depth func, clear-depth,
 scissor/blend/cull) before rendering — Skia leaves these in non-default states

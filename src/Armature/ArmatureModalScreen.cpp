@@ -1,7 +1,7 @@
 #include "ArmatureModalScreen.hpp"
 
 #include "ArmatureModel.hpp"
-#include "ArmatureSpike.hpp"
+#include "ArmatureBake.hpp"
 #include "../MainProgram.hpp"
 #include "../World.hpp"
 #include "../WorldUndoManager.hpp"
@@ -730,8 +730,8 @@ void ArmatureModalScreen::do_bake() {
     if (!mEditTarget || !mEditDrawP || !mModel) { mWantExit = true; return; }
     constexpr int DIM = 1024;
     std::vector<uint8_t> rgba;
-    if (!ArmatureSpike::render_armature_rgba(*mModel, mCamera.view_proj(1.0f), mLight.travel_dir(),
-                                             mLight.ambient, mLight.intensity, mLight.sky, DIM, rgba)) {
+    if (!ArmatureBake::render_armature_rgba(*mModel, mCamera.view_proj(1.0f), mLight.travel_dir(),
+                                            mLight.ambient, mLight.intensity, mLight.sky, DIM, rgba)) {
         Logger::get().log("USERINFO", "Armature bake failed.");
         mWantExit = true;
         return;
@@ -807,8 +807,8 @@ void place_model_component(DrawingProgram& drawP, Armature::ArmatureModel& model
 
     constexpr int DIM = 1024;
     std::vector<uint8_t> rgba;
-    if (!ArmatureSpike::render_armature_rgba(model, cam.view_proj(1.0f), light.travel_dir(),
-                                             light.ambient, light.intensity, light.sky, DIM, rgba))
+    if (!ArmatureBake::render_armature_rgba(model, cam.view_proj(1.0f), light.travel_dir(),
+                                            light.ambient, light.intensity, light.sky, DIM, rgba))
         return;
 #ifdef ARMATURE_MODAL_GL
     main.window.ctx->resetContext();
