@@ -128,6 +128,17 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
         return false;
     }
 
+    // Draco (KHR_draco_mesh_compression) needs a decoder we don't link, so cgltf
+    // reads every compressed attribute as zero — the model loads "empty" (all verts
+    // at the origin) and silently shows nothing. Detect it and fail loudly instead.
+    for (size_t i = 0; i < gltf->extensions_required_count; ++i)
+        if (gltf->extensions_required[i] &&
+            std::strcmp(gltf->extensions_required[i], "KHR_draco_mesh_compression") == 0) {
+            err = "this model uses Draco mesh compression, which isn't supported yet "
+                  "— re-export it without Draco/mesh compression.";
+            return false;
+        }
+
     // Routing (PHASE9 M7): our default rig (and clean re-exports of it) load
     // through the skinned, poseable armature path. Anything else — unskinned, or
     // a skin whose bones don't match our canon — loads as a flattened STATIC
