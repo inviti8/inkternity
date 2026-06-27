@@ -536,6 +536,14 @@ void Toolbar::top_toolbar() {
                                             main.world->treeView.is_visible(), [&] {
                         main.world->treeView.toggle();
                     });
+                    // PHASE9: drop a re-editable armature on the canvas. An action
+                    // (not a tool mode), so isSelected stays false; the icon at the
+                    // path below is swappable. Edit-mode only, grouped with the
+                    // other canvas-mutating buttons.
+                    icon_button_top_toolbar("Add Armature Button", "data/icons/armature.svg",
+                                            false, [&] {
+                        ArmatureModalScreen::add_armature_to_canvas(main.world->drawProg);
+                    });
                 } else {
                     // Tool button hidden mid-popup: auto-close so the
                     // popup body doesn't render attached to a vanished
