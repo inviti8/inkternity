@@ -2,7 +2,7 @@
 
 ## Status
 
-**PLANNED — grounded against the codebase; ready to start M1.** First half of the
+**IN PROGRESS — M1 gate passed; M2 next.** First half of the
 PHASE9/10 split (the other half is the lobby carousel, [PHASE10.md]). This is the
 **large, architecturally-novel** phase: Inkternity is a 2D app and gains its
 first 3D subsystem. It is scheduled **first by choice** (zynx, 2026-06-21) — the
