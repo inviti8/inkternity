@@ -1,5 +1,9 @@
 ## Building
 This program is written in C++, and uses [conan](https://conan.io) to fetch dependencies.
+
+> For the day-to-day **local Windows dev loop** (incremental build/run/verify
+> commands, gotchas, and cutting a release), see **[LOCAL_RUNBOOK.md](LOCAL_RUNBOOK.md)**.
+
 ## Linux
 After cloning the repository, `cd` into the repo, then run:
 ```
