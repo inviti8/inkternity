@@ -2,8 +2,12 @@
 
 ## Status
 
-**IN PROGRESS — M1–M4 done (load, skinned render/bake, live orbit+lighting modal,
-FK posing with a 3-axis gizmo); M5 next.** Note: M4's gizmo is **hand-rolled as a
+**IN PROGRESS — M1–M5 done; re-editable `ARMATURE` component shipped (drop on
+canvas → draws baked raster → double-click → 3D editor seeded from saved state →
+Bake writes back; save-format bumped to INFPNT000022/0.21.0). Remaining: M5.1
+customization (shape-key sliders, material colors, height — each needs new
+renderer features) and M6 polish/cleanup (remove the throwaway M1 spike, licenses,
+docs).** Note: M4's gizmo is **hand-rolled as a
 2D Skia overlay (RGB axis grab-dots), NOT im3d** — Decision §3 superseded, because
 the editor composites the GL render back through Skia (per-frame readback), so a
 Skia-overlay manipulator integrates far more cleanly than wiring im3d's GL
