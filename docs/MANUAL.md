@@ -265,6 +265,17 @@ Folder-panel controls (shown when the folder is a Parallax Scene):
 - Colour is rendered faithfully through a Skia port of the legacy TimelineFX runtime (per-sprite tint + additive blending, animated sprite-sheets), so what you see should match the editor
 - In a collaboration session, particle effects are **host-authored**: only the host can import libraries and paint effects, but everyone — including read-only viewers — sees them play
 - Notes: effects are **2D** only. The reserved **Sketch** layer is hidden in reader mode, so particles placed there won't play when reading — the brush warns you; use the Color, Ink, or a custom layer instead. Flattening a layer (above) bakes the effect's current frame to a still raster
+## 3D Reference Figures
+- Drop a posable 3D figure onto the canvas as a drawing reference: click the **armature icon in the top toolbar**. It places a humanoid mannequin (drawn as an image), and **double-clicking it opens the 3D editor** seeded from its current state
+- The editor has tabbed controls along the top:
+  - **Camera** — **Orbit / Pan / Zoom** drag-tool buttons (like the canvas tools), plus a **Field of View** slider and a **Perspective ⇄ Orthographic** toggle (orthographic removes foreshortening — handy for clean reference)
+  - **Light** — direction, intensity, ambient, and a soft sky fill
+  - **Pose** — click a joint dot, then drag the **red / green / blue axis handles** to rotate it (X/Y/Z); **Reset Pose** clears it
+  - **Body** — a **Height** slider (limbs lengthen naturally) and **shape-key sliders** (gender, build, head/eye/nose/mouth shape, expressions) in collapsible groups
+  - **Materials** — per-material colors via the color picker
+- The square outline marks exactly what will be captured. **Bake** writes the posed figure back to the canvas as an image and returns you to the drawing; everything (pose, camera, light, lens, customization) is saved, so you can **double-click to re-edit** any time. Move/scale/rotate the baked figure with the Edit tool like any object
+- **Load your own model** with the **Load Model** button (just right of the armature button): pick a **glTF / `.glb`** file. A model whose skeleton matches the built-in rig loads **fully posable**; any other model loads as a **static reference mesh** you can frame, light, and bake. The model is **embedded in your `.inkternity` save**, so it travels with the file
+- Notes: rendering is **simple flat shading** for now — **no textures or animation**, and **Draco-compressed** files aren't supported (re-export without Draco/mesh compression). You can also **drag a `.glb` onto the canvas** to load it
 ## Color Palettes
 - Click the color button on the left toolbar to open the color picker. The top color button, initially white, is for the brush color and outlines. The bottom color button, initially black, is for fill color (if applicable)
 - In the color picker window, you can use, create, and edit color palettes

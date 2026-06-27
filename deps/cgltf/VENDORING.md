@@ -31,3 +31,10 @@ Smallest footprint, zero deps, C99, exposes `cgltf_skin` (joints, skeleton,
 exactly what the hand-rolled FK + linear-blend skinning needs (PHASE9 Decision §2,
 no ozz). Our default asset is plain glTF/`.glb` with embedded buffers and **no
 Draco**, so cgltf loads it as-is with no extra decoders.
+
+PHASE9 M7 also lets users load their own glTF/`.glb` models. cgltf ships no
+Draco/`KHR_draco_mesh_compression` decoder, so `ArmatureModel::load_from_memory`
+**detects `KHR_draco_mesh_compression` in `extensions_required` and rejects** the
+file with a clear "re-export without Draco" message (otherwise cgltf reads the
+compressed attributes as zero and the model loads empty). Adding Draco would mean
+vendoring a separate decoder — deliberately out of scope for v1.
