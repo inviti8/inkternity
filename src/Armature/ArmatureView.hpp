@@ -23,6 +23,19 @@ inline Eigen::Matrix4f perspective(float fovYRad, float aspect, float znear, flo
     return m;
 }
 
+// Symmetric orthographic projection (GL clip space). halfH is the half-height of
+// the view box in world units at the target; halfW = halfH*aspect.
+inline Eigen::Matrix4f orthographic(float halfH, float aspect, float znear, float zfar) {
+    const float halfW = halfH * aspect;
+    Eigen::Matrix4f m = Eigen::Matrix4f::Zero();
+    m(0, 0) = 1.0f / halfW;
+    m(1, 1) = 1.0f / halfH;
+    m(2, 2) = -2.0f / (zfar - znear);
+    m(2, 3) = -(zfar + znear) / (zfar - znear);
+    m(3, 3) = 1.0f;
+    return m;
+}
+
 inline Eigen::Matrix4f look_at(const Eigen::Vector3f& eye, const Eigen::Vector3f& center,
                                const Eigen::Vector3f& up) {
     const Eigen::Vector3f f = (center - eye).normalized();
@@ -44,6 +57,7 @@ struct OrbitCamera {
     float pitch = 0.0f;     // radians, up/down
     float distance = 3.0f;
     float fovY = 40.0f * 3.14159265f / 180.0f;
+    bool ortho = false;     // orthographic projection (no perspective distortion)
 
     // Frame an AABB: centre the target and back off to fit the largest extent.
     void frame_bounds(const Eigen::Vector3f& mn, const Eigen::Vector3f& mx) {
@@ -67,7 +81,15 @@ struct OrbitCamera {
 
     Eigen::Matrix4f view_proj(float aspect) const {
         const float r = std::max(mFitExtent, distance);
-        return perspective(fovY, aspect, std::max(0.01f, distance - r), distance + r * 2.0f) * view();
+        const float znear = std::max(0.01f, distance - r);
+        const float zfar = distance + r * 2.0f;
+        // Ortho half-height tracks distance*tan(fov/2) so toggling persp<->ortho and
+        // dollying keep the figure roughly the same on-screen size; pan/world_per_pixel
+        // (which use the same expression) stay consistent in both modes.
+        if (ortho)
+            return orthographic(std::max(1e-3f, distance * std::tan(fovY * 0.5f)),
+                                aspect, znear, zfar) * view();
+        return perspective(fovY, aspect, znear, zfar) * view();
     }
 
     void orbit(float dYaw, float dPitch) {

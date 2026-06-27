@@ -31,6 +31,7 @@ VersionNumber header_to_version_number(const std::string& header) {
         m["INFPNT000023"] = VersionNumber(0, 22, 0); // PHASE9 M5.1a: ARMATURE gains height (uniform bone-length scale)
         m["INFPNT000024"] = VersionNumber(0, 23, 0); // PHASE9 M5.1b: ARMATURE gains per-material color overrides
         m["INFPNT000025"] = VersionNumber(0, 24, 0); // PHASE9 M5.1c: ARMATURE gains shape-key slider values
+        m["INFPNT000026"] = VersionNumber(0, 25, 0); // PHASE9 M6: ARMATURE gains camera lens (fovDeg + ortho)
     }
     auto it = m.find(header);
     if(it == m.end())

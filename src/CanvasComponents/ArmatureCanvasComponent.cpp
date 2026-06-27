@@ -40,6 +40,7 @@ void ArmatureCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) 
     a(d.height);          // M5.1a (0.22.0+)
     a(d.materialColors);  // M5.1b (0.23.0+)
     a(d.shapeSliders);    // M5.1c (0.24.0+)
+    a(d.fovDeg, d.ortho); // M6 camera lens (0.25.0+)
 }
 void ArmatureCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     // PHASE9 (INFPNT000022 / 0.21.0): the armature type was introduced whole, so
@@ -56,6 +57,8 @@ void ArmatureCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, V
         a(d.materialColors);
     if (version >= VersionNumber(0, 24, 0))  // M5.1c: shape-key slider values
         a(d.shapeSliders);
+    if (version >= VersionNumber(0, 25, 0))  // M6: camera lens (FOV + ortho)
+        a(d.fovDeg, d.ortho);
     cachedImage_ = nullptr;
 }
 

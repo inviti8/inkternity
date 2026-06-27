@@ -13,6 +13,7 @@
 
 #include "../GUIStuff/GUIManager.hpp"
 #include "../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
+#include "../GUIStuff/Elements/SelectableButton.hpp"
 #include "../GUIStuff/ElementHelpers/ColorPickerHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
@@ -110,6 +111,9 @@ ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen>
     mCamera.pitch = d.camPitch;
     mCamera.distance = d.camDist;
     mCamera.target = Eigen::Vector3f(d.camTx, d.camTy, d.camTz);
+    mFovDeg = d.fovDeg;
+    mCamera.fovY = mFovDeg * 0.01745329252f;
+    mCamera.ortho = d.ortho;
     mFramed = true;
     // Seed the light.
     mLight.azimuth = d.lightAz;
@@ -235,7 +239,7 @@ void ArmatureModalScreen::input_key_callback(const InputManager::KeyCallbackArgs
 
 void ArmatureModalScreen::input_mouse_button_callback(const InputManager::MouseButtonCallbackArgs& b) {
     using MB = InputManager::MouseButton;
-    if (!b.down) { mOrbiting = mPanning = mJointRotating = false; mActiveAxis = -1; return; }
+    if (!b.down) { mOrbiting = mPanning = mZooming = mJointRotating = false; mActiveAxis = -1; return; }
     // Only orbit/pose when the press is inside the 3D viewport square. This blocks
     // the top bar, the controls panel, AND scroll-area content (which cursor_-
     // obstructed misses, since clipped children aren't in the hover-test list).
@@ -269,9 +273,12 @@ void ArmatureModalScreen::input_mouse_button_callback(const InputManager::MouseB
                 return;
             }
         }
-        // 2) A joint dot → select it; 3) empty space → orbit (and deselect).
+        // 2) A joint dot → select it; 3) empty space → the active camera tool
+        //    (orbit deselects; pan/zoom leave the selection alone).
         const int hit = pick_joint(b.pos.x(), b.pos.y());
         if (hit >= 0) { mSelectedJoint = hit; mActiveAxis = -1; request_redraw(); }
+        else if (mCamTool == CamTool::PAN) { mPanning = true; }
+        else if (mCamTool == CamTool::ZOOM) { mZooming = true; }
         else { mSelectedJoint = -1; mActiveAxis = -1; mOrbiting = true; request_redraw(); }
     } else if (b.button == MB::LEFT && shift) {
         mPanning = true;
@@ -307,6 +314,10 @@ void ArmatureModalScreen::input_mouse_motion_callback(const InputManager::MouseM
     } else if (mPanning) {
         const int side = std::max(1, std::min(main.window.size.x(), main.window.size.y()));
         mCamera.pan(m.move.x(), m.move.y(), mCamera.world_per_pixel(side));
+        request_redraw();
+    } else if (mZooming) {
+        // Drag up → zoom in, down → out (matches the wheel; ~per-pixel dolly).
+        mCamera.dolly(std::pow(0.99f, -m.move.y()));
         request_redraw();
     }
 }
@@ -376,9 +387,39 @@ void ArmatureModalScreen::gui_layout_run() {
                 .backgroundColor = panelBg,
             }) {
                 if (mTab == 0) {  // Camera
-                    text_label(gui, "Drag: orbit");
-                    text_label(gui, "Shift+drag: pan");
-                    text_label(gui, "Wheel: zoom");
+                    // Drag-tool selector (mirrors the canvas toolbar's pan/zoom
+                    // icons). Orbit is the default; pan/zoom match hand.svg/zoom.svg.
+                    auto camToolBtn = [&](const char* id, const char* svg, CamTool t) {
+                        svg_icon_button(gui, id, svg, {
+                            .drawType = GUIStuff::SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .isSelected = (mCamTool == t),
+                            .onClick = [this, t] { mCamTool = t; request_redraw(); }});
+                    };
+                    CLAY_AUTO_ID({
+                        .layout = {
+                            .sizing = {.width = CLAY_SIZING_GROW(0)},
+                            .childGap = gui.io.theme->childGap1,
+                            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                        },
+                    }) {
+                        camToolBtn("arm cam orbit", "data/icons/refresh-line.svg", CamTool::ORBIT);
+                        camToolBtn("arm cam pan", "data/icons/hand.svg", CamTool::PAN);
+                        camToolBtn("arm cam zoom", "data/icons/zoom.svg", CamTool::ZOOM);
+                    }
+                    text_label(gui, mCamTool == CamTool::PAN ? "Drag: pan"
+                                  : mCamTool == CamTool::ZOOM ? "Drag: zoom" : "Drag: orbit");
+                    text_label(gui, "Shift+drag pan • wheel zoom");
+                    // Lens: FOV (perspective distortion) + an orthographic toggle.
+                    slider_scalar_field<float>(gui, "armature fov", "Field of View",
+                        &mFovDeg, 10.0f, 100.0f, {.onEdit = [this] {
+                            mCamera.fovY = mFovDeg * 0.01745329252f;  // deg→rad
+                            request_redraw();
+                        }});
+                    text_button(gui, "armature ortho",
+                                mCamera.ortho ? "Lens: Orthographic" : "Lens: Perspective",
+                                {.isSelected = mCamera.ortho, .wide = true, .onClick = [this] {
+                                    mCamera.ortho = !mCamera.ortho; request_redraw();
+                                }});
                     text_button(gui, "armature reset view", "Reset View",
                                 {.wide = true, .onClick = [this] { mFramed = false; request_redraw(); }});
                 } else if (mTab == 1) {  // Light
@@ -657,6 +698,7 @@ void ArmatureModalScreen::do_bake() {
 
     comp.d.camYaw = mCamera.yaw; comp.d.camPitch = mCamera.pitch; comp.d.camDist = mCamera.distance;
     comp.d.camTx = mCamera.target.x(); comp.d.camTy = mCamera.target.y(); comp.d.camTz = mCamera.target.z();
+    comp.d.fovDeg = mFovDeg; comp.d.ortho = mCamera.ortho;
     comp.d.lightAz = mLight.azimuth; comp.d.lightEl = mLight.elevation; comp.d.lightInt = mLight.intensity;
     comp.d.lightAmb = mLight.ambient; comp.d.lightSky = mLight.sky;
     comp.d.height = mHeight;

@@ -53,6 +53,9 @@ public:
         // Orbit camera (matches Armature::OrbitCamera).
         float camYaw = 0.0f, camPitch = 0.0f, camDist = 3.0f;
         float camTx = 0.0f, camTy = 0.0f, camTz = 0.0f;
+        // Camera lens (0.25.0+): vertical FOV in degrees + orthographic toggle.
+        float fovDeg = 40.0f;
+        bool ortho = false;
 
         // Lighting (matches Armature::Lighting).
         float lightAz = 0.3f, lightEl = 0.6f, lightInt = 0.95f, lightAmb = 0.5f, lightSky = 0.18f;

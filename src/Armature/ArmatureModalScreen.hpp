@@ -65,6 +65,7 @@ private:
     Armature::OrbitCamera mCamera;
     Armature::Lighting mLight;
     float mHeight = 1.0f;          // uniform bone-length scale (M5.1a)
+    float mFovDeg = 40.0f;         // camera vertical FOV (degrees), drives mCamera.fovY
     std::vector<Vector4f> mMatColors;   // editable per-material colors (M5.1b)
     std::vector<float> mShapeSliders;   // 22 shape-key slider values (M5.1c)
     void apply_shape_sliders();         // slider values → 40 morph weights → model
@@ -79,7 +80,12 @@ private:
     int mPixelsDim = 0;
 
     bool mDirty = true;             // 3D needs a re-render
-    bool mOrbiting = false, mPanning = false;
+    // Camera drag tool (Camera tab): what an empty-space left-drag does. Gizmo/
+    // joint picking still take priority so posing works in any mode. Shift+drag
+    // (pan), middle-drag (pan) and the wheel (zoom) remain mode-independent.
+    enum class CamTool { ORBIT, PAN, ZOOM };
+    CamTool mCamTool = CamTool::ORBIT;
+    bool mOrbiting = false, mPanning = false, mZooming = false;
     bool mWantExit = false, mExitQueued = false;
 
     // FK posing (M4): selection + a 3-axis (R=X,G=Y,B=Z) rotate gizmo.
