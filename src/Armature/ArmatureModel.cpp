@@ -248,8 +248,9 @@ bool ArmatureModel::upload_gl(std::string& err) {
         "void main() {\n"
         "    vec3 n = normalize(vNormal);\n"
         "    float diff = max(dot(n, normalize(-uLightDir)), 0.0);\n"
-        "    vec3 c = uColor * (0.30 + 0.80 * diff);\n"
-        "    FragColor = vec4(c, 1.0);\n"
+        "    float sky = max(n.y, 0.0) * 0.18;            // soft fill from above\n"
+        "    vec3 c = uColor * (0.50 + 0.95 * diff + sky);\n"
+        "    FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);\n"
         "}\n";
 
     std::string serr;
