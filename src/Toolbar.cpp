@@ -512,6 +512,11 @@ void Toolbar::top_toolbar() {
                     icon_button_top_toolbar("Menu Redo Button", "data/icons/redo.svg", false, [&] {
                         main.world->redo_with_checks();
                     });
+                    // Duplicate the current selection in place (no-op if nothing is
+                    // selected). A standard drawing-app action; undoable.
+                    icon_button_top_toolbar("Duplicate Selection Button", "data/icons/RemixIcon/file-copy-line.svg", false, [&] {
+                        main.world->drawProg.duplicate_selection();
+                    });
                 }
                 Element* gridMenuButton = nullptr;
                 Element* layerMenuButton = nullptr;

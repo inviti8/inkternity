@@ -655,6 +655,42 @@ void DrawingProgramSelection::selection_to_clipboard() {
     }
 }
 
+void DrawingProgramSelection::duplicate_selection() {
+    check_add_stroke_color_change_undo();
+
+    if(!is_something_selected() || !drawP.layerMan.is_a_layer_being_edited())
+        return;
+
+    if(!drawP.is_selection_allowing_tool(drawP.drawTool->get_type()))
+        drawP.switch_to_tool(DrawingProgramToolType::EDIT);
+
+    // Nudge the clones ~24 screen px down-right (mapped to world at the current
+    // zoom/rotation) so they read as distinct copies sitting atop the originals.
+    const WorldVec offset = drawP.world.drawData.cam.c.dir_from_space(Vector2f(24.0f, 24.0f));
+
+    // get_data_copy() carries each container's coords, so the clones inherit the
+    // originals' transforms; resource ids (embedded models/images) are shared in
+    // the same canvas, which is what we want — no byte duplication.
+    std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> placedComponents;
+    for(auto& c : selectedSet) {
+        auto copyData = c->obj->get_data_copy();
+        CanvasComponentContainer* clone = new CanvasComponentContainer(drawP.world.netObjMan, *copyData);
+        clone->coords.translate(offset);
+        placedComponents.emplace_back(drawP.layerMan.get_edited_layer_end_iterator(), clone);
+    }
+    std::vector<CanvasComponentContainer::ObjInfoIterator> newlyInsertedObjectIts;
+    drawP.layerMan.disable_add_to_cache_and_commit_update_block([&]() {
+        newlyInsertedObjectIts = drawP.layerMan.add_many_components_to_layer_being_edited(placedComponents);
+    });
+    std::vector<CanvasComponentContainer::ObjInfo*> compSetInserted;
+    for(auto& it : newlyInsertedObjectIts)
+        compSetInserted.emplace_back(&(*it));
+    parallel_loop_container(compSetInserted, [&drawP = drawP](CanvasComponentContainer::ObjInfo* comp) {
+        comp->obj->commit_update_dont_invalidate_cache(drawP);
+    });
+    set_to_selection(compSetInserted);
+}
+
 void DrawingProgramSelection::paste_clipboard(Vector2f pasteScreenPos) {
     check_add_stroke_color_change_undo();
 

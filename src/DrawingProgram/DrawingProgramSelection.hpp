@@ -30,6 +30,10 @@ class DrawingProgramSelection {
         void push_selection_to_back();
         void delete_all();
         void selection_to_clipboard();
+        // Clone the current selection in place (small screen-down-right offset) on
+        // the active layer and select the clones. Undoable. No-op if nothing is
+        // selected or no layer is being edited.
+        void duplicate_selection();
         CanvasComponentContainer::ObjInfo* get_front_object_colliding_with_in_editing_layer(const SCollision::ColliderCollection<float>& cC);
         void input_key_callback_modify_selection(const InputManager::KeyCallbackArgs& key);
         void input_key_callback_display_selection(const InputManager::KeyCallbackArgs& key);

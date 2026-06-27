@@ -709,6 +709,8 @@ void DrawingProgram::switch_to_tool_ptr(std::unique_ptr<DrawingProgramToolBase> 
     world.main.g.gui.set_to_layout();
 }
 
+void DrawingProgram::duplicate_selection() { selection.duplicate_selection(); }
+
 void DrawingProgram::switch_to_tool(DrawingProgramToolType newToolType, bool force) {
     if(newToolType != drawTool->get_type() || force) {
         drawTool->switch_tool(newToolType);

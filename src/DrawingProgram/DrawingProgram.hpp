@@ -94,6 +94,9 @@ class DrawingProgram {
         Vector4f* get_foreground_color_ptr();
         void switch_to_tool(DrawingProgramToolType newToolType, bool force = false);
         void switch_to_tool_ptr(std::unique_ptr<DrawingProgramToolBase> newTool);
+        // Duplicate the current selection in place (toolbar/menu action). No-op if
+        // nothing is selected. Public wrapper over the private selection.
+        void duplicate_selection();
         void modify_grid(const NetworkingObjects::NetObjWeakPtr<WorldGrid>& gridToModify);
 
         void invalidate_cache_at_component(CanvasComponentContainer::ObjInfo* objToCheck);
