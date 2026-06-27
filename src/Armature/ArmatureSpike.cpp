@@ -28,6 +28,7 @@
 #include "../CanvasComponents/CanvasComponentContainer.hpp"
 #include "../CanvasComponents/MyPaintLayerCanvasComponent.hpp"
 #include "ArmatureModel.hpp"
+#include "ArmatureView.hpp"
 
 #include <include/core/SkBitmap.h>
 #include <include/core/SkImageInfo.h>
@@ -50,20 +51,9 @@ namespace {
 constexpr int SPIKE_DIM = 512;   // square bake; one cube doesn't need more
 constexpr int MODEL_DIM = 1024;  // M2: more detail for the figure bake
 
-// --- tiny matrix helpers (Eigen is column-major, which is exactly what GL
-// wants, so we hand mat.data() straight to glUniformMatrix4fv with
-// transpose == GL_FALSE). -------------------------------------------------
-
-Eigen::Matrix4f perspective(float fovYRad, float aspect, float znear, float zfar) {
-    const float f = 1.0f / std::tan(fovYRad * 0.5f);
-    Eigen::Matrix4f m = Eigen::Matrix4f::Zero();
-    m(0, 0) = f / aspect;
-    m(1, 1) = f;
-    m(2, 2) = (zfar + znear) / (znear - zfar);
-    m(2, 3) = (2.0f * zfar * znear) / (znear - zfar);
-    m(3, 2) = -1.0f;
-    return m;
-}
+// Matrix + camera helpers now live in ArmatureView.hpp (shared with the modal).
+using Armature::perspective;
+using Armature::look_at;
 
 // 36 vertices (6 faces * 2 tris * 3), interleaved position(3) + normal(3).
 const std::array<float, 36 * 6> CUBE_VERTS = {{
@@ -263,55 +253,6 @@ cleanup:
 
 // --- M2: render the loaded default armature instead of the cube. ----------
 
-Eigen::Matrix4f look_at(const Eigen::Vector3f& eye, const Eigen::Vector3f& center,
-                        const Eigen::Vector3f& up) {
-    const Eigen::Vector3f f = (center - eye).normalized();
-    const Eigen::Vector3f s = f.cross(up).normalized();
-    const Eigen::Vector3f u = s.cross(f);
-    Eigen::Matrix4f m = Eigen::Matrix4f::Identity();
-    m(0, 0) = s.x(); m(0, 1) = s.y(); m(0, 2) = s.z();
-    m(1, 0) = u.x(); m(1, 1) = u.y(); m(1, 2) = u.z();
-    m(2, 0) = -f.x(); m(2, 1) = -f.y(); m(2, 2) = -f.z();
-    m(0, 3) = -s.dot(eye); m(1, 3) = -u.dot(eye); m(2, 3) = f.dot(eye);
-    return m;
-}
-
-// Load + GL-upload the bundled default armature once; cached for later bakes.
-Armature::ArmatureModel* default_model() {
-    static Armature::ArmatureModel model;
-    static bool tried = false, ready = false;
-    if (tried) return ready ? &model : nullptr;
-    tried = true;
-
-    std::string bytes;
-    {
-        std::ifstream f("data/models/inkternity_default_armature.glb",
-                        std::ios::in | std::ios::binary | std::ios::ate);
-        if (!f.is_open()) {
-            Logger::get().log("USERINFO",
-                "Armature: default model not found "
-                "(data/models/inkternity_default_armature.glb).");
-            return nullptr;
-        }
-        const auto sz = f.tellg();
-        if (sz <= 0) { Logger::get().log("WORLDFATAL", "Armature: model file empty."); return nullptr; }
-        f.seekg(0);
-        bytes.resize(static_cast<size_t>(sz));
-        f.read(bytes.data(), sz);
-    }
-    std::string err;
-    if (!model.load_from_memory(bytes.data(), bytes.size(), err)) {
-        Logger::get().log("WORLDFATAL", "Armature load failed: " + err);
-        return nullptr;
-    }
-    if (!model.upload_gl(err)) {
-        Logger::get().log("WORLDFATAL", "Armature GL upload failed: " + err);
-        return nullptr;
-    }
-    ready = true;
-    return &model;
-}
-
 // Render the skinned figure (rest pose) into our own FBO with a fixed camera
 // framing its bounds. +X is the figure's front (ARMATURE-SCHEMA §6 D1), so the
 // camera sits on +X looking toward −X. Same GL-state hygiene as the cube path.
@@ -365,7 +306,7 @@ bool render_model_to_pixels(Armature::ArmatureModel& model, int dim,
             fovY, 1.0f, std::max(0.01f, dist - maxExt), dist + maxExt * 2.0f);
         const Eigen::Matrix4f view = look_at(eye, center, Eigen::Vector3f(0, 1, 0));
         const Eigen::Vector3f lightDir = Eigen::Vector3f(-0.5f, -0.6f, -0.35f).normalized();
-        model.draw(proj * view, lightDir);
+        model.draw(proj * view, lightDir, 0.50f, 0.95f, 0.18f);
     }
 
     outPixels.assign(static_cast<size_t>(dim) * dim * 4, 0);
@@ -499,7 +440,7 @@ void run_armature_render(DrawingProgram& drawP) {
         return;
     }
 
-    Armature::ArmatureModel* model = default_model();
+    Armature::ArmatureModel* model = Armature::default_model();
     if (!model) return;  // already logged
 
     // 1) raw-GL skinned render into our own FBO.

@@ -10,6 +10,7 @@
 #include "DrawingProgram/RasterFlatten.hpp"
 #include "DrawingProgram/RasterResolution.hpp"
 #include "Armature/ArmatureSpike.hpp"  // PHASE9 M1 spike (temporary trigger)
+#include "Armature/ArmatureModalScreen.hpp"  // PHASE9 M3 modal (temporary trigger)
 #include "Diagnostics/RenderStats.hpp"
 #include "FileHelpers.hpp"
 #include "GUIStuff/Elements/MemoryImageDisplay.hpp"
@@ -741,6 +742,13 @@ void Toolbar::top_toolbar() {
                                 // PHASE9 M2 — bake the loaded default figure. Temporary.
                                 menu_popup_text_button("armature render", "Armature Render (M2)", [&] {
                                     ArmatureSpike::run_armature_render(main.world->drawProg);
+                                });
+                                // PHASE9 M3 — open the live armature editor modal. Temporary.
+                                menu_popup_text_button("armature editor", "Armature Editor (M3)", [&] {
+                                    main.set_screen([mp = &main](std::unique_ptr<Screen> prev)
+                                                        -> std::unique_ptr<Screen> {
+                                        return std::make_unique<ArmatureModalScreen>(*mp, std::move(prev));
+                                    });
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {

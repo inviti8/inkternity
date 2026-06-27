@@ -40,8 +40,10 @@ public:
 
     // Draw every primitive with the current skin matrices. The CALLER owns GL
     // render state (FBO bound, depth test on, cull off, viewport set).
-    // `viewProj` is column-major; `lightDir` is a world-space direction.
-    void draw(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& lightDir) const;
+    // `viewProj` is column-major; `lightDir` is the world-space direction the
+    // light travels; ambient/diffuse/sky are the lighting gains.
+    void draw(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& lightDir,
+              float ambient, float diffuse, float sky) const;
 
     // AABB of the figure as rendered (rest pose, CPU-skinned). Valid after load.
     const Eigen::Vector3f& bounds_min() const { return mBoundsMin; }
@@ -71,9 +73,15 @@ private:
 
     unsigned mProgram = 0;
     int mLocViewProj = -1, mLocLightDir = -1, mLocColor = -1, mLocSkin = -1;
+    int mLocAmbient = -1, mLocDiffuse = -1, mLocSky = -1;
 
     bool mLoaded = false;
     bool mUploaded = false;
 };
+
+// Load + GL-upload the bundled default armature once (cached for the app's life).
+// Returns nullptr (with an in-app log) if the file is missing or the build lacks
+// desktop GL. The GL context must be current on the first call.
+ArmatureModel* default_model();
 
 }  // namespace Armature

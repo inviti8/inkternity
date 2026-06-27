@@ -6,6 +6,7 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
+#include <fstream>
 #include <limits>
 #include <string>
 
@@ -245,11 +246,14 @@ bool ArmatureModel::upload_gl(std::string& err) {
         "out vec4 FragColor;\n"
         "uniform vec3 uLightDir;\n"
         "uniform vec3 uColor;\n"
+        "uniform float uAmbient;\n"
+        "uniform float uDiffuse;\n"
+        "uniform float uSky;\n"
         "void main() {\n"
         "    vec3 n = normalize(vNormal);\n"
         "    float diff = max(dot(n, normalize(-uLightDir)), 0.0);\n"
-        "    float sky = max(n.y, 0.0) * 0.18;            // soft fill from above\n"
-        "    vec3 c = uColor * (0.50 + 0.95 * diff + sky);\n"
+        "    float sky = max(n.y, 0.0) * uSky;            // soft fill from above\n"
+        "    vec3 c = uColor * (uAmbient + uDiffuse * diff + sky);\n"
         "    FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);\n"
         "}\n";
 
@@ -278,6 +282,9 @@ bool ArmatureModel::upload_gl(std::string& err) {
     mLocLightDir = glGetUniformLocation(mProgram, "uLightDir");
     mLocColor    = glGetUniformLocation(mProgram, "uColor");
     mLocSkin     = glGetUniformLocation(mProgram, "uSkin");
+    mLocAmbient  = glGetUniformLocation(mProgram, "uAmbient");
+    mLocDiffuse  = glGetUniformLocation(mProgram, "uDiffuse");
+    mLocSky      = glGetUniformLocation(mProgram, "uSky");
 
     for (auto& p : mPrimitives) {
         glGenVertexArrays(1, &p.vao);
@@ -304,11 +311,15 @@ bool ArmatureModel::upload_gl(std::string& err) {
     return true;
 }
 
-void ArmatureModel::draw(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& lightDir) const {
+void ArmatureModel::draw(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& lightDir,
+                         float ambient, float diffuse, float sky) const {
     if (!mUploaded) return;
     glUseProgram(mProgram);
     glUniformMatrix4fv(mLocViewProj, 1, GL_FALSE, viewProj.data());
     glUniform3fv(mLocLightDir, 1, lightDir.data());
+    glUniform1f(mLocAmbient, ambient);
+    glUniform1f(mLocDiffuse, diffuse);
+    glUniform1f(mLocSky, sky);
     if (mLocSkin >= 0 && !mSkinFlat.empty())
         glUniformMatrix4fv(mLocSkin, mJointCount, GL_FALSE, mSkinFlat.data());
     for (const auto& p : mPrimitives) {
@@ -326,8 +337,45 @@ bool ArmatureModel::upload_gl(std::string& err) {
     err = "GL not available in this backend";
     return false;
 }
-void ArmatureModel::draw(const Eigen::Matrix4f&, const Eigen::Vector3f&) const {}
+void ArmatureModel::draw(const Eigen::Matrix4f&, const Eigen::Vector3f&, float, float, float) const {}
 
 #endif
+
+// Cached singleton for the bundled default armature. Pure-ish: reads the file,
+// parses (CPU), then GL-uploads (no-op/false on non-GL builds → returns null).
+ArmatureModel* default_model() {
+    static ArmatureModel model;
+    static bool tried = false, ready = false;
+    if (tried) return ready ? &model : nullptr;
+    tried = true;
+
+    std::string bytes;
+    {
+        std::ifstream f("data/models/inkternity_default_armature.glb",
+                        std::ios::in | std::ios::binary | std::ios::ate);
+        if (!f.is_open()) {
+            Logger::get().log("USERINFO",
+                "Armature: default model not found "
+                "(data/models/inkternity_default_armature.glb).");
+            return nullptr;
+        }
+        const auto sz = f.tellg();
+        if (sz <= 0) { Logger::get().log("WORLDFATAL", "Armature: model file empty."); return nullptr; }
+        f.seekg(0);
+        bytes.resize(static_cast<size_t>(sz));
+        f.read(bytes.data(), sz);
+    }
+    std::string err;
+    if (!model.load_from_memory(bytes.data(), bytes.size(), err)) {
+        Logger::get().log("WORLDFATAL", "Armature load failed: " + err);
+        return nullptr;
+    }
+    if (!model.upload_gl(err)) {
+        Logger::get().log("WORLDFATAL", "Armature GL upload failed: " + err);
+        return nullptr;
+    }
+    ready = true;
+    return &model;
+}
 
 }  // namespace Armature
