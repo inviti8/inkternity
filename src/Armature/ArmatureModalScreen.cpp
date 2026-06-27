@@ -612,8 +612,19 @@ void ArmatureModalScreen::draw(SkCanvas* canvas) {
     // 1) Raw-GL 3D pass (+ resetContext inside) BEFORE any Skia canvas ops.
     if (mDirty) { render_3d(); mDirty = false; }
 
-    // 2) Skia: dark backdrop + the composited figure, centred as a square.
-    canvas->clear(SkColorSetARGB(255, 18, 18, 20));
+    // 2) Skia: dark backdrop + the composited figure, centred as a square. The
+    // square IS the bake region (the on-canvas armature is a square raster), so
+    // the figure and the handles below are both confined to it — WYSIWYG.
+    canvas->clear(SkColorSetARGB(255, 10, 10, 12));   // margins (outside the square)
+    float rx, ry, rs;
+    view_rect(rx, ry, rs);
+    const SkRect viewSq = SkRect::MakeXYWH(rx, ry, rs, rs);
+    {   // Viewport interior: a touch lighter than the margins so the square reads
+        // as a distinct region even where the (transparent-backed) figure isn't.
+        SkPaint bg;
+        bg.setColor(SkColorSetARGB(255, 28, 28, 33));
+        canvas->drawRect(viewSq, bg);
+    }
     if (!mPixels.empty() && mPixelsDim > 0) {
         SkBitmap bmp;
         if (bmp.tryAllocPixels(SkImageInfo::Make(
@@ -624,16 +635,26 @@ void ArmatureModalScreen::draw(SkCanvas* canvas) {
                 const uint8_t* src = mPixels.data() + static_cast<size_t>(mPixelsDim - 1 - y) * rowBytes;
                 std::memcpy(dst + static_cast<size_t>(y) * bmp.rowBytes(), src, rowBytes);
             }
-            float rx, ry, rs;
-            view_rect(rx, ry, rs);
-            canvas->drawImageRect(bmp.asImage(), SkRect::MakeXYWH(rx, ry, rs, rs),
+            canvas->drawImageRect(bmp.asImage(), viewSq,
                                   SkSamplingOptions(SkFilterMode::kLinear));
         }
     }
+    // Outline so the (square) bake bounds read clearly against the backdrop.
+    {
+        SkPaint border;
+        border.setAntiAlias(true);
+        border.setStyle(SkPaint::kStroke_Style);
+        border.setStrokeWidth(1.0f * main.g.final_gui_scale());
+        border.setColor(SkColorSetARGB(130, 200, 200, 210));
+        canvas->drawRect(viewSq, border);
+    }
 
     // 3) Joint handles overlay (M4a): dots for pickable joints, ring for the
-    // selected one. Drawn over the figure but under the Clay panel.
+    // selected one. Clipped to the square so handles never float in the margins
+    // outside the rendered (and baked) region — they crop with the figure.
     if (mModel) {
+        SkAutoCanvasRestore acr(canvas, true);
+        canvas->clipRect(viewSq, true);
         const float scale = main.g.final_gui_scale();
         SkPaint dot;
         dot.setAntiAlias(true);
