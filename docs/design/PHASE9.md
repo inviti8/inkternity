@@ -17,7 +17,8 @@ a clear message. The `.glb` is embedded once in the ResourceManager and referenc
 by id. Save format at **INFPNT000027 / 0.26.0**. **"Add Armature" and "Load Model"
 are top-toolbar icon buttons** (assets/data/icons/armature.svg, model.svg). The
 throwaway M1 spike is removed; the shared bake helper lives in `ArmatureBake`.
-Remaining polish: `third_party_licenses`/VENDORING audit, MANUAL/README. Note: M4's gizmo is **hand-rolled as a
+Vendoring audited + MANUAL/README updated (2026-06-27). **Follow-on planned:
+app-level Character & Scene presets — see [PHASE9.5.md].** Note: M4's gizmo is **hand-rolled as a
 2D Skia overlay (RGB axis grab-dots), NOT im3d** — Decision §3 superseded, because
 the editor composites the GL render back through Skia (per-frame readback), so a
 Skia-overlay manipulator integrates far more cleanly than wiring im3d's GL
