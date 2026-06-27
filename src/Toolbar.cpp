@@ -738,6 +738,10 @@ void Toolbar::top_toolbar() {
                                 menu_popup_text_button("armature spike", "Armature Spike (M1)", [&] {
                                     ArmatureSpike::run_spike(main.world->drawProg);
                                 });
+                                // PHASE9 M2 — bake the loaded default figure. Temporary.
+                                menu_popup_text_button("armature render", "Armature Render (M2)", [&] {
+                                    ArmatureSpike::run_armature_render(main.world->drawProg);
+                                });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {
                                 serverToConnectTo.clear();

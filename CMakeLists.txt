@@ -206,6 +206,7 @@ set(sources "src/main.cpp"
             "src/DrawingProgram/RasterFlatten.cpp"
             "src/DrawingProgram/RasterResolution.cpp"
             "src/Armature/ArmatureSpike.cpp"
+            "src/Armature/ArmatureModel.cpp"
             "src/DrawingProgram/Tools/SquareCanvasCaptureTool.cpp"
             "src/GUIStuff/GUIManager.cpp"
             "src/GUIStuff/GUIFloatAnimation.cpp"
@@ -457,6 +458,7 @@ target_include_directories(main PRIVATE "include")
 target_include_directories(main PRIVATE "deps/c2pa")
 target_include_directories(main PRIVATE "deps/miniaudio")
 target_include_directories(main PRIVATE "deps/qrcodegen")
+target_include_directories(main PRIVATE "deps/cgltf")  # PHASE9: glTF loader (header-only)
 
 # c2pa-rs prebuilt C ABI (docs/design/C2PA.md §8.3 revised). ContentAuth
 # publishes per-platform prebuilt zips on github.com/contentauth/c2pa-rs/

@@ -27,6 +27,7 @@
 #include "../DrawData.hpp"
 #include "../CanvasComponents/CanvasComponentContainer.hpp"
 #include "../CanvasComponents/MyPaintLayerCanvasComponent.hpp"
+#include "ArmatureModel.hpp"
 
 #include <include/core/SkBitmap.h>
 #include <include/core/SkImageInfo.h>
@@ -39,13 +40,15 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
 namespace ArmatureSpike {
 namespace {
 
-constexpr int SPIKE_DIM = 512;  // square bake; one cube doesn't need more
+constexpr int SPIKE_DIM = 512;   // square bake; one cube doesn't need more
+constexpr int MODEL_DIM = 1024;  // M2: more detail for the figure bake
 
 // --- tiny matrix helpers (Eigen is column-major, which is exactly what GL
 // wants, so we hand mat.data() straight to glUniformMatrix4fv with
@@ -258,6 +261,169 @@ cleanup:
     return ok;
 }
 
+// --- M2: render the loaded default armature instead of the cube. ----------
+
+Eigen::Matrix4f look_at(const Eigen::Vector3f& eye, const Eigen::Vector3f& center,
+                        const Eigen::Vector3f& up) {
+    const Eigen::Vector3f f = (center - eye).normalized();
+    const Eigen::Vector3f s = f.cross(up).normalized();
+    const Eigen::Vector3f u = s.cross(f);
+    Eigen::Matrix4f m = Eigen::Matrix4f::Identity();
+    m(0, 0) = s.x(); m(0, 1) = s.y(); m(0, 2) = s.z();
+    m(1, 0) = u.x(); m(1, 1) = u.y(); m(1, 2) = u.z();
+    m(2, 0) = -f.x(); m(2, 1) = -f.y(); m(2, 2) = -f.z();
+    m(0, 3) = -s.dot(eye); m(1, 3) = -u.dot(eye); m(2, 3) = f.dot(eye);
+    return m;
+}
+
+// Load + GL-upload the bundled default armature once; cached for later bakes.
+Armature::ArmatureModel* default_model() {
+    static Armature::ArmatureModel model;
+    static bool tried = false, ready = false;
+    if (tried) return ready ? &model : nullptr;
+    tried = true;
+
+    std::string bytes;
+    {
+        std::ifstream f("data/models/inkternity_default_armature.glb",
+                        std::ios::in | std::ios::binary | std::ios::ate);
+        if (!f.is_open()) {
+            Logger::get().log("USERINFO",
+                "Armature: default model not found "
+                "(data/models/inkternity_default_armature.glb).");
+            return nullptr;
+        }
+        const auto sz = f.tellg();
+        if (sz <= 0) { Logger::get().log("WORLDFATAL", "Armature: model file empty."); return nullptr; }
+        f.seekg(0);
+        bytes.resize(static_cast<size_t>(sz));
+        f.read(bytes.data(), sz);
+    }
+    std::string err;
+    if (!model.load_from_memory(bytes.data(), bytes.size(), err)) {
+        Logger::get().log("WORLDFATAL", "Armature load failed: " + err);
+        return nullptr;
+    }
+    if (!model.upload_gl(err)) {
+        Logger::get().log("WORLDFATAL", "Armature GL upload failed: " + err);
+        return nullptr;
+    }
+    ready = true;
+    return &model;
+}
+
+// Render the skinned figure (rest pose) into our own FBO with a fixed camera
+// framing its bounds. +X is the figure's front (ARMATURE-SCHEMA §6 D1), so the
+// camera sits on +X looking toward −X. Same GL-state hygiene as the cube path.
+bool render_model_to_pixels(Armature::ArmatureModel& model, int dim,
+                            std::vector<uint8_t>& outPixels) {
+    GLuint fbo = 0, colorTex = 0, depthRbo = 0;
+    bool ok = false;
+
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glGenTextures(1, &colorTex);
+    glBindTexture(GL_TEXTURE_2D, colorTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, dim, dim, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex, 0);
+    glGenRenderbuffers(1, &depthRbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, depthRbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, dim, dim);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthRbo);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        Logger::get().log("WORLDFATAL", "Armature: FBO incomplete.");
+        goto cleanup;
+    }
+
+    // Fully specify state before clear/draw (M1 finding — Skia leaves it dirty).
+    glViewport(0, 0, dim, dim);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glStencilMask(0xFF);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_CULL_FACE);  // model materials are double-sided
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    {
+        constexpr float PI = 3.14159265f;
+        const Eigen::Vector3f mn = model.bounds_min(), mx = model.bounds_max();
+        const Eigen::Vector3f center = 0.5f * (mn + mx);
+        const Eigen::Vector3f ext = mx - mn;
+        const float maxExt = std::max(std::max(ext.x(), ext.y()), ext.z());
+        const float fovY = 40.0f * PI / 180.0f;
+        const float dist = (maxExt * 0.5f) / std::tan(fovY * 0.5f) * 1.25f + 1e-3f;
+        const Eigen::Vector3f eye = center + Eigen::Vector3f(dist, 0.0f, 0.0f);
+        const Eigen::Matrix4f proj = perspective(
+            fovY, 1.0f, std::max(0.01f, dist - maxExt), dist + maxExt * 2.0f);
+        const Eigen::Matrix4f view = look_at(eye, center, Eigen::Vector3f(0, 1, 0));
+        const Eigen::Vector3f lightDir = Eigen::Vector3f(-0.5f, -0.6f, -0.35f).normalized();
+        model.draw(proj * view, lightDir);
+    }
+
+    outPixels.assign(static_cast<size_t>(dim) * dim * 4, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, dim, dim, GL_RGBA, GL_UNSIGNED_BYTE, outPixels.data());
+    ok = true;
+
+cleanup:
+    if (depthRbo) glDeleteRenderbuffers(1, &depthRbo);
+    if (colorTex) glDeleteTextures(1, &colorTex);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (fbo) glDeleteFramebuffers(1, &fbo);
+    return ok;
+}
+
+// Y-flip the bottom-up GL pixels into an SkBitmap and place a MYPAINTLAYER
+// centred in the current view (the second half of RasterFlatten::flatten_layer).
+void place_baked_rgba(DrawingProgram& drawP, const std::vector<uint8_t>& pixels, int dim) {
+    auto& world = drawP.world;
+    auto& main = world.main;
+    auto editLayer = drawP.layerMan.get_editing_layer().lock();
+    if (!editLayer || editLayer->is_folder()) return;
+
+    SkBitmap baked;
+    if (!baked.tryAllocPixels(SkImageInfo::Make(
+            dim, dim, kRGBA_8888_SkColorType, kUnpremul_SkAlphaType))) {
+        Logger::get().log("WORLDFATAL", "Armature: could not allocate bitmap.");
+        return;
+    }
+    auto* dst = static_cast<uint8_t*>(baked.getPixels());
+    const size_t srcRowBytes = static_cast<size_t>(dim) * 4;
+    for (int y = 0; y < dim; ++y) {
+        const uint8_t* srcRow = pixels.data() + static_cast<size_t>(dim - 1 - y) * srcRowBytes;
+        std::memcpy(dst + static_cast<size_t>(y) * baked.rowBytes(), srcRow, srcRowBytes);
+    }
+
+    const CoordSpaceHelper& camC = world.drawData.cam.c;
+    const Vector2f winSize = main.window.size.cast<float>();
+    const WorldVec centerWorld = camC.from_space(winSize * 0.5f);
+    const WorldVec halfImgWorld = camC.dir_from_space(Vector2f(dim * 0.5f, dim * 0.5f));
+    const CoordSpaceHelper coords(centerWorld - halfImgWorld, camC.inverseScale, 0.0);
+
+    auto* comp = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::MYPAINTLAYER);
+    comp->coords = coords;
+    auto& layer = static_cast<MyPaintLayerCanvasComponent&>(comp->get_comp());
+    layer.surface().import_from_bitmap(baked, 0, 0);
+    layer.mark_dirty();
+
+    std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
+    toPlace.emplace_back(drawP.layerMan.get_edited_layer_end_iterator(), comp);
+    const auto placed = drawP.layerMan.add_many_components_to_specific_layer(*editLayer, toPlace);
+    for (auto& pit : placed) {
+        pit->obj->commit_update(drawP);
+        if (pit->obj->get_world_bounds().has_value())
+            drawP.layerMan.add_undo_place_component(&(*pit));
+    }
+}
+
 }  // namespace
 
 void run_spike(DrawingProgram& drawP) {
@@ -323,6 +489,34 @@ void run_spike(DrawingProgram& drawP) {
         "Armature spike: baked a " + std::to_string(SPIKE_DIM) + "px cube to canvas.");
 }
 
+void run_armature_render(DrawingProgram& drawP) {
+    auto& world = drawP.world;
+    auto& main = world.main;
+
+    auto editLayer = drawP.layerMan.get_editing_layer().lock();
+    if (!editLayer || editLayer->is_folder()) {
+        Logger::get().log("USERINFO", "Armature: no active layer to bake into.");
+        return;
+    }
+
+    Armature::ArmatureModel* model = default_model();
+    if (!model) return;  // already logged
+
+    // 1) raw-GL skinned render into our own FBO.
+    std::vector<uint8_t> pixels;
+    if (!render_model_to_pixels(*model, MODEL_DIM, pixels))
+        return;
+
+    // 2) THE GATE rule from M1: hand GL state back to Ganesh before any Skia.
+    main.window.ctx->resetContext();
+
+    // 3) bake the figure into a MYPAINTLAYER centred in the view.
+    place_baked_rgba(drawP, pixels, MODEL_DIM);
+
+    Logger::get().log("USERINFO",
+        "Armature: baked the default figure (" + std::to_string(MODEL_DIM) + "px).");
+}
+
 }  // namespace ArmatureSpike
 
 #else  // !ARMATURE_SPIKE_ENABLED
@@ -331,6 +525,10 @@ namespace ArmatureSpike {
 void run_spike(DrawingProgram&) {
     Logger::get().log("USERINFO",
         "Armature spike: needs desktop GL 3.3 + Ganesh + libmypaint in this build.");
+}
+void run_armature_render(DrawingProgram&) {
+    Logger::get().log("USERINFO",
+        "Armature render: needs desktop GL 3.3 + Ganesh + libmypaint in this build.");
 }
 }  // namespace ArmatureSpike
 

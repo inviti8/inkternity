@@ -30,4 +30,9 @@ namespace ArmatureSpike {
 // layer to bake into.
 void run_spike(DrawingProgram& drawP);
 
+// PHASE9 M2: load the bundled default armature (cgltf) and bake the skinned
+// figure at its rest pose to the canvas — same FBO/readback/bake path as the
+// M1 cube. Temporary trigger; superseded by the modal at M5.
+void run_armature_render(DrawingProgram& drawP);
+
 }  // namespace ArmatureSpike
