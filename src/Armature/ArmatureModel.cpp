@@ -393,9 +393,16 @@ bool ArmatureModel::load_static(cgltf_data* gltf, std::string& err) {
     for (size_t ni = 0; ni < gltf->nodes_count; ++ni) {
         cgltf_node& node = gltf->nodes[ni];
         if (!node.mesh) continue;
-        cgltf_float wm[16];
-        cgltf_node_transform_world(&node, wm);
-        const Eigen::Matrix4f W = mat_from_cgltf(wm);
+        // SKINNED meshes ignore their node transform (glTF spec): the bones place
+        // the vertices, and at BIND pose skinning is the identity, so the authored
+        // vertex positions ARE the bind-pose world positions — bake them as-is.
+        // UNSKINNED meshes are placed by their node's world transform.
+        Eigen::Matrix4f W = Eigen::Matrix4f::Identity();
+        if (!node.skin) {
+            cgltf_float wm[16];
+            cgltf_node_transform_world(&node, wm);
+            W = mat_from_cgltf(wm);
+        }
         const Eigen::Matrix3f Nrm = W.block<3, 3>(0, 0).inverse().transpose();
         cgltf_mesh* mesh = node.mesh;
         for (size_t pi = 0; pi < mesh->primitives_count; ++pi) {

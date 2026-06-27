@@ -616,9 +616,17 @@ void Toolbar::top_toolbar() {
                 // sits on the right by the avatar. Swappable icon.
                 if (showEditButtons) {
                     icon_button_top_toolbar("Load Model Button", "data/icons/model.svg", false, [&] {
+                        // The native file-dialog callback can fire off the main/GL
+                        // thread, so we must NOT touch GL there. Defer to the main
+                        // loop via the add-file event (handled GL-current); .glb/
+                        // .gltf is routed to the 3D-model loader there.
                         open_file_selector("Load 3D Model", {{"glTF Model", "glb;gltf"}},
                             [&](const std::filesystem::path& p, const auto&) {
-                                ArmatureModalScreen::load_model_into_canvas(main.world->drawProg, p);
+                                CustomEvents::emit_event<CustomEvents::AddFileToCanvasEvent>({
+                                    .type = CustomEvents::AddFileToCanvasEvent::Type::PATH,
+                                    .filePath = p,
+                                    .pos = main.window.size.cast<float>() / 2.0f
+                                });
                             });
                     });
                 }

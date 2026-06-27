@@ -18,8 +18,11 @@
 #include <include/core/SkSurface.h>
 #include "../World.hpp"
 #include "../MainProgram.hpp"
+#include "../Armature/ArmatureModalScreen.hpp"  // PHASE9 M7: load 3D model onto canvas
 #include "../Diagnostics/RenderStats.hpp"
 #include <chrono>
+#include <algorithm>
+#include <cctype>
 #include <include/effects/SkDashPathEffect.h>
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 #include "../CanvasComponents/Particles/LegacyFxLibrary.hpp"
@@ -819,6 +822,20 @@ void DrawingProgram::add_file_to_canvas_by_path(const std::filesystem::path& fil
     // rather than embedding as an image.
     if (try_add_particle_effect(filePath, dropPos))
         return;
+
+    // PHASE9 M7 — a dropped/loaded glTF/.glb becomes a 3D reference model
+    // (poseable if it matches our rig, else a flattened static mesh). Runs here
+    // (GL-current main loop) rather than in the file-dialog callback, which can
+    // fire off the GL thread.
+    {
+        std::string ext = filePath.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (ext == ".glb" || ext == ".gltf") {
+            ArmatureModalScreen::load_model_into_canvas(*this, filePath);
+            return;
+        }
+    }
 
     if(layerMan.is_a_layer_being_edited()) {
         NetworkingObjects::NetObjTemporaryPtr<ResourceData> imageTempPtr = world.rMan.add_resource_file(filePath);
