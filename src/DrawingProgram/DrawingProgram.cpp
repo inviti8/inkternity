@@ -18,6 +18,7 @@
 #include <include/core/SkSurface.h>
 #include "../World.hpp"
 #include "../MainProgram.hpp"
+#include "../Armature/ArmatureModalScreen.hpp"  // PHASE9 M5: Add Armature toolbar action
 #include "../Diagnostics/RenderStats.hpp"
 #include <chrono>
 #include <include/effects/SkDashPathEffect.h>
@@ -479,6 +480,13 @@ void DrawingProgram::toolbar_gui(Toolbar& t) {
                 tool_button("Eyedropper Toolbar Button", "data/icons/eyedropper.svg", DrawingProgramToolType::EYEDROPPER);
                 tool_button("Zoom Canvas Toolbar Button", "data/icons/zoom.svg", DrawingProgramToolType::ZOOM);
                 tool_button("Pan Canvas Toolbar Button", "data/icons/hand.svg", DrawingProgramToolType::PAN);
+
+                // PHASE9 M5: drop a re-editable armature on the canvas. This is an
+                // action (not a tool mode); the icon is swappable at the path below.
+                svg_icon_button(gui, "Add Armature Toolbar Button", "data/icons/armature.svg", {
+                    .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                    .onClick = [&] { ArmatureModalScreen::add_armature_to_canvas(*this); }
+                });
 
                 std::shared_ptr<double> newRotationAngle = std::make_shared<double>(world.drawData.cam.c.rotation);
                 gui.element<RotateWheel>("Canvas Rotate Wheel", newRotationAngle.get(), [&, newRotationAngle] {

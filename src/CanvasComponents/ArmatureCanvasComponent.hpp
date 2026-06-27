@@ -61,6 +61,9 @@ public:
         float height = 1.0f;
         // Per-material color overrides (0.23.0+); empty = use the glb defaults.
         std::vector<MatColor> materialColors;
+        // Shape-key slider values (0.24.0+), one per slider in the fixed config
+        // order; empty = all default (0). See ArmatureModalScreen's slider table.
+        std::vector<float> shapeSliders;
 
         // Baked raster the component draws (square, unpremultiplied RGBA8).
         int rasterDim = 0;

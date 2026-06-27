@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- PHASE9: "Add Armature" toolbar icon. Placeholder stick-figure/armature —
+     swap freely; keep the 8.4667 viewBox + black stroke/fill so it recolors
+     with the theme like the other tool icons. -->
+<svg width="32" height="32" viewBox="0 0 8.4666666 8.4666666" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+  <g fill="none" stroke="#000000" stroke-width="0.6" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4.233" cy="1.55" r="0.85"/>
+    <path d="M4.233 2.4 V5.0"/>
+    <path d="M4.233 3.15 L2.3 4.35"/>
+    <path d="M4.233 3.15 L6.17 4.35"/>
+    <path d="M4.233 5.0 L3.1 7.45"/>
+    <path d="M4.233 5.0 L5.37 7.45"/>
+  </g>
+  <g fill="#000000" stroke="none">
+    <circle cx="4.233" cy="3.15" r="0.3"/>
+    <circle cx="4.233" cy="5.0" r="0.32"/>
+    <circle cx="2.3" cy="4.35" r="0.26"/>
+    <circle cx="6.17" cy="4.35" r="0.26"/>
+    <circle cx="3.1" cy="7.45" r="0.26"/>
+    <circle cx="5.37" cy="7.45" r="0.26"/>
+  </g>
+</svg>

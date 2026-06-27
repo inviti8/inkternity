@@ -734,11 +734,8 @@ void Toolbar::top_toolbar() {
                                 menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
                                     RasterResolution::halve_layer(main.world->drawProg);
                                 });
-                                // PHASE9 M5 — drop a re-editable armature on the canvas
-                                // (double-click it to open the 3D editor).
-                                menu_popup_text_button("add armature", "Add Armature", [&] {
-                                    ArmatureModalScreen::add_armature_to_canvas(main.world->drawProg);
-                                });
+                                // PHASE9: "Add Armature" now lives in the tool palette
+                                // (DrawingProgram::toolbar_gui) as an icon button.
                                 // PHASE9 M1 spike (THE GATE) — throwaway; removed at M6.
                                 menu_popup_text_button("armature spike", "Armature Spike (M1)", [&] {
                                     ArmatureSpike::run_spike(main.world->drawProg);

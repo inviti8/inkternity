@@ -71,6 +71,14 @@ public:
     void set_material_color(int i, float r, float g, float b, float a);
     void reset_material_colors();   // restore the glb defaults (shared model hygiene)
 
+    // Shape keys / morph targets (M5.1c). Weights apply BEFORE skinning (CPU sum
+    // of base + Σ w·delta, re-uploaded to the VBO). `weights` is indexed by target.
+    int target_count() const { return mTargetCount; }
+    const std::string& target_name(int i) const { return mTargetNames[i]; }
+    int find_target(const std::string& name) const;
+    void set_morph_weights(const std::vector<float>& weights);
+    void reset_morphs();            // all weights 0 (shared model hygiene)
+
     // The curated set of joints the poser exposes (Decision Q1): core + fingers,
     // toes collapsed, helper/ear/neutral bones excluded. Indices into joints.
     const std::vector<int>& pickable_joints() const { return mPickableJoints; }
@@ -94,6 +102,9 @@ private:
         std::vector<uint32_t> indices;
         Eigen::Vector4f baseColor{0.8f, 0.8f, 0.8f, 1.0f};
         int materialIndex = 0;        // into mMaterialNames / mMatColor
+        // Morph target deltas (M5.1c): per target, 3 floats/vertex (pos + normal).
+        std::vector<std::vector<float>> posDelta;
+        std::vector<std::vector<float>> nrmDelta;
         unsigned vao = 0, vbo = 0, ebo = 0;
         int indexCount = 0;
     };
@@ -123,12 +134,20 @@ private:
     std::vector<std::string> mJointNames; // jointCount
     std::vector<float> mJointPose;        // 4/joint, xyzw, identity = no pose
     std::vector<float> mJointWorldFlat;   // 16/joint, current pose (render space)
+    // Stretchy-bone axis (M5.1a): bind-local unit direction to the limb child for
+    // the segment bones, else zero. Used to axially scale the bone's bound mesh
+    // (in its skin matrix only — not propagated to children, so no shear).
+    std::vector<float> mStretchAxis;      // 3/joint
     std::vector<int> mPickableJoints;
     std::array<float, 16> mMeshWorldInv = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
     float mHeightScale = 1.0f;            // uniform bone-length scale (height)
     std::vector<std::string> mMaterialNames;
     std::vector<std::array<float, 4>> mMatColor;         // live rgba per material
     std::vector<std::array<float, 4>> mMatColorDefault;  // glb baseColors (for reset)
+    int mTargetCount = 0;
+    std::vector<std::string> mTargetNames;
+    std::vector<float> mTargetWeights;
+    void apply_morphs();   // rebuild VBOs from base + weighted deltas (GL)
 
     Eigen::Matrix4f node_local_matrix(int nodeIndex) const;
     void compute_node_worlds(std::vector<Eigen::Matrix4f>& world) const;

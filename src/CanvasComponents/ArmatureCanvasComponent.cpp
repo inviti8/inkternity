@@ -22,13 +22,13 @@ void ArmatureCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const
     a(d.rigId, d.pose,
       d.camYaw, d.camPitch, d.camDist, d.camTx, d.camTy, d.camTz,
       d.lightAz, d.lightEl, d.lightInt, d.lightAmb, d.lightSky,
-      d.rasterDim, d.rasterRGBA, d.height, d.materialColors);
+      d.rasterDim, d.rasterRGBA, d.height, d.materialColors, d.shapeSliders);
 }
 void ArmatureCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
     a(d.rigId, d.pose,
       d.camYaw, d.camPitch, d.camDist, d.camTx, d.camTy, d.camTz,
       d.lightAz, d.lightEl, d.lightInt, d.lightAmb, d.lightSky,
-      d.rasterDim, d.rasterRGBA, d.height, d.materialColors);
+      d.rasterDim, d.rasterRGBA, d.height, d.materialColors, d.shapeSliders);
     cachedImage_ = nullptr;
 }
 
@@ -39,6 +39,7 @@ void ArmatureCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) 
       d.rasterDim, d.rasterRGBA);
     a(d.height);          // M5.1a (0.22.0+)
     a(d.materialColors);  // M5.1b (0.23.0+)
+    a(d.shapeSliders);    // M5.1c (0.24.0+)
 }
 void ArmatureCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     // PHASE9 (INFPNT000022 / 0.21.0): the armature type was introduced whole, so
@@ -53,6 +54,8 @@ void ArmatureCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, V
         a(d.height);
     if (version >= VersionNumber(0, 23, 0))  // M5.1b: per-material color overrides
         a(d.materialColors);
+    if (version >= VersionNumber(0, 24, 0))  // M5.1c: shape-key slider values
+        a(d.shapeSliders);
     cachedImage_ = nullptr;
 }
 

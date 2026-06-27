@@ -14,6 +14,7 @@
 #include "../SharedTypes.hpp"
 #include "ArmatureView.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -64,7 +65,11 @@ private:
     Armature::OrbitCamera mCamera;
     Armature::Lighting mLight;
     float mHeight = 1.0f;          // uniform bone-length scale (M5.1a)
-    std::vector<Vector4f> mMatColors;  // editable per-material colors (M5.1b)
+    std::vector<Vector4f> mMatColors;   // editable per-material colors (M5.1b)
+    std::vector<float> mShapeSliders;   // 22 shape-key slider values (M5.1c)
+    void apply_shape_sliders();         // slider values → 40 morph weights → model
+    // Collapsible shape-key groups (Body/Head/Eyes/Nose/Mouth/Expression).
+    std::array<bool, 6> mGroupOpen{true, false, false, false, false, false};
     bool mFramed = false;
 
     // Offscreen target (square). Persisted across frames; rebuilt on size change.

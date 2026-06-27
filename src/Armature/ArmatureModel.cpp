@@ -59,6 +59,22 @@ bool is_stature_joint(const std::string& raw) {
            has("upperarm") || has("lowerarm") || has("hand");
 }
 
+// Segment bones whose MESH should axially stretch with height (vs. just
+// telescoping at joints): the limb segments + torso/neck. Each has a single
+// limb-continuation child that defines the stretch axis. Excludes hips (a branch
+// point / grounding offset) and the foot/hand offsets (toes/hand — those lengthen
+// the shin/forearm, whose mesh is on lowerLeg/lowerArm instead).
+bool is_stretch_bone(const std::string& raw) {
+    std::string n;
+    for (char c : raw)
+        if (!std::isspace(static_cast<unsigned char>(c)))
+            n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (n == "spine" || n == "chest" || n == "neck") return true;
+    auto has = [&](const char* s) { return n.find(s) != std::string::npos; };
+    if (has("base")) return false;
+    return has("upperleg") || has("lowerleg") || has("upperarm") || has("lowerarm");
+}
+
 }  // namespace
 
 ArmatureModel::~ArmatureModel() {
@@ -98,6 +114,17 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
     if (skin->joints_count == 0) { err = "skin has no joints"; return false; }
     mJointCount = static_cast<int>(skin->joints_count);
 
+    // Morph targets (shape keys): names from the mesh, deltas per primitive below.
+    mTargetCount = static_cast<int>(mesh->target_names_count
+        ? mesh->target_names_count
+        : (mesh->primitives_count ? mesh->primitives[0].targets_count : 0));
+    mTargetNames.clear();
+    for (size_t t = 0; t < mesh->target_names_count; ++t)
+        mTargetNames.push_back(mesh->target_names[t] ? mesh->target_names[t] : "");
+    while (static_cast<int>(mTargetNames.size()) < mTargetCount)
+        mTargetNames.push_back("morph_" + std::to_string(mTargetNames.size()));
+    mTargetWeights.assign(mTargetCount, 0.0f);
+
     // Inverse-bind matrices (bind pose) → flat. Identity if absent.
     mInverseBindFlat.assign(static_cast<size_t>(mJointCount) * 16, 0.0f);
     for (int j = 0; j < mJointCount; ++j) {
@@ -135,6 +162,30 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
         if (ni >= 0 && ni < static_cast<int>(nodeCount)) {
             mNodes[ni].joint = j;
             mNodes[ni].scalesHeight = is_stature_joint(mJointNames[j]);
+        }
+    }
+
+    // Stretchy-bone axis: for each segment bone, the bind-local direction to its
+    // longest child (the limb continuation), normalized. Used to axially stretch
+    // the bone's bound mesh so single-bone regions elongate with height.
+    mStretchAxis.assign(static_cast<size_t>(mJointCount) * 3, 0.0f);
+    for (int j = 0; j < mJointCount; ++j) {
+        if (!is_stretch_bone(mJointNames[j])) continue;
+        const int node = mJointToNode[j];
+        int best = -1;
+        float bestLen = 0.0f;
+        for (int i = 0; i < static_cast<int>(nodeCount); ++i) {
+            if (mNodes[i].parent != node) continue;
+            const float* t = mNodes[i].t;
+            const float len2 = t[0] * t[0] + t[1] * t[1] + t[2] * t[2];
+            if (len2 > bestLen) { bestLen = len2; best = i; }
+        }
+        if (best >= 0 && bestLen > 1e-12f) {
+            Eigen::Vector3f a(mNodes[best].t[0], mNodes[best].t[1], mNodes[best].t[2]);
+            a.normalize();
+            mStretchAxis[static_cast<size_t>(j) * 3 + 0] = a.x();
+            mStretchAxis[static_cast<size_t>(j) * 3 + 1] = a.y();
+            mStretchAxis[static_cast<size_t>(j) * 3 + 2] = a.z();
         }
     }
 
@@ -197,6 +248,24 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
             cgltf_float w4[4] = {0, 0, 0, 0};
             cgltf_accessor_read_float(wgt, v, w4, 4);
             d[10] = w4[0]; d[11] = w4[1]; d[12] = w4[2]; d[13] = w4[3];
+        }
+
+        // Morph target deltas (position + normal) per target for this primitive.
+        out.posDelta.assign(prim.targets_count, {});
+        out.nrmDelta.assign(prim.targets_count, {});
+        for (size_t t = 0; t < prim.targets_count; ++t) {
+            cgltf_accessor *tp = nullptr, *tn = nullptr;
+            for (size_t a = 0; a < prim.targets[t].attributes_count; ++a) {
+                const cgltf_attribute& at = prim.targets[t].attributes[a];
+                if (at.type == cgltf_attribute_type_position) tp = at.data;
+                else if (at.type == cgltf_attribute_type_normal) tn = at.data;
+            }
+            out.posDelta[t].assign(vcount * 3, 0.0f);
+            if (tp) for (size_t v = 0; v < vcount; ++v)
+                cgltf_accessor_read_float(tp, v, &out.posDelta[t][v * 3], 3);
+            out.nrmDelta[t].assign(vcount * 3, 0.0f);
+            if (tn) for (size_t v = 0; v < vcount; ++v)
+                cgltf_accessor_read_float(tn, v, &out.nrmDelta[t][v * 3], 3);
         }
 
         if (prim.indices) {
@@ -311,7 +380,20 @@ void ArmatureModel::recompute_skin() {
         const int node = mJointToNode[j];
         const Eigen::Matrix4f jw = meshInv * world[node];  // joint in render space
         const Eigen::Matrix4f ibm = Eigen::Map<const Eigen::Matrix4f>(&mInverseBindFlat[static_cast<size_t>(j) * 16]);
-        const Eigen::Matrix4f skin = jw * ibm;
+        // Stretchy bone: axially scale the bone's bound mesh in BIND-local space
+        // (between jw and ibm) so it elongates with height. Applied only to this
+        // bone's skin matrix — children chain off jw (no scale) → no shear.
+        const Eigen::Vector3f a(mStretchAxis[static_cast<size_t>(j) * 3 + 0],
+                                mStretchAxis[static_cast<size_t>(j) * 3 + 1],
+                                mStretchAxis[static_cast<size_t>(j) * 3 + 2]);
+        Eigen::Matrix4f skin;
+        if (a.squaredNorm() > 0.0f && mHeightScale != 1.0f) {
+            Eigen::Matrix4f s4 = Eigen::Matrix4f::Identity();
+            s4.block<3, 3>(0, 0) += (mHeightScale - 1.0f) * (a * a.transpose());
+            skin = jw * s4 * ibm;
+        } else {
+            skin = jw * ibm;
+        }
         std::memcpy(&mSkinFlat[static_cast<size_t>(j) * 16], skin.data(), 16 * sizeof(float));
         std::memcpy(&mJointWorldFlat[static_cast<size_t>(j) * 16], jw.data(), 16 * sizeof(float));
     }
@@ -351,6 +433,24 @@ void ArmatureModel::set_material_color(int i, float r, float g, float b, float a
 }
 
 void ArmatureModel::reset_material_colors() { mMatColor = mMatColorDefault; }
+
+int ArmatureModel::find_target(const std::string& name) const {
+    for (int t = 0; t < mTargetCount; ++t)
+        if (mTargetNames[t] == name) return t;
+    return -1;
+}
+
+void ArmatureModel::set_morph_weights(const std::vector<float>& weights) {
+    mTargetWeights.assign(mTargetCount, 0.0f);
+    for (int t = 0; t < mTargetCount && t < static_cast<int>(weights.size()); ++t)
+        mTargetWeights[t] = weights[t];
+    apply_morphs();
+}
+
+void ArmatureModel::reset_morphs() {
+    mTargetWeights.assign(mTargetCount, 0.0f);
+    apply_morphs();
+}
 
 Eigen::Matrix4f ArmatureModel::joint_world_matrix(int jointIndex) const {
     if (jointIndex < 0 || static_cast<size_t>(jointIndex) * 16 + 16 > mJointWorldFlat.size())
@@ -532,6 +632,30 @@ void ArmatureModel::draw(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f&
     glBindVertexArray(0);
 }
 
+void ArmatureModel::apply_morphs() {
+    if (!mUploaded) return;
+    std::vector<float> v;
+    for (auto& p : mPrimitives) {
+        v = p.verts;  // base interleaved (pos/normal/joints/weights)
+        const size_t vcount = v.size() / FLOATS_PER_VERT;
+        for (int t = 0; t < mTargetCount; ++t) {
+            const float w = (t < static_cast<int>(mTargetWeights.size())) ? mTargetWeights[t] : 0.0f;
+            if (w == 0.0f || t >= static_cast<int>(p.posDelta.size())) continue;
+            const std::vector<float>& pd = p.posDelta[t];
+            const std::vector<float>& nd = p.nrmDelta[t];
+            const bool hasN = nd.size() >= vcount * 3;
+            for (size_t vi = 0; vi < vcount; ++vi) {
+                float* d = &v[vi * FLOATS_PER_VERT];
+                d[0] += w * pd[vi * 3 + 0]; d[1] += w * pd[vi * 3 + 1]; d[2] += w * pd[vi * 3 + 2];
+                if (hasN) { d[3] += w * nd[vi * 3 + 0]; d[4] += w * nd[vi * 3 + 1]; d[5] += w * nd[vi * 3 + 2]; }
+            }
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, p.vbo);
+        glBufferData(GL_ARRAY_BUFFER, v.size() * sizeof(float), v.data(), GL_STATIC_DRAW);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 #else  // !ARMATURE_MODEL_GL
 
 bool ArmatureModel::upload_gl(std::string& err) {
@@ -539,6 +663,7 @@ bool ArmatureModel::upload_gl(std::string& err) {
     return false;
 }
 void ArmatureModel::draw(const Eigen::Matrix4f&, const Eigen::Vector3f&, float, float, float) const {}
+void ArmatureModel::apply_morphs() {}
 
 #endif
 

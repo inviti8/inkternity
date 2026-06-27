@@ -16,6 +16,7 @@
 #include "../GUIStuff/ElementHelpers/ColorPickerHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
+#include "../GUIStuff/Elements/ScrollArea.hpp"
 
 #include <Helpers/ConvertVec.hpp>
 #include <Helpers/Logger.hpp>
@@ -43,6 +44,57 @@
 #endif
 
 using namespace GUIStuff::ElementHelpers;
+using GUIStuff::ScrollArea;
+
+namespace {
+// The 22-slider shape-key system (ARMATURE-SCHEMA.md §2). Binary sliders blend
+// between two opposing morphs (range [-1,1], centre 0); singular sliders drive
+// one morph (range [0,1]). Morph names are the actual glb target names.
+struct ShapeSlider { const char* group; const char* label; bool binary; const char* left; const char* right; };
+const ShapeSlider kShapeSliders[] = {
+    {"Body", "Gender", true, "mesh_body_female", "mesh_body_male"},
+    {"Body", "Build", true, "mesh_body_thin", "mesh_body_fat"},
+    {"Head", "Round Head", false, nullptr, "mesh_head_round"},
+    {"Head", "Egg Head", false, nullptr, "mesh_head_egg"},
+    {"Head", "Box Head", false, nullptr, "mesh_head_box"},
+    {"Head", "Smooth Head", false, nullptr, "mesh_head_smooth"},
+    {"Eyes", "Eye Shape", true, "mesh_eyes_almond", "mesh_eyes_monolid"},
+    {"Eyes", "Eye Size", true, "mesh_eyes_small", "mesh_eyes_large"},
+    {"Eyes", "Eye Tilt", true, "mesh_eyes_tilt_in", "mesh_eyes_tilt_out"},
+    {"Eyes", "Eye Depth", true, "mesh_eyes_sunken", "mesh_eyes_bulge"},
+    {"Eyes", "Eye Distance", true, "mesh_eyes_together", "mesh_eyes_apart"},
+    {"Eyes", "Eye Asymmetry", true, "mesh_eyes_left_down", "mesh_eyes_right_down"},
+    {"Nose", "Nose Size", true, "mesh_nose_small", "mesh_nose_wide"},
+    {"Nose", "Nose Length", true, "mesh_nose_flat", "mesh_nose_long"},
+    {"Nose", "Nose Height", true, "mesh_nose_short", "mesh_nose_tall"},
+    {"Mouth", "Upper Lip", true, "mesh_mouth_upper_lip_thin", "mesh_mouth_upper_lip_thick"},
+    {"Mouth", "Lower Lip", true, "mesh_mouth_lower_lip_thin", "mesh_mouth_lower_lip_thick"},
+    {"Mouth", "Mouth Size", true, "mesh_mouth_narrow", "mesh_mouth_wide"},
+    {"Mouth", "Mouth Depth", true, "mesh_mouth_sunken", "mesh_mouth_protrude"},
+    {"Expression", "Frown / Smile", true, "mesh_expression_frown", "mesh_expression_smile"},
+    {"Expression", "Brows", true, "mesh_expression_brows_down", "mesh_expression_brows_up"},
+    {"Expression", "Eyes Open", true, "mesh_expression_eyes_closed", "mesh_expression_eyes_wide"},
+};
+constexpr int kShapeSliderCount = static_cast<int>(sizeof(kShapeSliders) / sizeof(kShapeSliders[0]));
+}  // namespace
+
+void ArmatureModalScreen::apply_shape_sliders() {
+    if (!mModel) return;
+    std::vector<float> w(mModel->target_count(), 0.0f);
+    for (int i = 0; i < kShapeSliderCount && i < static_cast<int>(mShapeSliders.size()); ++i) {
+        const ShapeSlider& cfg = kShapeSliders[i];
+        const float v = mShapeSliders[i];
+        const int ri = cfg.right ? mModel->find_target(cfg.right) : -1;
+        if (cfg.binary) {
+            const int li = cfg.left ? mModel->find_target(cfg.left) : -1;
+            if (li >= 0) w[li] = std::max(0.0f, -v);
+            if (ri >= 0) w[ri] = std::max(0.0f, v);
+        } else if (ri >= 0) {
+            w[ri] = v;
+        }
+    }
+    mModel->set_morph_weights(w);
+}
 
 ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen> prev,
                                          DrawingProgram* editDrawP,
@@ -89,6 +141,11 @@ ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen>
         const auto c = mModel->material_color(i);
         mMatColors.emplace_back(c[0], c[1], c[2], c[3]);
     }
+    // Shape keys: seed slider values from d, then push the morph weights.
+    mShapeSliders.assign(kShapeSliderCount, 0.0f);
+    for (int i = 0; i < kShapeSliderCount && i < static_cast<int>(d.shapeSliders.size()); ++i)
+        mShapeSliders[i] = d.shapeSliders[i];
+    apply_shape_sliders();
 }
 
 ArmatureModalScreen::~ArmatureModalScreen() { destroy_fbo(); }
@@ -179,9 +236,16 @@ void ArmatureModalScreen::input_key_callback(const InputManager::KeyCallbackArgs
 void ArmatureModalScreen::input_mouse_button_callback(const InputManager::MouseButtonCallbackArgs& b) {
     using MB = InputManager::MouseButton;
     if (!b.down) { mOrbiting = mPanning = mJointRotating = false; mActiveAxis = -1; return; }
-    // Don't orbit/pose when the press is on a GUI widget — the GUI sets this on
-    // the pointer-over check that runs just before us (scaling-independent).
+    // Only orbit/pose when the press is inside the 3D viewport square. This blocks
+    // the top bar, the controls panel, AND scroll-area content (which cursor_-
+    // obstructed misses, since clipped children aren't in the hover-test list).
     if (main.g.gui.cursor_obstructed()) return;
+    {
+        float rx, ry, rs;
+        view_rect(rx, ry, rs);
+        if (b.pos.x() < rx || b.pos.x() > rx + rs || b.pos.y() < ry || b.pos.y() > ry + rs)
+            return;
+    }
     const bool shift = main.input.key(InputManager::KEY_GENERIC_LSHIFT).held;
     if (b.button == MB::LEFT && !shift) {
         // 1) An axis gizmo dot of the current selection → rotate that axis.
@@ -335,13 +399,54 @@ void ArmatureModalScreen::gui_layout_run() {
                                 {.wide = true, .onClick = [this] {
                                     if (mModel) { mModel->reset_pose(); request_redraw(); }
                                 }});
-                } else if (mTab == 3) {  // Body
-                    slider_scalar_field<float>(gui, "armature height", "Height",
-                                               &mHeight, 0.7f, 1.4f, {.onEdit = [this] {
-                                                   if (mModel) mModel->set_height(mHeight);
-                                                   request_redraw();
-                                               }});
-                    text_label(gui, "Shape keys: coming soon");
+                } else if (mTab == 3) {  // Body — height + shape keys (scrollable)
+                    gui.clipping_element<ScrollArea>("armature body scroll", ScrollArea::Options{
+                        .scrollVertical = true,
+                        .clipVertical = true,
+                        .scrollbarY = ScrollArea::ScrollbarType::NORMAL,
+                        .innerContent = [&](const ScrollArea::InnerContentParameters&) {
+                            CLAY_AUTO_ID({
+                                .layout = {
+                                    .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+                                    .childGap = gui.io.theme->childGap1,
+                                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                                },
+                            }) {
+                                slider_scalar_field<float>(gui, "armature height", "Height",
+                                    &mHeight, 0.7f, 1.4f, {.onEdit = [this] {
+                                        if (mModel) mModel->set_height(mHeight);
+                                        request_redraw();
+                                    }});
+                                // Collapsible shape-key groups.
+                                static const char* kGroups[6] =
+                                    {"Body", "Head", "Eyes", "Nose", "Mouth", "Expression"};
+                                static const char* kGroupIds[6] =
+                                    {"armgrp0", "armgrp1", "armgrp2", "armgrp3", "armgrp4", "armgrp5"};
+                                for (int g = 0; g < 6; ++g) {
+                                    const bool open = mGroupOpen[g];
+                                    text_button(gui, kGroupIds[g],
+                                        std::string(open ? "- " : "+ ") + kGroups[g],
+                                        {.isSelected = open, .wide = true, .onClick = [this, g] {
+                                            mGroupOpen[g] = !mGroupOpen[g];
+                                            main.g.gui.set_to_layout();
+                                            request_redraw();
+                                        }});
+                                    if (!open) continue;
+                                    for (int i = 0; i < kShapeSliderCount &&
+                                                    i < static_cast<int>(mShapeSliders.size()); ++i) {
+                                        const ShapeSlider& cfg = kShapeSliders[i];
+                                        if (std::string(cfg.group) != kGroups[g]) continue;
+                                        const float lo = cfg.binary ? -1.0f : 0.0f;
+                                        slider_scalar_field<float>(gui, cfg.label, cfg.label,
+                                            &mShapeSliders[i], lo, 1.0f, {.onEdit = [this] {
+                                                apply_shape_sliders();
+                                                request_redraw();
+                                            }});
+                                    }
+                                }
+                            }
+                        }
+                    });
                 } else if (mTab == 4 && mModel) {  // Materials
                     static const char* kMatIds[8] = {"armmat0", "armmat1", "armmat2", "armmat3",
                                                      "armmat4", "armmat5", "armmat6", "armmat7"};
@@ -560,6 +665,7 @@ void ArmatureModalScreen::do_bake() {
         const auto c = mModel->material_color(i);
         comp.d.materialColors.push_back({mModel->material_name(i), c[0], c[1], c[2], c[3]});
     }
+    comp.d.shapeSliders = mShapeSliders;
     comp.d.pose.clear();
     for (int j = 0; j < mModel->joint_count(); ++j) {
         const Eigen::Quaternionf q = mModel->joint_pose(j);
@@ -602,6 +708,7 @@ void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
     model->reset_pose();
     model->set_height(1.0f);          // default; clear any leftover scale from a prior edit
     model->reset_material_colors();   // default; clear any leftover color overrides
+    model->reset_morphs();            // default; clear any leftover shape-key weights
     Armature::OrbitCamera cam;
     cam.frame_bounds(model->bounds_min(), model->bounds_max());
     Armature::Lighting light;
