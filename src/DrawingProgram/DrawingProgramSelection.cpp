@@ -664,6 +664,10 @@ void DrawingProgramSelection::duplicate_selection() {
     if(!drawP.is_selection_allowing_tool(drawP.drawTool->get_type()))
         drawP.switch_to_tool(DrawingProgramToolType::EDIT);
 
+    // Bake any pending selection move into the originals' coords first (so the
+    // clones copy the on-screen positions), mirroring deselect_all().
+    commit_transform_selection();
+
     // Nudge the clones ~24 screen px down-right (mapped to world at the current
     // zoom/rotation) so they read as distinct copies sitting atop the originals.
     const WorldVec offset = drawP.world.drawData.cam.c.dir_from_space(Vector2f(24.0f, 24.0f));
@@ -678,6 +682,15 @@ void DrawingProgramSelection::duplicate_selection() {
         clone->coords.translate(offset);
         placedComponents.emplace_back(drawP.layerMan.get_edited_layer_end_iterator(), clone);
     }
+    // The originals are about to be DESELECTED — selected objects are drawn live
+    // and held OUT of the draw cache, so return each to the cache now or it'd
+    // vanish (this was the "only one instance, just offset" bug). Same step
+    // deselect_all() performs.
+    for(auto& c : selectedSet)
+        drawP.drawCache.add_component(c);
+
+    // Add the clones to the layer but keep them OUT of the cache: they become the
+    // new selection and are drawn live (mirrors paste_clipboard).
     std::vector<CanvasComponentContainer::ObjInfoIterator> newlyInsertedObjectIts;
     drawP.layerMan.disable_add_to_cache_and_commit_update_block([&]() {
         newlyInsertedObjectIts = drawP.layerMan.add_many_components_to_layer_being_edited(placedComponents);
