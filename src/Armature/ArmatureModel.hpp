@@ -12,6 +12,7 @@
 // no-ops elsewhere (matching ArmatureSpike's guard).
 
 #include <Eigen/Dense>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -50,6 +51,22 @@ public:
     const Eigen::Vector3f& bounds_max() const { return mBoundsMax; }
     int joint_count() const { return mJointCount; }
 
+    // --- FK posing (M4) ---------------------------------------------------
+    // Accumulate a local-space rotation on a joint and refresh the skin.
+    void rotate_joint(int jointIndex, const Eigen::Quaternionf& deltaLocal);
+    // Set a joint's absolute local-space pose rotation (relative to bind).
+    void set_joint_pose(int jointIndex, const Eigen::Quaternionf& localPose);
+    void reset_pose();
+
+    // The curated set of joints the poser exposes (Decision Q1): core + fingers,
+    // toes collapsed, helper/ear/neutral bones excluded. Indices into joints.
+    const std::vector<int>& pickable_joints() const { return mPickableJoints; }
+    // World-space position / full transform of a joint at the CURRENT pose
+    // (render space — same space the figure is drawn in). Valid after load/pose.
+    Eigen::Vector3f joint_world_pos(int jointIndex) const;
+    Eigen::Matrix4f joint_world_matrix(int jointIndex) const;
+    const std::string& joint_name(int jointIndex) const { return mJointNames[jointIndex]; }
+
 private:
     // Interleaved vertex layout: pos(3) normal(3) joints(4) weights(4).
     static constexpr int FLOATS_PER_VERT = 14;
@@ -66,10 +83,33 @@ private:
     // Skin matrices stored FLAT (16 col-major floats per joint) — this is exactly
     // glUniformMatrix4fv's layout and avoids Eigen-in-std::vector alignment issues.
     int mJointCount = 0;
-    std::vector<float> mInverseBindFlat;  // per joint (bind pose) — retained for M4 FK
-    std::vector<float> mSkinFlat;         // per joint: meshInv * jointWorld * inverseBind (rest)
+    std::vector<float> mInverseBindFlat;  // per joint (bind pose), 16/joint
+    std::vector<float> mSkinFlat;         // per joint: meshInv * jointWorld * inverseBind
     Eigen::Vector3f mBoundsMin = Eigen::Vector3f::Zero();
     Eigen::Vector3f mBoundsMax = Eigen::Vector3f::Zero();
+
+    // --- FK node tree (plain floats → no Eigen alignment concerns) ---------
+    struct NodeT {
+        int parent = -1;
+        int joint = -1;          // index into joints, or -1
+        bool hasMatrix = false;
+        float t[3] = {0, 0, 0};
+        float r[4] = {0, 0, 0, 1};  // quaternion xyzw
+        float s[3] = {1, 1, 1};
+        float matrix[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    };
+    std::vector<NodeT> mNodes;
+    std::vector<int> mJointToNode;        // jointCount → node index
+    std::vector<std::string> mJointNames; // jointCount
+    std::vector<float> mJointPose;        // 4/joint, xyzw, identity = no pose
+    std::vector<float> mJointWorldFlat;   // 16/joint, current pose (render space)
+    std::vector<int> mPickableJoints;
+    std::array<float, 16> mMeshWorldInv = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+
+    Eigen::Matrix4f node_local_matrix(int nodeIndex) const;
+    void compute_node_worlds(std::vector<Eigen::Matrix4f>& world) const;
+    void recompute_skin();
+    void build_pickable_set();
 
     unsigned mProgram = 0;
     int mLocViewProj = -1, mLocLightDir = -1, mLocColor = -1, mLocSkin = -1;

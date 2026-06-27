@@ -16,6 +16,7 @@
 #include <include/core/SkColor.h>
 #include <include/core/SkImage.h>
 #include <include/core/SkImageInfo.h>
+#include <include/core/SkPaint.h>
 #include <include/core/SkRect.h>
 #include <include/core/SkSamplingOptions.h>
 
@@ -44,6 +45,64 @@ void ArmatureModalScreen::request_redraw() {
     main.g.gui.io.redrawSurface = true;
 }
 
+void ArmatureModalScreen::view_rect(float& x, float& y, float& size) const {
+    const float w = static_cast<float>(main.window.size.x());
+    const float h = static_cast<float>(main.window.size.y());
+    const float panelPx = PANEL_W * main.g.final_gui_scale();
+    size = std::max(1.0f, std::min(w - panelPx, h));
+    x = panelPx + (w - panelPx - size) * 0.5f;
+    y = (h - size) * 0.5f;
+}
+
+// Project a render-space point to device pixels within the view rect.
+bool ArmatureModalScreen::project_point(const Eigen::Vector3f& p, float& sx, float& sy) const {
+    const Eigen::Vector4f clip = mCamera.view_proj(1.0f) * Eigen::Vector4f(p.x(), p.y(), p.z(), 1.0f);
+    if (clip.w() <= 1e-5f) return false;  // behind the camera
+    const Eigen::Vector3f ndc = clip.head<3>() / clip.w();
+    float rx, ry, rs;
+    view_rect(rx, ry, rs);
+    sx = rx + (ndc.x() * 0.5f + 0.5f) * rs;
+    sy = ry + (1.0f - (ndc.y() * 0.5f + 0.5f)) * rs;  // GL ndc up → screen down
+    return true;
+}
+
+bool ArmatureModalScreen::project_joint(int jointIndex, float& sx, float& sy) const {
+    if (!mModel) return false;
+    return project_point(mModel->joint_world_pos(jointIndex), sx, sy);
+}
+
+float ArmatureModalScreen::gizmo_radius() const { return 46.0f * main.g.final_gui_scale(); }
+
+// Fixed screen-space dot positions around the selected joint: X top, Y lower-
+// left, Z lower-right. Each is a grab handle to rotate about that local axis.
+bool ArmatureModalScreen::axis_dot_screen(int axis, float& sx, float& sy) const {
+    if (mSelectedJoint < 0 || axis < 0 || axis > 2) return false;
+    float cx, cy;
+    if (!project_joint(mSelectedJoint, cx, cy)) return false;
+    static const float deg[3] = {-90.0f, 150.0f, 30.0f};
+    const float a = deg[axis] * 3.14159265f / 180.0f;
+    const float R = gizmo_radius();
+    sx = cx + R * std::cos(a);
+    sy = cy + R * std::sin(a);
+    return true;
+}
+
+int ArmatureModalScreen::pick_joint(float mouseX, float mouseY) const {
+    if (!mModel) return -1;
+    const float thresh = 13.0f * main.g.final_gui_scale();
+    const float t2 = thresh * thresh;
+    int best = -1;
+    float bestD2 = t2;
+    for (int j : mModel->pickable_joints()) {
+        float sx, sy;
+        if (!project_joint(j, sx, sy)) continue;
+        const float dx = sx - mouseX, dy = sy - mouseY;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { bestD2 = d2; best = j; }
+    }
+    return best;
+}
+
 void ArmatureModalScreen::update() {
     if (mWantExit && !mExitQueued) {
         mExitQueued = true;
@@ -63,18 +122,66 @@ void ArmatureModalScreen::input_key_callback(const InputManager::KeyCallbackArgs
 
 void ArmatureModalScreen::input_mouse_button_callback(const InputManager::MouseButtonCallbackArgs& b) {
     using MB = InputManager::MouseButton;
-    if (!b.down) { mOrbiting = mPanning = false; return; }
-    // Don't orbit when the press is on a GUI widget (slider/button/label) — the
-    // GUI sets this on the pointer-over check that runs just before us. Scaling-
-    // independent, unlike a hardcoded pixel threshold.
+    if (!b.down) { mOrbiting = mPanning = mJointRotating = false; mActiveAxis = -1; return; }
+    // Don't orbit/pose when the press is on a GUI widget — the GUI sets this on
+    // the pointer-over check that runs just before us (scaling-independent).
     if (main.g.gui.cursor_obstructed()) return;
     const bool shift = main.input.key(InputManager::KEY_GENERIC_LSHIFT).held;
-    if (b.button == MB::LEFT)        { mOrbiting = !shift; mPanning = shift; }
-    else if (b.button == MB::MIDDLE) { mPanning = true; }
+    if (b.button == MB::LEFT && !shift) {
+        // 1) An axis gizmo dot of the current selection → rotate that axis.
+        if (mSelectedJoint >= 0) {
+            const float thr = 12.0f * main.g.final_gui_scale();
+            int axis = -1;
+            float best = thr * thr;
+            for (int a = 0; a < 3; ++a) {
+                float dx, dy;
+                if (!axis_dot_screen(a, dx, dy)) continue;
+                const float d2 = (dx - b.pos.x()) * (dx - b.pos.x()) + (dy - b.pos.y()) * (dy - b.pos.y());
+                if (d2 <= best) { best = d2; axis = a; }
+            }
+            if (axis >= 0) {
+                mActiveAxis = axis;
+                mJointRotating = true;
+                float cx, cy;
+                project_joint(mSelectedJoint, cx, cy);
+                mDragLastVec = Eigen::Vector2f(b.pos.x() - cx, b.pos.y() - cy);
+                request_redraw();
+                return;
+            }
+        }
+        // 2) A joint dot → select it; 3) empty space → orbit (and deselect).
+        const int hit = pick_joint(b.pos.x(), b.pos.y());
+        if (hit >= 0) { mSelectedJoint = hit; mActiveAxis = -1; request_redraw(); }
+        else { mSelectedJoint = -1; mActiveAxis = -1; mOrbiting = true; request_redraw(); }
+    } else if (b.button == MB::LEFT && shift) {
+        mPanning = true;
+    } else if (b.button == MB::MIDDLE) {
+        mPanning = true;
+    }
 }
 
 void ArmatureModalScreen::input_mouse_motion_callback(const InputManager::MouseMotionCallbackArgs& m) {
-    if (mOrbiting) {
+    if (mJointRotating && mModel && mSelectedJoint >= 0 && mActiveAxis >= 0) {
+        // Rotate about the joint's local axis `mActiveAxis` by the angle the
+        // cursor sweeps around the joint's screen centre. Sign follows whether
+        // the axis points toward the camera, so the on-screen motion matches.
+        float cx, cy;
+        if (project_joint(mSelectedJoint, cx, cy)) {
+            const Eigen::Vector2f cur(m.pos.x() - cx, m.pos.y() - cy);
+            const Eigen::Vector2f last = mDragLastVec;
+            const float angle = std::atan2(last.x() * cur.y() - last.y() * cur.x(), last.dot(cur));
+            const Eigen::Matrix3f r = mModel->joint_world_matrix(mSelectedJoint).block<3, 3>(0, 0);
+            const Eigen::Vector3f axisWorld = r.col(mActiveAxis).normalized();
+            const Eigen::Vector3f fwd = (mCamera.target - mCamera.eye()).normalized();
+            const float sgn = (axisWorld.dot(fwd) < 0.0f) ? 1.0f : -1.0f;
+            Eigen::Vector3f unit = Eigen::Vector3f::Zero();
+            unit[mActiveAxis] = 1.0f;  // local axis
+            mModel->rotate_joint(mSelectedJoint,
+                                 Eigen::Quaternionf(Eigen::AngleAxisf(angle * sgn, unit)));
+            mDragLastVec = cur;
+            request_redraw();
+        }
+    } else if (mOrbiting) {
         mCamera.orbit(-m.move.x() * 0.01f, -m.move.y() * 0.01f);
         request_redraw();
     } else if (mPanning) {
@@ -125,6 +232,13 @@ void ArmatureModalScreen::gui_layout_run() {
                                        &mLight.intensity, 0.0f, 2.0f, {.onEdit = markDirty});
             slider_scalar_field<float>(gui, "light ambient", "Ambient",
                                        &mLight.ambient, 0.0f, 1.0f, {.onEdit = markDirty});
+            text_label(gui, (mModel && mSelectedJoint >= 0)
+                                ? ("Selected: " + mModel->joint_name(mSelectedJoint))
+                                : std::string("Selected: (grab a joint dot)"));
+            text_button(gui, "armature reset pose", "Reset Pose",
+                        {.wide = true, .onClick = [this] {
+                            if (mModel) { mModel->reset_pose(); request_redraw(); }
+                        }});
             text_button(gui, "armature reset view", "Reset View",
                         {.wide = true, .onClick = [this] { mFramed = false; request_redraw(); }});
             text_button(gui, "armature close", "Close",
@@ -227,14 +341,57 @@ void ArmatureModalScreen::draw(SkCanvas* canvas) {
                 const uint8_t* src = mPixels.data() + static_cast<size_t>(mPixelsDim - 1 - y) * rowBytes;
                 std::memcpy(dst + static_cast<size_t>(y) * bmp.rowBytes(), src, rowBytes);
             }
-            const float w = static_cast<float>(main.window.size.x());
-            const float h = static_cast<float>(main.window.size.y());
-            const float panelPx = PANEL_W * main.g.final_gui_scale();  // Clay units → device px
-            const float avail = std::max(1.0f, std::min(w - panelPx, h));
-            const float x = panelPx + (w - panelPx - avail) * 0.5f;
-            const float y = (h - avail) * 0.5f;
-            canvas->drawImageRect(bmp.asImage(), SkRect::MakeXYWH(x, y, avail, avail),
+            float rx, ry, rs;
+            view_rect(rx, ry, rs);
+            canvas->drawImageRect(bmp.asImage(), SkRect::MakeXYWH(rx, ry, rs, rs),
                                   SkSamplingOptions(SkFilterMode::kLinear));
+        }
+    }
+
+    // 3) Joint handles overlay (M4a): dots for pickable joints, ring for the
+    // selected one. Drawn over the figure but under the Clay panel.
+    if (mModel) {
+        const float scale = main.g.final_gui_scale();
+        SkPaint dot;
+        dot.setAntiAlias(true);
+        dot.setColor(SkColorSetARGB(180, 120, 200, 255));
+        for (int j : mModel->pickable_joints()) {
+            float sx, sy;
+            if (project_joint(j, sx, sy)) canvas->drawCircle(sx, sy, 3.0f * scale, dot);
+        }
+        if (mSelectedJoint >= 0) {
+            float cx, cy;
+            if (project_joint(mSelectedJoint, cx, cy)) {
+                // Guide circle + 3 axis grab-dots (R=X, G=Y, B=Z).
+                SkPaint guide;
+                guide.setAntiAlias(true);
+                guide.setStyle(SkPaint::kStroke_Style);
+                guide.setStrokeWidth(1.5f * scale);
+                guide.setColor(SkColorSetARGB(90, 235, 235, 235));
+                canvas->drawCircle(cx, cy, gizmo_radius(), guide);
+
+                const SkColor axisCol[3] = {SkColorSetARGB(255, 235, 80, 80),
+                                            SkColorSetARGB(255, 90, 205, 90),
+                                            SkColorSetARGB(255, 90, 150, 245)};
+                for (int a = 0; a < 3; ++a) {
+                    float dx, dy;
+                    if (!axis_dot_screen(a, dx, dy)) continue;
+                    SkPaint line;
+                    line.setAntiAlias(true);
+                    line.setStyle(SkPaint::kStroke_Style);
+                    line.setStrokeWidth(2.0f * scale);
+                    line.setColor(axisCol[a]);
+                    canvas->drawLine(cx, cy, dx, dy, line);
+                    SkPaint fill;
+                    fill.setAntiAlias(true);
+                    fill.setColor(axisCol[a]);
+                    canvas->drawCircle(dx, dy, (a == mActiveAxis ? 8.0f : 6.0f) * scale, fill);
+                }
+                SkPaint center;
+                center.setAntiAlias(true);
+                center.setColor(SkColorSetARGB(255, 255, 255, 255));
+                canvas->drawCircle(cx, cy, 3.0f * scale, center);
+            }
         }
     }
 }

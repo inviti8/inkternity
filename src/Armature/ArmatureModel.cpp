@@ -6,6 +6,7 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <string>
@@ -25,10 +26,6 @@ namespace {
 // map reads them identically. (Unaligned map → no alignment requirement.)
 Eigen::Matrix4f mat_from_cgltf(const cgltf_float m[16]) {
     return Eigen::Map<const Eigen::Matrix4f>(m);
-}
-
-void flatten_into(std::vector<float>& dst, const Eigen::Matrix4f& m) {
-    for (int i = 0; i < 16; ++i) dst.push_back(m.data()[i]);  // m.data() is col-major
 }
 
 }  // namespace
@@ -70,31 +67,57 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
     if (skin->joints_count == 0) { err = "skin has no joints"; return false; }
     mJointCount = static_cast<int>(skin->joints_count);
 
-    // Inverse-bind matrices (bind pose). Default to identity if absent.
-    std::vector<Eigen::Matrix4f> inverseBind(mJointCount, Eigen::Matrix4f::Identity());
-    if (skin->inverse_bind_matrices) {
-        for (int j = 0; j < mJointCount; ++j) {
+    // Inverse-bind matrices (bind pose) → flat. Identity if absent.
+    mInverseBindFlat.assign(static_cast<size_t>(mJointCount) * 16, 0.0f);
+    for (int j = 0; j < mJointCount; ++j) {
+        Eigen::Matrix4f ibm = Eigen::Matrix4f::Identity();
+        if (skin->inverse_bind_matrices) {
             cgltf_float m[16];
             cgltf_accessor_read_float(skin->inverse_bind_matrices, j, m, 16);
-            inverseBind[j] = mat_from_cgltf(m);
+            ibm = mat_from_cgltf(m);
         }
+        std::memcpy(&mInverseBindFlat[static_cast<size_t>(j) * 16], ibm.data(), 16 * sizeof(float));
     }
 
-    // Rest-pose skin matrices: meshInv * jointWorld(rest) * inverseBind.
-    cgltf_float mm[16];
-    cgltf_node_transform_world(meshNode, mm);
-    const Eigen::Matrix4f meshWorldInv = mat_from_cgltf(mm).inverse();
+    // Capture the FULL node tree (parent + rest TRS/matrix) so FK posing can
+    // recompute joint world matrices from per-joint rotations (M4).
+    const size_t nodeCount = gltf->nodes_count;
+    mNodes.assign(nodeCount, NodeT{});
+    for (size_t i = 0; i < nodeCount; ++i) {
+        const cgltf_node& n = gltf->nodes[i];
+        NodeT& d = mNodes[i];
+        d.parent = n.parent ? static_cast<int>(n.parent - gltf->nodes) : -1;
+        d.hasMatrix = n.has_matrix;
+        if (n.has_matrix) std::memcpy(d.matrix, n.matrix, 16 * sizeof(float));
+        if (n.has_translation) for (int c = 0; c < 3; ++c) d.t[c] = n.translation[c];
+        if (n.has_rotation)    for (int c = 0; c < 4; ++c) d.r[c] = n.rotation[c];
+        if (n.has_scale)       for (int c = 0; c < 3; ++c) d.s[c] = n.scale[c];
+    }
+    const int meshNodeIdx = static_cast<int>(meshNode - gltf->nodes);
 
-    std::vector<Eigen::Matrix4f> skinMats(mJointCount);
-    mInverseBindFlat.clear();
-    mSkinFlat.clear();
+    mJointToNode.assign(mJointCount, -1);
+    mJointNames.assign(mJointCount, std::string());
     for (int j = 0; j < mJointCount; ++j) {
-        cgltf_float jm[16];
-        cgltf_node_transform_world(skin->joints[j], jm);
-        skinMats[j] = meshWorldInv * mat_from_cgltf(jm) * inverseBind[j];
-        flatten_into(mInverseBindFlat, inverseBind[j]);
-        flatten_into(mSkinFlat, skinMats[j]);
+        const int ni = static_cast<int>(skin->joints[j] - gltf->nodes);
+        mJointToNode[j] = ni;
+        if (ni >= 0 && ni < static_cast<int>(nodeCount)) mNodes[ni].joint = j;
+        mJointNames[j] = skin->joints[j]->name ? skin->joints[j]->name : "";
     }
+
+    mJointPose.assign(static_cast<size_t>(mJointCount) * 4, 0.0f);
+    for (int j = 0; j < mJointCount; ++j) mJointPose[static_cast<size_t>(j) * 4 + 3] = 1.0f;  // identity
+
+    // meshWorldInv from the rest tree (the mesh node isn't a joint, so it's
+    // pose-independent). Computed once here; recompute_skin() reuses it.
+    {
+        std::vector<Eigen::Matrix4f> world;
+        compute_node_worlds(world);
+        const Eigen::Matrix4f meshInv = world[meshNodeIdx].inverse();
+        std::memcpy(mMeshWorldInv.data(), meshInv.data(), 16 * sizeof(float));
+    }
+
+    build_pickable_set();
+    recompute_skin();  // fills mSkinFlat + mJointWorldPos for the identity pose
 
     // Geometry. JOINTS_0 indices are already indices into skin->joints, so they
     // map straight onto skinMats / the uSkin[] uniform.
@@ -170,7 +193,8 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
                 const float w = d[10 + k];
                 if (w != 0.0f) {
                     const int ji = int(d[6 + k]);
-                    if (ji >= 0 && ji < mJointCount) m += w * skinMats[ji];
+                    if (ji >= 0 && ji < mJointCount)
+                        m += w * Eigen::Map<const Eigen::Matrix4f>(&mSkinFlat[static_cast<size_t>(ji) * 16]);
                 }
             }
             if (m.isZero(0.0f)) m = Eigen::Matrix4f::Identity();
@@ -182,8 +206,106 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
 
     mLoaded = true;
     Logger::get().log("INFO", "ArmatureModel: loaded " + std::to_string(mPrimitives.size()) +
-        " primitives, " + std::to_string(mJointCount) + " joints.");
+        " primitives, " + std::to_string(mJointCount) + " joints, " +
+        std::to_string(mPickableJoints.size()) + " pickable.");
     return true;
+}
+
+// --- FK posing (CPU; available on all backends) ---------------------------
+
+Eigen::Matrix4f ArmatureModel::node_local_matrix(int nodeIndex) const {
+    const NodeT& n = mNodes[nodeIndex];
+    if (n.hasMatrix) return Eigen::Map<const Eigen::Matrix4f>(n.matrix);
+    Eigen::Quaternionf q(n.r[3], n.r[0], n.r[1], n.r[2]);  // w,x,y,z from xyzw
+    if (n.joint >= 0) {
+        const float* p = &mJointPose[static_cast<size_t>(n.joint) * 4];
+        q = q * Eigen::Quaternionf(p[3], p[0], p[1], p[2]);  // rest * pose (local frame)
+    }
+    Eigen::Matrix4f m = Eigen::Matrix4f::Identity();
+    m.block<3, 3>(0, 0) = q.normalized().toRotationMatrix() *
+        Eigen::DiagonalMatrix<float, 3>(n.s[0], n.s[1], n.s[2]);
+    m(0, 3) = n.t[0]; m(1, 3) = n.t[1]; m(2, 3) = n.t[2];
+    return m;
+}
+
+void ArmatureModel::compute_node_worlds(std::vector<Eigen::Matrix4f>& world) const {
+    const int n = static_cast<int>(mNodes.size());
+    world.assign(n, Eigen::Matrix4f::Identity());
+    std::vector<char> done(n, 0);
+    for (int i = 0; i < n; ++i) {
+        if (done[i]) continue;
+        std::vector<int> stack;                       // uncomputed ancestors, deepest last
+        for (int c = i; c >= 0 && !done[c]; c = mNodes[c].parent) stack.push_back(c);
+        for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
+            const int node = *it, p = mNodes[node].parent;
+            const Eigen::Matrix4f local = node_local_matrix(node);
+            world[node] = (p >= 0) ? (world[p] * local).eval() : local;
+            done[node] = 1;
+        }
+    }
+}
+
+void ArmatureModel::recompute_skin() {
+    std::vector<Eigen::Matrix4f> world;
+    compute_node_worlds(world);
+    const Eigen::Matrix4f meshInv = Eigen::Map<const Eigen::Matrix4f>(mMeshWorldInv.data());
+    mSkinFlat.assign(static_cast<size_t>(mJointCount) * 16, 0.0f);
+    mJointWorldFlat.assign(static_cast<size_t>(mJointCount) * 16, 0.0f);
+    for (int j = 0; j < mJointCount; ++j) {
+        const int node = mJointToNode[j];
+        const Eigen::Matrix4f jw = meshInv * world[node];  // joint in render space
+        const Eigen::Matrix4f ibm = Eigen::Map<const Eigen::Matrix4f>(&mInverseBindFlat[static_cast<size_t>(j) * 16]);
+        const Eigen::Matrix4f skin = jw * ibm;
+        std::memcpy(&mSkinFlat[static_cast<size_t>(j) * 16], skin.data(), 16 * sizeof(float));
+        std::memcpy(&mJointWorldFlat[static_cast<size_t>(j) * 16], jw.data(), 16 * sizeof(float));
+    }
+}
+
+void ArmatureModel::rotate_joint(int jointIndex, const Eigen::Quaternionf& deltaLocal) {
+    if (jointIndex < 0 || jointIndex >= mJointCount) return;
+    float* p = &mJointPose[static_cast<size_t>(jointIndex) * 4];
+    const Eigen::Quaternionf nq = (Eigen::Quaternionf(p[3], p[0], p[1], p[2]) * deltaLocal).normalized();
+    p[0] = nq.x(); p[1] = nq.y(); p[2] = nq.z(); p[3] = nq.w();
+    recompute_skin();
+}
+
+void ArmatureModel::set_joint_pose(int jointIndex, const Eigen::Quaternionf& localPose) {
+    if (jointIndex < 0 || jointIndex >= mJointCount) return;
+    const Eigen::Quaternionf q = localPose.normalized();
+    float* p = &mJointPose[static_cast<size_t>(jointIndex) * 4];
+    p[0] = q.x(); p[1] = q.y(); p[2] = q.z(); p[3] = q.w();
+    recompute_skin();
+}
+
+void ArmatureModel::reset_pose() {
+    for (int j = 0; j < mJointCount; ++j) {
+        float* p = &mJointPose[static_cast<size_t>(j) * 4];
+        p[0] = p[1] = p[2] = 0.0f; p[3] = 1.0f;
+    }
+    recompute_skin();
+}
+
+Eigen::Matrix4f ArmatureModel::joint_world_matrix(int jointIndex) const {
+    if (jointIndex < 0 || static_cast<size_t>(jointIndex) * 16 + 16 > mJointWorldFlat.size())
+        return Eigen::Matrix4f::Identity();
+    return Eigen::Map<const Eigen::Matrix4f>(&mJointWorldFlat[static_cast<size_t>(jointIndex) * 16]);
+}
+
+Eigen::Vector3f ArmatureModel::joint_world_pos(int jointIndex) const {
+    return joint_world_matrix(jointIndex).col(3).head<3>();
+}
+
+void ArmatureModel::build_pickable_set() {
+    mPickableJoints.clear();
+    auto has = [](const std::string& s, const char* sub) { return s.find(sub) != std::string::npos; };
+    for (int j = 0; j < mJointCount; ++j) {
+        const std::string& n = mJointNames[j];
+        const bool excluded =
+            has(n, "Base") || n == "root" || n == "neutral_bone" || has(n, "Ear") ||
+            has(n, "BigToe") || has(n, "IndexToe") || has(n, "MidToe") ||
+            has(n, "RingToe") || has(n, "SmallToe");
+        if (!excluded) mPickableJoints.push_back(j);
+    }
 }
 
 #ifdef ARMATURE_MODEL_GL

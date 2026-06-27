@@ -55,4 +55,20 @@ private:
     bool mDirty = true;             // 3D needs a re-render
     bool mOrbiting = false, mPanning = false;
     bool mWantExit = false, mExitQueued = false;
+
+    // FK posing (M4): selection + a 3-axis (R=X,G=Y,B=Z) rotate gizmo.
+    int mSelectedJoint = -1;
+    bool mJointRotating = false;
+    int mActiveAxis = -1;                 // 0/1/2 while dragging an axis dot
+    Eigen::Vector2f mDragLastVec = Eigen::Vector2f::Zero();  // cursor−center, screen px
+
+    // The square device-px rect the 3D view composites into (computed from the
+    // window size + GUI scale; shared by draw and joint projection/picking).
+    void view_rect(float& x, float& y, float& size) const;
+    bool project_point(const Eigen::Vector3f& world, float& sx, float& sy) const;
+    bool project_joint(int jointIndex, float& sx, float& sy) const;
+    int pick_joint(float mouseX, float mouseY) const;       // nearest pickable joint, or -1
+    // Screen position of the selected joint's axis-`a` gizmo dot. False if none.
+    bool axis_dot_screen(int axis, float& sx, float& sy) const;
+    float gizmo_radius() const;           // device px
 };
