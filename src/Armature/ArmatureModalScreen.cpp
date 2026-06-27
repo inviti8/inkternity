@@ -2,6 +2,7 @@
 
 #include "ArmatureModel.hpp"
 #include "ArmatureBake.hpp"
+#include "ArmaturePresets.hpp"
 #include "../MainProgram.hpp"
 #include "../World.hpp"
 #include "../WorldUndoManager.hpp"
@@ -18,7 +19,9 @@
 #include "../GUIStuff/ElementHelpers/ColorPickerHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
+#include "../GUIStuff/ElementHelpers/TextBoxHelpers.hpp"
 #include "../GUIStuff/Elements/ScrollArea.hpp"
+#include "../GUIStuff/Elements/ImageDisplay.hpp"
 
 #include <Helpers/ConvertVec.hpp>
 #include <Helpers/Logger.hpp>
@@ -31,6 +34,9 @@
 #include <include/core/SkPaint.h>
 #include <include/core/SkRect.h>
 #include <include/core/SkSamplingOptions.h>
+#include <include/core/SkStream.h>
+#include <include/core/SkData.h>
+#include <include/encode/SkPngEncoder.h>
 
 #include <algorithm>
 #include <cstring>
@@ -47,8 +53,25 @@
 
 using namespace GUIStuff::ElementHelpers;
 using GUIStuff::ScrollArea;
+using GUIStuff::ImageDisplay;
 
 namespace {
+// PHASE9.5 preset thumbnail size (square). Bigger than brush icons (64²) — a
+// figure needs the detail; still tiny on disk.
+constexpr int THUMB_DIM = 128;
+
+// Encode a top-down RGBA8 buffer (as ArmatureBake produces) to PNG bytes.
+std::vector<uint8_t> encode_rgba_png(const std::vector<uint8_t>& rgba, int dim) {
+    if (static_cast<int>(rgba.size()) < dim * dim * 4) return {};
+    const SkImageInfo info = SkImageInfo::Make(dim, dim, kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
+    const SkPixmap pix(info, rgba.data(), static_cast<size_t>(dim) * 4);
+    SkDynamicMemoryWStream stream;
+    if (!SkPngEncoder::Encode(&stream, pix, {})) return {};
+    auto data = stream.detachAsData();
+    if (!data) return {};
+    return std::vector<uint8_t>(data->bytes(), data->bytes() + data->size());
+}
+
 // The 22-slider shape-key system (ARMATURE-SCHEMA.md §2). Binary sliders blend
 // between two opposing morphs (range [-1,1], centre 0); singular sliders drive
 // one morph (range [0,1]). Morph names are the actual glb target names.
@@ -96,6 +119,111 @@ void ArmatureModalScreen::apply_shape_sliders() {
         }
     }
     mModel->set_morph_weights(w);
+}
+
+// ---- PHASE9.5 app-level Character / Scene presets ------------------------
+
+void ArmatureModalScreen::save_scene_preset() {
+    if (!mModel || mSceneName.empty()) {
+        if (mModel) Logger::get().log("USERINFO", "Name the scene before saving.");
+        return;
+    }
+    if (ArmaturePresets::scene_exists(main.conf.configPath, mSceneName)) {
+        Logger::get().log("USERINFO",
+            "A scene named \"" + mSceneName + "\" already exists — pick a different name.");
+        return;
+    }
+    ArmaturePresets::Scene s;
+    s.name = mSceneName;
+    s.camYaw = mCamera.yaw; s.camPitch = mCamera.pitch; s.camDist = mCamera.distance;
+    s.camTx = mCamera.target.x(); s.camTy = mCamera.target.y(); s.camTz = mCamera.target.z();
+    s.fovDeg = mFovDeg; s.ortho = mCamera.ortho;
+    s.lightAz = mLight.azimuth; s.lightEl = mLight.elevation; s.lightInt = mLight.intensity;
+    s.lightAmb = mLight.ambient; s.lightSky = mLight.sky;
+    // Thumbnail = the current model under THIS scene's own view (shows the mood).
+    std::optional<std::vector<uint8_t>> thumb;
+    std::vector<uint8_t> rgba;
+    if (ArmatureBake::render_armature_rgba(*mModel, mCamera.view_proj(1.0f), mLight.travel_dir(),
+                                           mLight.ambient, mLight.intensity, mLight.sky, THUMB_DIM, rgba)) {
+#ifdef ARMATURE_MODAL_GL
+        main.window.ctx->resetContext();
+#endif
+        auto png = encode_rgba_png(rgba, THUMB_DIM);
+        if (!png.empty()) thumb = std::move(png);
+    }
+    ArmaturePresets::save_scene(main.conf.configPath, s, thumb);
+    mSceneName.clear();
+    request_redraw();
+}
+
+void ArmatureModalScreen::apply_scene_preset(const ArmaturePresets::Scene& s) {
+    mCamera.yaw = s.camYaw; mCamera.pitch = s.camPitch; mCamera.distance = s.camDist;
+    mCamera.target = Eigen::Vector3f(s.camTx, s.camTy, s.camTz);
+    mFovDeg = s.fovDeg; mCamera.fovY = mFovDeg * 0.01745329252f; mCamera.ortho = s.ortho;
+    mLight.azimuth = s.lightAz; mLight.elevation = s.lightEl; mLight.intensity = s.lightInt;
+    mLight.ambient = s.lightAmb; mLight.sky = s.lightSky;
+    mFramed = true;  // explicit view; don't auto-reframe
+    request_redraw();
+}
+
+void ArmatureModalScreen::save_character_preset() {
+    if (!mModel) return;
+    if (mCharName.empty()) { Logger::get().log("USERINFO", "Name the character before saving."); return; }
+    if (ArmaturePresets::character_exists(main.conf.configPath, mCharName)) {
+        Logger::get().log("USERINFO",
+            "A character named \"" + mCharName + "\" already exists — pick a different name.");
+        return;
+    }
+    ArmaturePresets::Character c;
+    c.name = mCharName;
+    c.height = mHeight;
+    for (int i = 0; i < mModel->material_count(); ++i) {
+        const auto col = mModel->material_color(i);
+        c.materialColors.push_back({mModel->material_name(i), col[0], col[1], col[2], col[3]});
+    }
+    c.shapeSliders = mShapeSliders;
+    // Thumbnail = the figure (current look) under a neutral 3/4 view + default light,
+    // so character thumbs are comparable regardless of the editor's live camera.
+    std::optional<std::vector<uint8_t>> thumb;
+    Armature::OrbitCamera tcam;
+    tcam.frame_bounds(mModel->bounds_min(), mModel->bounds_max());
+    tcam.yaw = 0.5f; tcam.pitch = 0.12f;
+    Armature::Lighting tlight;
+    std::vector<uint8_t> rgba;
+    if (ArmatureBake::render_armature_rgba(*mModel, tcam.view_proj(1.0f), tlight.travel_dir(),
+                                           tlight.ambient, tlight.intensity, tlight.sky, THUMB_DIM, rgba)) {
+#ifdef ARMATURE_MODAL_GL
+        main.window.ctx->resetContext();
+#endif
+        auto png = encode_rgba_png(rgba, THUMB_DIM);
+        if (!png.empty()) thumb = std::move(png);
+    }
+    ArmaturePresets::save_character(main.conf.configPath, c, thumb);
+    mCharName.clear();
+    request_redraw();
+}
+
+void ArmatureModalScreen::apply_character_preset(const ArmaturePresets::Character& c) {
+    if (!mModel) return;
+    mHeight = c.height;
+    mModel->set_height(mHeight);
+    mModel->reset_material_colors();
+    for (const auto& mc : c.materialColors)
+        for (int i = 0; i < mModel->material_count(); ++i)
+            if (mModel->material_name(i) == mc.material) {
+                mModel->set_material_color(i, mc.r, mc.g, mc.b, mc.a);
+                break;
+            }
+    mMatColors.clear();
+    for (int i = 0; i < mModel->material_count(); ++i) {
+        const auto col = mModel->material_color(i);
+        mMatColors.emplace_back(col[0], col[1], col[2], col[3]);
+    }
+    mShapeSliders.assign(kShapeSliderCount, 0.0f);
+    for (int i = 0; i < kShapeSliderCount && i < static_cast<int>(c.shapeSliders.size()); ++i)
+        mShapeSliders[i] = c.shapeSliders[i];
+    apply_shape_sliders();
+    request_redraw();
 }
 
 ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen> prev,
@@ -356,6 +484,29 @@ void ArmatureModalScreen::gui_layout_run() {
     const Clay_Color panelBg = convert_vec4<Clay_Color>(gui.io.theme->backColor1);
     const std::function<void()> markDirty = [this] { request_redraw(); };
 
+    // PHASE9.5 preset tile: thumbnail (when a sidecar exists) + name (click =
+    // apply) + an X (delete). Shared by the Character and Scene tabs.
+    auto preset_tile = [&](int64_t tileId, const std::string& name, const std::string& thumbPath,
+                           const std::function<void()>& onApply, const std::function<void()>& onDelete) {
+        gui.new_id(tileId, [&] {
+            CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+                                     .childGap = 4,
+                                     .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                                     .layoutDirection = CLAY_LEFT_TO_RIGHT}}) {
+                if (!thumbPath.empty()) {
+                    CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_FIXED(40),
+                                                        .height = CLAY_SIZING_FIXED(40)}}}) {
+                        gui.element<ImageDisplay>("thumb", ImageDisplay::Data{.imgPath = thumbPath, .radius = 4.0f});
+                    }
+                }
+                CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(0)}}}) {
+                    text_button(gui, "name", name, {.wide = true, .onClick = onApply});
+                }
+                text_button(gui, "del", "X", {.onClick = onDelete});
+            }
+        });
+    };
+
     CLAY_AUTO_ID({
         .layout = {
             .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0)},
@@ -383,12 +534,16 @@ void ArmatureModalScreen::gui_layout_run() {
             // models fall back to Camera/Light/Materials/Lens.
             const bool poseable = mModel && !mModel->is_static();
             if (mTab == 2 && !poseable) mTab = 0;
-            if (mTab == 3 && !mBundledDefault) mTab = 0;
+            if ((mTab == 3 || mTab == 5) && !mBundledDefault) mTab = 0;  // Body + Character
             tab("arm tab camera", "Camera", 0);
             tab("arm tab light", "Light", 1);
             if (poseable) tab("arm tab pose", "Pose", 2);
             if (mBundledDefault) tab("arm tab body", "Body", 3);
             tab("arm tab materials", "Materials", 4);
+            // PHASE9.5 — app-level presets. Character is bundled-rig only (D2);
+            // Scene (camera+light+lens) is model-agnostic, always available.
+            if (mBundledDefault) tab("arm tab character", "Character", 5);
+            tab("arm tab scene", "Scene", 6);
             CLAY_AUTO_ID({ .layout = { .sizing = {.width = CLAY_SIZING_GROW(0)} } }) {}  // spacer
             if (mEditTarget)
                 text_button(gui, "armature bake", "Bake", {.onClick = [this] { do_bake(); }});
@@ -525,6 +680,58 @@ void ArmatureModalScreen::gui_layout_run() {
                                 request_redraw();
                             }});
                     }
+                } else if (mTab == 5 && mModel) {  // Character presets (bundled rig)
+                    input_text_field(gui, "char name", "Name", &mCharName, {.emptyText = "Character name"});
+                    text_button(gui, "save character", "Save Character",
+                                {.wide = true, .onClick = [this] { save_character_preset(); }});
+                    gui.clipping_element<ScrollArea>("character scroll", ScrollArea::Options{
+                        .scrollVertical = true,
+                        .clipVertical = true,
+                        .scrollbarY = ScrollArea::ScrollbarType::NORMAL,
+                        .innerContent = [&](const ScrollArea::InnerContentParameters&) {
+                            CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+                                                     .childGap = gui.io.theme->childGap1,
+                                                     .layoutDirection = CLAY_TOP_TO_BOTTOM}}) {
+                                auto chars = ArmaturePresets::scan_characters(main.conf.configPath);
+                                if (chars.empty()) text_label(gui, "No saved characters yet.");
+                                for (auto& ch : chars) {
+                                    const int64_t tid = 5000 + static_cast<int64_t>(
+                                        std::hash<std::string>{}(ch.name) & 0x7fffffff);
+                                    ArmaturePresets::Character cc = ch;   // value-copy for the capture
+                                    const std::string nm = ch.name;
+                                    preset_tile(tid, ch.name, ch.thumbPath,
+                                        [this, cc] { apply_character_preset(cc); },
+                                        [this, nm] { ArmaturePresets::remove_character(main.conf.configPath, nm);
+                                                     request_redraw(); });
+                                }
+                            }
+                        }});
+                } else if (mTab == 6 && mModel) {  // Scene presets (camera + light + lens)
+                    input_text_field(gui, "scene name", "Name", &mSceneName, {.emptyText = "Scene name"});
+                    text_button(gui, "save scene", "Save Scene",
+                                {.wide = true, .onClick = [this] { save_scene_preset(); }});
+                    gui.clipping_element<ScrollArea>("scene scroll", ScrollArea::Options{
+                        .scrollVertical = true,
+                        .clipVertical = true,
+                        .scrollbarY = ScrollArea::ScrollbarType::NORMAL,
+                        .innerContent = [&](const ScrollArea::InnerContentParameters&) {
+                            CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0)},
+                                                     .childGap = gui.io.theme->childGap1,
+                                                     .layoutDirection = CLAY_TOP_TO_BOTTOM}}) {
+                                auto scenes = ArmaturePresets::scan_scenes(main.conf.configPath);
+                                if (scenes.empty()) text_label(gui, "No saved scenes yet.");
+                                for (auto& sc : scenes) {
+                                    const int64_t tid = 6000 + static_cast<int64_t>(
+                                        std::hash<std::string>{}(sc.name) & 0x7fffffff);
+                                    ArmaturePresets::Scene scc = sc;   // value-copy for the capture
+                                    const std::string nm = sc.name;
+                                    preset_tile(tid, sc.name, sc.thumbPath,
+                                        [this, scc] { apply_scene_preset(scc); },
+                                        [this, nm] { ArmaturePresets::remove_scene(main.conf.configPath, nm);
+                                                     request_redraw(); });
+                                }
+                            }
+                        }});
                 }
             }
             CLAY_AUTO_ID({ .layout = { .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0)} } }) {}
