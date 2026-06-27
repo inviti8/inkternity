@@ -243,6 +243,12 @@ uniform); the renderer keeps its matte lighting over the chosen color.
    Humanoid subset maps to the enum; extras (`*Base`, `jaw`, ears, per-toe) are
    kept as free-form posable nodes.
 4. **Skinning**: hand-rolled FK + LBS, ≤4 influences, morphs applied before LBS.
+   ⚠️ **Morph deltas are SPARSE accessors** (Blender stores each target dense or
+   sparse, whichever is smaller; pure-sparse targets omit the bufferView). Read
+   them with `cgltf_accessor_unpack_floats()`, **never** `cgltf_accessor_read_float()`
+   — the latter returns false for sparse accessors, which silently zeroes the
+   delta and turns the shape key into a no-op (the original M5.1c bug, fixed
+   2026-06-27).
 5. **Materials**: use `baseColorFactor`, matte lighting, **double-sided**;
    primitive 2 has no material → assign a sensible default (§6 D6).
 6. **Posing handles** (LOCKED — §7 Q1): the gizmo exposes a **curated set** —
