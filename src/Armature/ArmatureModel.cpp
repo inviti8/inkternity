@@ -52,17 +52,19 @@ bool is_stature_joint(const std::string& raw) {
     // sits between the shoulders and neck, and scaling it over-stretches the neck.
     if (n == "spine" || n == "chest" || n == "neck") return true;
     auto has = [&](const char* s) { return n.find(s) != std::string::npos; };
-    // Legs (thigh/shin; "toes" = foot offset) and arms (upper arm/forearm; "hand"
-    // = forearm offset, so the arm lengthens proportionally). Hands/feet/fingers/
-    // toes themselves stay constant size.
-    return has("upperleg") || has("lowerleg") || has("toes") ||
+    // Legs (thigh/shin; "foot" bone = ankle offset = shin length) and arms (upper
+    // arm/forearm; "hand" = forearm offset, so the arm lengthens proportionally).
+    // Hands/feet/fingers/toes themselves stay constant size. NOTE: matches "foot"
+    // (the ankle bone, formerly "leftToes"); the per-toe bones use "Toe" singular
+    // so they are unaffected.
+    return has("upperleg") || has("lowerleg") || has("foot") ||
            has("upperarm") || has("lowerarm") || has("hand");
 }
 
 // Segment bones whose MESH should axially stretch with height (vs. just
 // telescoping at joints): the limb segments + torso/neck. Each has a single
 // limb-continuation child that defines the stretch axis. Excludes hips (a branch
-// point / grounding offset) and the foot/hand offsets (toes/hand — those lengthen
+// point / grounding offset) and the foot/hand offsets (foot/hand — those lengthen
 // the shin/forearm, whose mesh is on lowerLeg/lowerArm instead).
 bool is_stretch_bone(const std::string& raw) {
     std::string n;

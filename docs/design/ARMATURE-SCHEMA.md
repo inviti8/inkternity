@@ -46,21 +46,21 @@ Armature
 ├─ mesh_body            (mesh=0, skin=0)
 ├─ root
 │   └─ hips
-│       ├─ leftUpperLegBase → leftUpperLeg → leftlowerLeg → leftToes → [5 toes × Metacarpal/Proximal/Distal]
+│       ├─ leftUpperLegBase → leftUpperLeg → leftlowerLeg → leftFoot → [5 toes × Metacarpal/Proximal/Distal]
 │       ├─ spine → chest → upperChest
 │       │     ├─ neck → head → { jaw, leftEar, rightEar }
 │       │     ├─ leftShoulderBase → leftShoulder → leftUpperArm → leftLowerArm → leftHand → [5 fingers × Proximal/Intermediate/Distal]
 │       │     └─ rightShoulderBase → rightShoulder → rightUpperArm → rightLowerArm → rightHand → [5 fingers × …]
-│       └─ rightUpperLegBase → rightUpperLeg → rightLowerLeg → rightToes → [5 toes × …]
+│       └─ rightUpperLegBase → rightUpperLeg → rightLowerLeg → rightFoot → [5 toes × …]
 └─ neutral_bone         (Blender exporter artifact — see §6 D5)
 ```
 
 Notable structure:
 - **Standard VRM humanoid set present**: hips, spine, chest, **upperChest**,
-  neck, head, L/R shoulder→hand, 15 finger bones/hand, L/R upperLeg→toes.
+  neck, head, L/R shoulder→hand, 15 finger bones/hand, L/R upperLeg→foot.
 - **Extra (non-VRM) posing/helper bones**: `root`, `*ShoulderBase`,
   `*UpperLegBase`, `jaw`, `leftEar`, `rightEar`, and **full per-toe
-  articulation** (5 toes × 3 bones × 2 feet = **30 toe bones** + `*Toes`). This
+  articulation** (5 toes × 3 bones × 2 feet = **30 toe bones** + `*Foot`). This
   is *far beyond* "simplified" — see §6 D2.
 - **76 / 89 joints actually skin vertices.** The 13 weightless joints are the toe
   `*Metacarpal` bones, the `*ShoulderBase`/`rightUpperLegBase` helpers — pure FK
@@ -247,8 +247,9 @@ uniform); the renderer keeps its matte lighting over the chosen color.
    primitive 2 has no material → assign a sensible default (§6 D6).
 6. **Posing handles** (LOCKED — §7 Q1): the gizmo exposes a **curated set** —
    body/spine/hips, head + jaw, both shoulders→hands incl. **per-finger** joints,
-   and legs; **each foot's toes collapse to one per-foot toe handle** (the 30 toe
-   bones stay loaded/skinned but are not individually surfaced). `*Base` helpers,
+   and legs; **each foot collapses to one per-foot handle** (the `leftFoot`/
+   `rightFoot` bone; the 30 toe bones stay loaded/skinned but are not individually
+   surfaced). `*Base` helpers,
    ears bones, and `neutral_bone` are not posing handles.
 
 ---
@@ -300,7 +301,7 @@ members ([[project_layer_metainfo_eigen_gotcha]]) — use plain float arrays.
 |---|---|---|---|
 | **D1** | **Forward axis is +X**, but PHASE9 build sheet specifies +Z-forward (−Y in Blender). | Camera/loader default-view direction. | **Adopt +X** (the model is built); correct the PHASE9 build sheet. *(§7 Q2)* |
 | **D2** | Notes say "simplified bones," but rig has **89 joints incl. 30 per-toe bones + ears + jaw + `*Base` helpers**. | Poser UI: 89 FK handles is unusable raw. | Curate an exposed posing set. *(§7 Q1)* |
-| **D3** | Bone-name hygiene: **trailing space** in `leftUpperLeg `/`rightUpperLeg `; casing `leftlowerLeg` (vs `leftLowerArm`); toes use `Mid`/`Toe` vs fingers `Middle`. | Exact-name canonical mapping breaks. | Normalise on load (trim+case) **and** ideally re-export clean. *(§7 Q3)* |
+| **D3** | Bone-name hygiene: **trailing space** in `leftUpperLeg `/`rightUpperLeg `; casing `leftlowerLeg` (vs `leftLowerArm`); toes use `Mid`/`Toe` vs fingers `Middle`. (The ankle bone was renamed `leftToes`/`rightToes` → `leftFoot`/`rightFoot` 2026-06-27.) | Exact-name canonical mapping breaks. | Normalise on load (trim+case); remaining quirks still pending a clean re-export. *(§7 Q3)* |
 | **D4** | Lip morphs are `mesh_mouth_upper_lip_*` / `mesh_mouth_lower_lip_*`; notes wrote `mesh_upper_lip_*` / `mesh_lower_lip_*`. | Slider config must use real names. | Schema §2 uses the **actual** names (done). |
 | **D5** | `neutral_bone` (joint 88) is a Blender-exporter artifact (mesh-as-child / non-deform). | Stray joint. | Ignore in UI; harmless to skinning. Optionally clean source. |
 | **D6** | **Primitive 2 (240 verts, forehead) has no material.** | Renders with no base color. | Identify (eyebrows? lashes?); assign default material + decide visibility. *(§7 Q4)* |
@@ -319,8 +320,9 @@ members ([[project_layer_metainfo_eigen_gotcha]]) — use plain float arrays.
 
 - **Q1 — Posing joint set: core + fingers, toes collapsed.** ✅ The gizmo exposes
   the body/spine/head/jaw, both arms incl. **per-finger** articulation, and legs —
-  but each foot's **toes collapse to a single per-foot toe pose** (the 30 toe
-  bones are not individually exposed). The full hierarchy is still loaded/skinned;
+  but each foot collapses to a single **per-foot handle** (the `leftFoot`/
+  `rightFoot` bone; the 30 toe bones are not individually exposed). The full
+  hierarchy is still loaded/skinned;
   this is purely which handles the UI surfaces. (See §3.6.)
 - **Q2 — Orientation: accept +X-forward.** ✅ Model stays as-built; the **PHASE9
   build sheet is corrected** to +X and the loader's default camera looks down +X.
