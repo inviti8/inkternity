@@ -324,7 +324,9 @@ const std::string& DrawingProgramLayerListItem::get_name() const {
 void DrawingProgramLayerListItem::set_alpha(DrawingProgramLayerManager& layerMan, float newAlpha) const {
     if(displayData && displayData->alpha != newAlpha) {
         displayData->alpha = newAlpha;
-        layerMan.drawP.drawCache.clear_own_cached_surfaces();
+        // PERF: an alpha change only affects this layer's own footprint —
+        // invalidate just that, not the whole cache (see set_visible).
+        layerMan.drawP.drawCache.invalidate_layer_footprint(this);
         layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
     }
 }
@@ -336,7 +338,12 @@ float DrawingProgramLayerListItem::get_alpha() const {
 void DrawingProgramLayerListItem::set_visible(DrawingProgramLayerManager& layerMan, bool newVisible) const {
     if(displayData && displayData->visible != newVisible) {
         displayData->visible = newVisible;
-        layerMan.drawP.drawCache.clear_own_cached_surfaces();
+        // PERF: a visibility / alpha / blend-mode change only affects the screen
+        // region this layer's own content covers, so invalidate just that
+        // footprint instead of clear_own_cached_surfaces() (which threw away
+        // EVERY cached node surface, forcing a full-canvas re-rasterize on each
+        // toggle — and once per frame while dragging the alpha slider).
+        layerMan.drawP.drawCache.invalidate_layer_footprint(this);
         layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
     }
 }
@@ -348,7 +355,9 @@ bool DrawingProgramLayerListItem::get_visible() const {
 void DrawingProgramLayerListItem::set_blend_mode(DrawingProgramLayerManager& layerMan, SerializedBlendMode newBlendMode) const {
     if(displayData && displayData->blendMode != newBlendMode) {
         displayData->blendMode = newBlendMode;
-        layerMan.drawP.drawCache.clear_own_cached_surfaces();
+        // PERF: a blend-mode change only affects this layer's own footprint —
+        // invalidate just that, not the whole cache (see set_visible).
+        layerMan.drawP.drawCache.invalidate_layer_footprint(this);
         layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
     }
 }

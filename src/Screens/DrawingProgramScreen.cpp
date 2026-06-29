@@ -1,5 +1,6 @@
 #include "DrawingProgramScreen.hpp"
 #include "../MainProgram.hpp"
+#include "LoadingScreen.hpp"
 
 DrawingProgramScreen::DrawingProgramScreen(MainProgram& m):
     Screen(m)
@@ -18,6 +19,17 @@ void DrawingProgramScreen::input_add_file_to_canvas_callback(const CustomEvents:
 }
 
 void DrawingProgramScreen::input_open_infinipaint_file_callback(const CustomEvents::OpenInfiniPaintFileEvent& openFile) {
+    // Large canvases load synchronously on the main thread (seconds of
+    // decompress + deserialize) — show a one-frame "Loading…" interstitial
+    // first, then restore this screen so the new tab opens with toolbar state
+    // intact. A buffer-backed (networked/web) open carries a string_view that
+    // can't be deferred, so fall through to the immediate path.
+    if(openFile.filePathSource.has_value() && openFile.fileDataBuffer.empty()) {
+        main.set_screen([this, openFile] (std::unique_ptr<Screen> old) {
+            return std::make_unique<LoadingScreen>(main, openFile, std::move(old));
+        });
+        return;
+    }
     main.create_new_tab(openFile);
 }
 

@@ -21,6 +21,7 @@
 #include "Helpers/StringHelpers.hpp"
 #include "PhoneDrawingProgramScreen.hpp"
 #include "DesktopDrawingProgramScreen.hpp"
+#include "LoadingScreen.hpp"
 #include <SDL3/SDL_misc.h>
 #include <SDL3/SDL_time.h>
 #include <SDL3/SDL_timer.h>
@@ -1287,6 +1288,15 @@ void FileSelectScreen::start_edit_mode() {
 }
 
 void FileSelectScreen::input_open_infinipaint_file_callback(const CustomEvents::OpenInfiniPaintFileEvent& openFile) {
+    // Large canvases take a few seconds to decompress + deserialize (a
+    // synchronous, main-thread load). Route disk-path opens through a one-frame
+    // "Loading…" interstitial so the window isn't a frozen file browser during
+    // the load. A buffer-backed open carries a string_view we must consume this
+    // frame, so it can't be deferred — fall through to the immediate path.
+    if(openFile.filePathSource.has_value() && openFile.fileDataBuffer.empty()) {
+        main.set_screen([this, openFile] (std::unique_ptr<Screen>) { return std::make_unique<LoadingScreen>(main, openFile); });
+        return;
+    }
     main.create_new_tab(openFile);
     // Phone UI is reserved for touch-first builds (Android, web). On
     // desktop OSes the Phone screen's condensed top/bottom toolbars hide

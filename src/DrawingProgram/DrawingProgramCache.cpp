@@ -490,14 +490,27 @@ void DrawingProgramCache::draw_components_to_canvas(SkCanvas* canvas, const Draw
             return true;
         });
 
-        recursive_draw_layer_item_to_canvas(drawP.layerMan.get_layer_root(), canvas, drawData, drawBounds, uncachedNodes);
+        // PERF: bucket every directly-drawn component by its parent layer ONCE
+        // per walk. Previously recursive_draw_layer_item_to_canvas re-scanned
+        // the full uncachedNodes set AND unsortedComponents for each leaf layer
+        // (O(layers × components) every frame) — the dominant per-frame cost on
+        // big multi-layer files. Each component lives in exactly one place (one
+        // BVH node, or unsorted), so bucketing has no duplicates.
+        DrawListByLayer drawListByLayer;
+        for(auto& node : uncachedNodes)
+            for(auto& c : node->components)
+                drawListByLayer[c->obj->parentLayer].emplace_back(c);
+        for(auto& c : unsortedComponents)
+            drawListByLayer[c->obj->parentLayer].emplace_back(c);
+
+        recursive_draw_layer_item_to_canvas(drawP.layerMan.get_layer_root(), canvas, drawData, drawBounds, drawListByLayer);
 
         for(auto& nodeCacheToDraw : cachedNodesToDraw)
             draw_cache_image_to_canvas(canvas, drawData, nodeCacheToDraw);
     }
 }
 
-void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData, const std::optional<SCollision::AABB<WorldScalar>>& drawBounds, const std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>>& nodesToDraw) {
+void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData, const std::optional<SCollision::AABB<WorldScalar>>& drawBounds, const DrawListByLayer& drawListByLayer) {
     if(layerListItem.get_visible()) {
         SkPaint layerPaint;
         layerPaint.setAlphaf(layerListItem.get_alpha());
@@ -506,39 +519,32 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
         ++RenderStats::get().live.saveLayersIssued;   // F7.1 signal: isolation buffer opened per visible layer
         if(layerListItem.is_folder()) {
             for(auto& p : *layerListItem.get_folder().folderList | std::views::reverse)
-                recursive_draw_layer_item_to_canvas(*p.obj, canvas, drawData, drawBounds, nodesToDraw);
+                recursive_draw_layer_item_to_canvas(*p.obj, canvas, drawData, drawBounds, drawListByLayer);
         }
         else {
             std::vector<CanvasComponentContainer::ObjInfo*> compsToDraw;
-            // PHASE7: mask shapes are not drawn as content (is_mask) — they only
-            // define the clip applied below. Exclude them from the predraw set.
-            parallel_loop_container(nodesToDraw, [&](auto& node) {
-                std::for_each(node->components.begin(), node->components.end(), [&](auto& c) {
-                    if(c->obj->parentLayer == &layerListItem && !c->obj->get_comp().is_mask() && (!drawBounds.has_value() || SCollision::collide(drawBounds.value(), c->obj->get_world_bounds().value())) && c->obj->should_draw(drawData))
+            // PERF: only this layer's directly-drawn components (BVH-node +
+            // unsorted), pre-bucketed in draw_components_to_canvas — no longer a
+            // per-layer scan of the whole uncached set.
+            auto bucketIt = drawListByLayer.find(&layerListItem);
+            if(bucketIt != drawListByLayer.end()) {
+                const std::vector<CanvasComponentContainer::ObjInfo*>& layerComps = bucketIt->second;
+                // PHASE7: mask shapes are not drawn as content (is_mask) — they
+                // only define the clip applied below. Exclude from the predraw set.
+                parallel_loop_container(layerComps, [&](auto& c) {
+                    if(!c->obj->get_comp().is_mask() && c->obj->get_world_bounds().has_value() && (!drawBounds.has_value() || SCollision::collide(drawBounds.value(), c->obj->get_world_bounds().value())) && c->obj->should_draw(drawData))
                         c->obj->preDrawDataHolder = c->obj->calculate_predraw_data(drawData);
                     else
                         c->obj->preDrawDataHolder = std::nullopt;
                 });
-            });
-            parallel_loop_container(unsortedComponents, [&](auto& c) {
-                if(c->obj->parentLayer == &layerListItem && !c->obj->get_comp().is_mask() && c->obj->get_world_bounds().has_value() && (!drawBounds.has_value() || SCollision::collide(drawBounds.value(), c->obj->get_world_bounds().value())) && c->obj->should_draw(drawData))
-                    c->obj->preDrawDataHolder = c->obj->calculate_predraw_data(drawData);
-                else
-                    c->obj->preDrawDataHolder = std::nullopt;
-            });
-            for(auto& node : nodesToDraw) {
-                for(auto& c : node->components) {
+                for(auto& c : layerComps) {
                     if(c->obj->preDrawDataHolder.has_value())
                         compsToDraw.emplace_back(c);
                 }
+                std::sort(compsToDraw.begin(), compsToDraw.end(), [](auto& a, auto& b) {
+                    return a->pos < b->pos;
+                });
             }
-            for(auto& c : unsortedComponents) {
-                if(c->obj->preDrawDataHolder.has_value())
-                    compsToDraw.emplace_back(c);
-            }
-            std::sort(compsToDraw.begin(), compsToDraw.end(), [](auto& a, auto& b) {
-                return a->pos < b->pos;
-            });
             // F7 signal: a visible leaf layer with nothing on screen still paid a
             // saveLayer above (visibleLayers - visibleLayersInView == wasted buffers).
             RenderStats::Frame& stats = RenderStats::get().live;
@@ -557,7 +563,14 @@ void DrawingProgramCache::recursive_draw_layer_item_to_canvas(const DrawingProgr
 }
 
 void DrawingProgramCache::invalidate_layer_footprint(const DrawingProgramLayerListItem* layer) {
-    if(!layer || layer->is_folder()) return;
+    if(!layer) return;
+    if(layer->is_folder()) {
+        // A group hide/alpha/blend or a folder delete affects every descendant
+        // layer's region — recurse to each child's footprint.
+        for(auto& p : *layer->get_folder().folderList)
+            invalidate_layer_footprint(&(*p.obj));
+        return;
+    }
     auto& components = layer->get_layer().components;
     if(!components) return;
     std::optional<SCollision::AABB<WorldScalar>> footprint;

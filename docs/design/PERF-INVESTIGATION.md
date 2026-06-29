@@ -12,6 +12,46 @@ diagnostic harness. No code changes yet — those come after the
 harness lands and confirms / refutes which hypotheses are the real
 culprits.
 
+## Update (2026-06-28) — layer-panel responsiveness pass (shipped)
+
+Follow-up report from zynx: on a ~20-layer/3-group production file the
+**layer editor goes unresponsive** after drawing a few hundred strokes on a
+new layer (can't hide/delete layers), and the **device fan spins while
+drawing**. Two load-bearing causes found in the cache draw path and fixed
+(no harness needed — the code confirmed the hypotheses directly):
+
+1. **`DrawingProgramCache::recursive_draw_layer_item_to_canvas` re-scanned the
+   whole uncached set + global `unsortedComponents` once PER leaf layer**
+   (`parentLayer == &layerListItem` filter) → **O(layers × components) every
+   frame**. This is the sustained CPU cost (heat/fan) and the low frame-rate
+   that made the layer panel feel dead. Fixed: bucket directly-drawn components
+   by `parentLayer` **once per walk** in `draw_components_to_canvas`; each leaf
+   draws only its own bucket. Each component is in exactly one place (one BVH
+   node or unsorted), so buckets have no duplicates.
+2. **Hide / alpha / blend / layer-delete called `clear_own_cached_surfaces()`**
+   — nuking *every* cached node surface and forcing a whole-canvas re-rasterize
+   next frame (the "can't hide/delete" hitch; also a full rebuild per alpha-
+   slider tick). Fixed: those paths now call `invalidate_layer_footprint()`
+   (made folder-recursive) so only the affected layer's region is invalidated.
+   Set/changes to parallax depth/anchor still full-clear (footprint moves).
+
+**Parallax-safe:** a parallax-active canvas fully bypasses the cache
+(`DrawingProgram::draw` → direct tree walk when `any_visible_parallax_layer()`),
+so the bucketing never runs there; footprint invalidation uses base bounds,
+correct because the cache is only live when all layers sit at depth 0.
+
+**Not done (deliberately):** the layer-delete **undo snapshot** still deep-
+copies every component (`get_undo_data` → `get_data_copy`) synchronously — it
+must run before the erase on live, non-thread-safe state, so it can't be made
+async without an ownership-transfer rework of the netID-based undo system.
+Cheap for vector strokes; the real delete hitch was the cache nuke (now gone).
+Revisit if raster-heavy layer deletes still stall.
+
+**Load feedback:** added `LoadingScreen` — a one-frame "Loading…" interstitial
+shown before the (synchronous, main-thread) file load so opening a large canvas
+no longer looks like a frozen window. Disk-path opens only (a buffer-backed
+open carries a `string_view` that can't be deferred).
+
 ## What happens when an artist paints a libmypaint stroke
 
 Single stroke lifecycle (`MyPaintBrushTool::begin_stroke` →

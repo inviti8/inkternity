@@ -93,7 +93,12 @@ class DrawingProgramCache {
         void build_bvh_node_coords_and_resolution(DrawingProgramCacheBVHNode& node);
         void refresh_draw_cache(const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode, const DrawData& drawData);
         void draw_cache_image_to_canvas(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode);
-        void recursive_draw_layer_item_to_canvas(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData, const std::optional<SCollision::AABB<WorldScalar>>& drawBounds, const std::vector<std::shared_ptr<DrawingProgramCacheBVHNode>>& nodesToDraw);
+        // PERF: components to draw directly this pass, pre-bucketed by their
+        // parent layer. Built once per draw_components_to_canvas call so each
+        // leaf layer scans only its own components instead of the whole
+        // uncached set ×(layer count). See draw_components_to_canvas.
+        using DrawListByLayer = std::unordered_map<const DrawingProgramLayerListItem*, std::vector<CanvasComponentContainer::ObjInfo*>>;
+        void recursive_draw_layer_item_to_canvas(const DrawingProgramLayerListItem& layerListItem, SkCanvas* canvas, const DrawData& drawData, const std::optional<SCollision::AABB<WorldScalar>>& drawBounds, const DrawListByLayer& drawListByLayer);
 
         std::optional<std::chrono::steady_clock::time_point> badFrametimeTimePoint;
         std::optional<std::chrono::steady_clock::time_point> unorderedObjectsExistTimePoint;

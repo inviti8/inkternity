@@ -18,7 +18,12 @@ void DrawingProgramLayerFolder::set_component_list_callbacks(DrawingProgramLayer
         layerMan.drawP.world.set_to_layout_gui_if_focus();
     });
     folderList->set_erase_callback([&](auto& c) {
-        layerMan.drawP.drawCache.clear_own_cached_surfaces();
+        // PERF: deleting a layer/folder only changes the region its content
+        // covered — invalidate that footprint (recurses into folders) instead of
+        // clear_own_cached_surfaces(), which nuked every cached node surface and
+        // forced a full-canvas re-rasterize next frame (a big hitch on large
+        // multi-layer files). Done before set_to_erase, while bounds are intact.
+        layerMan.drawP.drawCache.invalidate_layer_footprint(&(*c->obj));
         c->obj->set_to_erase();
         layerMan.drawP.world.set_to_layout_gui_if_focus();
     });
