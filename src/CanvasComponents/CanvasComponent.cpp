@@ -65,4 +65,8 @@ bool CanvasComponent::should_draw_extra(const DrawData& drawData, const CoordSpa
     return true;
 }
 
+uint64_t CanvasComponent::get_memory_size_bytes() const {
+    return 0;
+}
+
 CanvasComponent::~CanvasComponent() {}

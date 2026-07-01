@@ -145,6 +145,19 @@ uint32_t DrawingProgramLayerListItem::get_component_count() const {
         return layerData->components->size();
 }
 
+uint64_t DrawingProgramLayerListItem::get_total_memory_bytes() const {
+    uint64_t toRet = 0;
+    if(folderData) {
+        for(auto& c : *folderData->folderList)
+            toRet += c.obj->get_total_memory_bytes();
+    }
+    else if(layerData->components) {
+        for(auto& p : *layerData->components)
+            toRet += p.obj->get_comp().get_memory_size_bytes();
+    }
+    return toRet;
+}
+
 void DrawingProgramLayerListItem::scale_up(const WorldScalar& scaleUpAmount) {
     // World rescale moves every world coordinate — the group anchor and its
     // reference scale included. Depth is a dimensionless ratio and stays put.

@@ -60,6 +60,10 @@ class DrawingProgramLayerManager {
         bool layer_tree_root_exists();
         const DrawingProgramLayerListItem& get_layer_root();
         uint32_t total_component_count();
+        // Approximate uncompressed in-RAM footprint (bytes) of all components in
+        // the canvas. Drives the top-bar canvas-memory readout; O(components), so
+        // callers throttle it rather than calling per frame.
+        uint64_t total_component_memory_bytes();
 
         // PHASE4 Part A: true if any visible non-folder layer has a
         // non-zero parallax depth. The live draw path bypasses the

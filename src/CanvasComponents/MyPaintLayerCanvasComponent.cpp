@@ -109,6 +109,16 @@ void MyPaintLayerCanvasComponent::set_data_from(const CanvasComponent& other) {
     boundsCacheValid_     = false;
 }
 
+uint64_t MyPaintLayerCanvasComponent::get_memory_size_bytes() const {
+    // Uncompressed in-RAM cost = allocated tiles * (kTilePx^2 px * RGBA * 16bpc).
+    // This is the figure the artist manages via Reduce Layer Resolution and the
+    // one that hits the memory ceiling (RasterResolution.cpp uses the same math).
+    constexpr uint64_t kBytesPerTile =
+        static_cast<uint64_t>(HVYM::Brushes::LibMyPaintSkiaSurface::kTilePx) *
+        HVYM::Brushes::LibMyPaintSkiaSurface::kTilePx * 4ull * 2ull;
+    return static_cast<uint64_t>(surface_->allocated_tile_count()) * kBytesPerTile;
+}
+
 void MyPaintLayerCanvasComponent::draw(SkCanvas* canvas, const DrawData&, const std::shared_ptr<void>&) const {
     if (surface_->allocated_tile_count() == 0) return;
 
@@ -276,6 +286,7 @@ std::unique_ptr<CanvasComponent> MyPaintLayerCanvasComponent::get_data_copy() co
     return std::make_unique<MyPaintLayerCanvasComponent>();
 }
 void MyPaintLayerCanvasComponent::set_data_from(const CanvasComponent&) {}
+uint64_t MyPaintLayerCanvasComponent::get_memory_size_bytes() const { return 0; }
 void MyPaintLayerCanvasComponent::draw(SkCanvas*, const DrawData&, const std::shared_ptr<void>&) const {}
 void MyPaintLayerCanvasComponent::initialize_draw_data(DrawingProgram&) {}
 bool MyPaintLayerCanvasComponent::collides_within_coords(const SCollision::ColliderCollection<float>&) const { return false; }

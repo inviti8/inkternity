@@ -9,6 +9,8 @@
 #include "TimePoint.hpp"
 #include "Helpers/FileDownloader.hpp"
 #include <filesystem>
+#include <chrono>
+#include <optional>
 #include <modules/skparagraph/include/Paragraph.h>
 #include <nlohmann/json.hpp>
 #include <Helpers/Serializers.hpp>
@@ -99,6 +101,14 @@ class Toolbar {
         void chat_box();
         void global_log();
         void top_toolbar();
+        // Live canvas-memory readout in the top bar: uncompressed layer RAM vs
+        // system RAM, colored as it approaches the ceiling, so the artist can
+        // reduce layer resolution before hitting it. Recompute is throttled
+        // (walks every component) and the result cached in the members below.
+        void update_memory_readout();
+        std::string memoryReadout_;
+        int memorySeverity_ = 0; // 0 normal, 1 warning, 2 danger (fraction of system RAM)
+        std::optional<std::chrono::steady_clock::time_point> lastMemoryCalcTime_;
         void grid_menu(GUIStuff::Element* gridMenuButton);
         void add_grid();
         void stop_displaying_grid_menu();

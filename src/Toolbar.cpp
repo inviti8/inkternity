@@ -33,6 +33,8 @@
 #include <SDL3/SDL_dialog.h>
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_render.h>
+#include <SDL3/SDL_cpuinfo.h>
+#include <cstdio>
 #include <algorithm>
 #include <filesystem>
 #include <optional>
@@ -439,6 +441,38 @@ void Toolbar::paint_popup(Vector2f popupPos) {
     });
 }
 
+void Toolbar::update_memory_readout() {
+    // O(components), so recompute at ~2 Hz and cache — never per frame (we just
+    // spent effort removing per-frame O(components) costs; don't add one back).
+    auto now = std::chrono::steady_clock::now();
+    if(lastMemoryCalcTime_ && now - *lastMemoryCalcTime_ < std::chrono::milliseconds(500))
+        return;
+    lastMemoryCalcTime_ = now;
+
+    const uint64_t bytes = main.world->drawProg.layerMan.total_component_memory_bytes();
+    const int ramMB = SDL_GetSystemRAM();               // total physical RAM, MB
+    const uint64_t ramBytes = static_cast<uint64_t>(ramMB > 0 ? ramMB : 1) * 1024ull * 1024ull;
+    const double frac = static_cast<double>(bytes) / static_cast<double>(ramBytes);
+
+    auto human = [](uint64_t b) {
+        char buf[32];
+        const double mb = static_cast<double>(b) / (1024.0 * 1024.0);
+        if(mb >= 1024.0) std::snprintf(buf, sizeof(buf), "%.2f GB", mb / 1024.0);
+        else             std::snprintf(buf, sizeof(buf), "%.0f MB", mb);
+        return std::string(buf);
+    };
+
+    char pct[16];
+    std::snprintf(pct, sizeof(pct), "%.0f%%", frac * 100.0);
+    // e.g. "Canvas 1.42 GB / 15.9 GB (9%)" — absolute (the number to act on),
+    // the system limit, and the fraction that drives the color.
+    memoryReadout_ = "Canvas " + human(bytes) + " / " + human(ramBytes) + " (" + pct + ")";
+
+    // Uncompressed raster is also duplicated by undo snapshots + GPU upload, so
+    // one canvas eating a large slice of system RAM is the danger signal.
+    memorySeverity_ = frac >= 0.40 ? 2 : (frac >= 0.20 ? 1 : 0);
+}
+
 void Toolbar::top_toolbar() {
     auto& gui = main.g.gui;
     auto& io = gui.io;
@@ -650,6 +684,19 @@ void Toolbar::top_toolbar() {
                 if(avatarPopoverOpen && avatarTile)
                     avatar_popover(avatarTile);
             }
+
+            // Right-aligned live canvas-memory readout. The GROW spacer pushes it
+            // to the far edge of the top bar; its color escalates (white ->
+            // amber -> red) as uncompressed layer RAM climbs toward the system
+            // ceiling, cueing the artist to Reduce Layer Resolution.
+            update_memory_readout();
+            if(!memoryReadout_.empty()) {
+                CLAY_AUTO_ID({.layout = {.sizing = {.width = CLAY_SIZING_GROW(0)}}}) {}
+                if(memorySeverity_ == 2)      text_label_color(gui, memoryReadout_, SkColor4f{1.0f, 0.32f, 0.32f, 1.0f});
+                else if(memorySeverity_ == 1) text_label_color(gui, memoryReadout_, SkColor4f{1.0f, 0.72f, 0.20f, 1.0f});
+                else                          text_label(gui, memoryReadout_);
+            }
+
             if(menuPopUpOpen) {
                 gui.set_z_index(5, [&] {
                     gui.element<LayoutElement>("main menu popup", [&] (LayoutElement*, const Clay_ElementId& id) {

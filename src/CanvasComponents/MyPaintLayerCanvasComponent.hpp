@@ -35,6 +35,7 @@ class MyPaintLayerCanvasComponent : public CanvasComponent {
         virtual void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) override;
         virtual std::unique_ptr<CanvasComponent> get_data_copy() const override;
         virtual void set_data_from(const CanvasComponent& other) override;
+        virtual uint64_t get_memory_size_bytes() const override;
 
 #ifdef HVYM_HAS_LIBMYPAINT
         // Public so the tool can hand it to a MyPaintBrush mid-stroke.

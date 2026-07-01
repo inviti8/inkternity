@@ -35,6 +35,13 @@ class CanvasComponent {
 
         virtual void set_data_from(const CanvasComponent& other) = 0;
         virtual std::unique_ptr<CanvasComponent> get_data_copy() const = 0;
+
+        // Approximate uncompressed in-RAM footprint of this component, in bytes.
+        // Drives the top-bar canvas-memory readout so the artist can watch layer
+        // resolution against the system memory ceiling. Default 0; the raster
+        // types (which dominate memory) override. Cheap/O(1) — safe to sum over
+        // every component on a throttle.
+        virtual uint64_t get_memory_size_bytes() const;
     protected:
         friend class CanvasComponentContainer;
         friend class CanvasComponentAllocator;

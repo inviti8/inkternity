@@ -116,6 +116,12 @@ uint32_t DrawingProgramLayerManager::total_component_count() {
     return 0;
 }
 
+uint64_t DrawingProgramLayerManager::total_component_memory_bytes() {
+    if(layerTreeRoot)
+        return layerTreeRoot->get_total_memory_bytes();
+    return 0;
+}
+
 CanvasComponentContainer::ObjInfoIterator DrawingProgramLayerManager::get_edited_layer_end_iterator() {
     return editingLayer.lock()->get_layer().components->end();
 }

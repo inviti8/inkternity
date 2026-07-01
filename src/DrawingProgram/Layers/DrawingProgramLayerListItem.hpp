@@ -111,6 +111,9 @@ class DrawingProgramLayerListItem {
         DrawingProgramLayerListItemMetaInfo get_metainfo() const;
 
         uint32_t get_component_count() const;
+        // Approximate uncompressed in-RAM footprint (bytes) of every component
+        // under this item — sums each component's get_memory_size_bytes.
+        uint64_t get_total_memory_bytes() const;
 
         void erase_invalid_components();
     private:
