@@ -52,6 +52,42 @@ shown before the (synchronous, main-thread) file load so opening a large canvas
 no longer looks like a frozen window. Disk-path opens only (a buffer-backed
 open carries a `string_view` that can't be deferred).
 
+## Update (2026-06-30) — incremental BVH insertion (shipped)
+
+Follow-up from zynx after deeper production-file testing: the app still went
+**intermittently unresponsive during drawing and undo**, worsening as a layer
+filled — and lowering `MINIMUM_COMPONENTS_TO_START_REBUILD` (150→300→500) only
+**spaced the hangs out**, which isolated the cause: the periodic **full BVH
+rebuild** (`DrawingProgram::update` → `rebuild_cache` → `internal_build`).
+
+Root cause: `internal_build` calls **`clear_own_cached_surfaces()`**, which drops
+*every* cached node surface and detaches the window cache. The next frame then
+re-rasterizes the entire visible canvas in one shot (`refresh_all_draw_cache` +
+`window_cache_complete_refresh`) — a content-proportional, one-frame stall that
+fired every ~N strokes. Crucially, the rebuild **changes no pixels**; it only
+reorganizes which node owns which stroke, so nuking valid cached pixels is pure
+waste.
+
+**Fix — `absorb_unsorted_incrementally()`:** fold accumulated `unsortedComponents`
+into the *existing* BVH instead of rebuilding. Each stroke is inserted into the
+**deepest existing node whose bounds already fully contain it**
+(`find_deepest_containing_node` + `fully_contains_aabb`), so no node's
+`bounds`/`coords`/`resolution` change → every cached surface stays valid. And
+because an unsorted stroke is already composited into those caches as a direct
+draw, the move is **structural only — zero re-rasterization**. A fat leaf is
+re-split in place (`split_leaf_in_place`) with its own bounds held fixed, so the
+node's cache (keyed by its `shared_ptr`) survives the split while the tree stays
+balanced. `update()` tries absorption first and only falls back to the full
+`rebuild_cache()` when it can't drain the backlog — i.e. an empty-tree bootstrap
+or a batch drawn **beyond the current canvas extent** (rare; that path grows the
+root bounds, which the incremental path deliberately won't do).
+
+**Net:** the whole-canvas re-raster no longer fires during normal in-extent
+drawing (or erasing — same rebuild path), only on genuine canvas expansion.
+`MINIMUM_COMPONENTS_TO_START_REBUILD` now just paces the *cheap* absorption, so
+it's far less sensitive. **Follow-up if needed:** grow root bounds incrementally
+so frontier/expansion drawing also avoids the full rebuild.
+
 ## What happens when an artist paints a libmypaint stroke
 
 Single stroke lifecycle (`MyPaintBrushTool::begin_stroke` →

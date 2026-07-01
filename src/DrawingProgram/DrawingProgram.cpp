@@ -658,9 +658,21 @@ void DrawingProgram::update() {
     update_downloading_dropped_files();
     check_updateable_components();
 
-    if(drawCache.check_rebuild_needed_from_framerate() || drawCache.should_rebuild()) {
+    if(drawCache.check_rebuild_needed_from_framerate()) {
         stats.live.bvhRebuiltThisFrame = true;
         rebuild_cache();
+    }
+    else if(drawCache.should_rebuild()) {
+        // Fold the accumulated strokes into the existing BVH cheaply — this
+        // preserves every cached surface, so it doesn't stall the way the full
+        // rebuild does. Only if it can't drain the backlog (empty-tree bootstrap,
+        // or a batch of strokes drawn beyond the current canvas extent) do we
+        // fall back to the full rebuild.
+        drawCache.absorb_unsorted_incrementally();
+        if(drawCache.should_rebuild()) {
+            stats.live.bvhRebuiltThisFrame = true;
+            rebuild_cache();
+        }
     }
 
     stats.live.updateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - updateStart).count();

@@ -171,6 +171,74 @@ void DrawingProgramCache::clear_own_cached_surfaces() {
         windowCache.attachedDrawingProgramCache = nullptr;
 }
 
+size_t DrawingProgramCache::absorb_unsorted_incrementally() {
+    // An empty tree has no bounds to contain anything — let the caller bootstrap
+    // with a full build instead.
+    if(!bvhRoot || (bvhRoot->components.empty() && bvhRoot->children.empty()))
+        return unsortedComponents.size();
+    std::erase_if(unsortedComponents, [&](CanvasComponentContainer::ObjInfo* c) {
+        return insert_component_incremental(c);
+    });
+    return unsortedComponents.size();
+}
+
+bool DrawingProgramCache::insert_component_incremental(CanvasComponentContainer::ObjInfo* c) {
+    const auto& wb = c->obj->get_world_bounds();
+    if(!wb.has_value())
+        return false; // no world bounds -> not a spatial node member; leave unsorted
+    if(!bvhRoot->bounds.fully_contains_aabb(wb.value()))
+        return false; // outside current extent; placing it would grow node bounds and invalidate caches
+    const std::shared_ptr<DrawingProgramCacheBVHNode> target = find_deepest_containing_node(bvhRoot, wb.value());
+    target->components.emplace_back(c);
+    c->obj->cacheParentBvhNode = target;
+    // No invalidation: c was already composited into these caches as an unsorted
+    // component, so the pixels are unchanged — this is a pure structural move.
+    // Split a fat LEAF so any future full refresh of a single node stays bounded.
+    if(target->children.empty() && target->components.size() > MAXIMUM_COMPONENTS_IN_SINGLE_NODE)
+        split_leaf_in_place(target);
+    return true;
+}
+
+std::shared_ptr<DrawingProgramCacheBVHNode> DrawingProgramCache::find_deepest_containing_node(const std::shared_ptr<DrawingProgramCacheBVHNode>& node, const SCollision::AABB<WorldScalar>& aabb) {
+    for(const auto& child : node->children) {
+        if(child->bounds.fully_contains_aabb(aabb))
+            return find_deepest_containing_node(child, aabb);
+    }
+    return node; // no child fully contains it -> it belongs at this node (straddles a split, or lands in a gap)
+}
+
+void DrawingProgramCache::split_leaf_in_place(const std::shared_ptr<DrawingProgramCacheBVHNode>& node) {
+    // Partition an overflowing LEAF's components into quadrant children while
+    // keeping node->bounds/coords/resolution FIXED, so node's cache entry (keyed
+    // by this shared_ptr, mapped by these fields) stays valid and correct — the
+    // components it shows are unchanged, just reorganized. Mirrors the split in
+    // build_bvh_node but never recomputes the node's own bounds. The new children
+    // are fresh subtrees with no cache yet (they render lazily when needed).
+    std::vector<CanvasComponentContainer::ObjInfo*> comps = node->components;
+    node->components.clear();
+    const WorldVec center = node->bounds.center();
+    std::array<std::vector<CanvasComponentContainer::ObjInfo*>, 4> parts;
+    for(auto& c : comps) {
+        const auto& a = c->obj->get_world_bounds().value();
+        if(a.min.x() < center.x() && a.max.x() < center.x() && a.min.y() < center.y() && a.max.y() < center.y())
+            parts[0].emplace_back(c);
+        else if(a.min.x() > center.x() && a.max.x() > center.x() && a.min.y() < center.y() && a.max.y() < center.y())
+            parts[1].emplace_back(c);
+        else if(a.min.x() < center.x() && a.max.x() < center.x() && a.min.y() > center.y() && a.max.y() > center.y())
+            parts[2].emplace_back(c);
+        else if(a.min.x() > center.x() && a.max.x() > center.x() && a.min.y() > center.y() && a.max.y() > center.y())
+            parts[3].emplace_back(c);
+        else {
+            node->components.emplace_back(c); // straddles the center -> stays at this node
+            c->obj->cacheParentBvhNode = node;
+        }
+    }
+    for(auto& p : parts) {
+        if(!p.empty())
+            build_bvh_node(node->children.emplace_back(std::make_shared<DrawingProgramCacheBVHNode>()), p);
+    }
+}
+
 CanvasComponentContainer::ObjInfo* DrawingProgramCache::get_front_object_colliding_with_in_editing_layer(const SCollision::ColliderCollection<float>& cC) {
     auto cCWorld = drawP.world.drawData.cam.c.collider_to_world<SCollision::ColliderCollection<WorldScalar>, SCollision::ColliderCollection<float>>(cC);
     CanvasComponentContainer::ObjInfo* p = nullptr;

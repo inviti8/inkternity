@@ -41,6 +41,16 @@ class DrawingProgramCache {
         void node_loop_erase_if_components(const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode, std::function<bool(CanvasComponentContainer::ObjInfo* comp)> f);
         void node_loop_components(const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode, std::function<void(CanvasComponentContainer::ObjInfo* comp)> f);
         bool should_rebuild() const;
+        // PERF: fold accumulated unsorted strokes into the EXISTING BVH instead
+        // of the full nuke-and-rebuild (clear_own_cached_surfaces) that forces a
+        // whole-canvas re-rasterize in one frame — the periodic draw stall. Each
+        // stroke is placed in the deepest existing node whose bounds ALREADY
+        // contain it, so no node's bounds/coords/resolution change and every
+        // cached surface stays valid; since the stroke was already composited as
+        // an unsorted component, the pixels are identical, so nothing re-renders.
+        // Strokes outside the root extent stay unsorted for the next full
+        // rebuild. Returns the count still unsorted after the drain.
+        size_t absorb_unsorted_incrementally();
         // Public for tools that want to make eager rebuild decisions
         // (e.g. EraserTool rebuilds on entry to bound per-segment cost
         // — see EraserTool ctor).
@@ -91,6 +101,10 @@ class DrawingProgramCache {
         void internal_build(std::vector<CanvasComponentContainer::ObjInfo*> componentsToBuild, const std::unordered_set<CanvasComponentContainer::ObjInfo*>& objsToNotInclude);
         void build_bvh_node(const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode, const std::vector<CanvasComponentContainer::ObjInfo*>& components);
         void build_bvh_node_coords_and_resolution(DrawingProgramCacheBVHNode& node);
+        // Incremental-insertion helpers (see absorb_unsorted_incrementally).
+        bool insert_component_incremental(CanvasComponentContainer::ObjInfo* c);
+        std::shared_ptr<DrawingProgramCacheBVHNode> find_deepest_containing_node(const std::shared_ptr<DrawingProgramCacheBVHNode>& node, const SCollision::AABB<WorldScalar>& aabb);
+        void split_leaf_in_place(const std::shared_ptr<DrawingProgramCacheBVHNode>& node);
         void refresh_draw_cache(const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode, const DrawData& drawData);
         void draw_cache_image_to_canvas(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<DrawingProgramCacheBVHNode>& bvhNode);
         // PERF: components to draw directly this pass, pre-bucketed by their
