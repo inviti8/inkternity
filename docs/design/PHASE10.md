@@ -259,6 +259,17 @@ needed — frame selection is local to the folder (runtime `frameIndex` on
 context to deep descendants. `frameIndex` is the panel/child index directly;
 invert flips the advance direction, not a coordinate remap.
 
+**Parallax ⊥ flip-book (mutual exclusion, zynx 2026-07-09).** Parallax (all
+children drawn as depth planes *at once*) and flip-book (one child frame *at a
+time*) are opposite interpretations of the same folder's children, so a folder
+can be **at most one**. The folder panel exposes a single **Folder Mode**
+dropdown — *Normal / Parallax Scene / Flip-Book* — instead of two independent
+checkboxes; switching modes disables the other. To combine the effects, **nest**
+(a flip-book whose frames are parallax sub-folders, or a parallax plane that is
+itself a flip-book) — the two group behaviors then live on different folders and
+don't collide. The underlying `parallaxRefScale` and `flipbookFps` fields stay
+independent (so undo restores each cleanly); only the UI enforces exclusivity.
+
 ## B.1 Product summary
 
 A **flip-book group** is a folder variant whose child layers are treated as

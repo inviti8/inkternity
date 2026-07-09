@@ -19,6 +19,19 @@
 #include "../../GUIStuff/Elements/SVGIcon.hpp"
 #include "../../GUIStuff/Elements/DropDown.hpp"
 
+// PHASE10 Feature B — folder-mode dropdown (0 Normal / 1 Parallax / 2 Flip-Book;
+// mutually exclusive, since parallax draws all children as depth planes at once
+// while a flip-book shows one child frame at a time).
+static const std::vector<std::string>& folder_mode_names() {
+    static const std::vector<std::string> v = {"Normal Folder", "Parallax Scene", "Flip-Book"};
+    return v;
+}
+static size_t folder_mode_index(const DrawingProgramLayerListItem& f) {
+    if(f.is_flipbook_group()) return 2;
+    if(f.is_parallax_group()) return 1;
+    return 0;
+}
+
 // PHASE10 Feature B — dropdown label lists; order matches the enum values in
 // FlipbookMode.hpp (ONCE/LOOP/PING_PONG, AUTO/ON_TOUCH).
 static const std::vector<std::string>& flipbook_play_style_names() {
@@ -43,6 +56,7 @@ void DrawingProgramLayerManagerGUI::refresh_gui_data() {
     alphaValToEdit = 0.0f;
     depthValToEdit = 0.0f;
     blendModeValToEdit = 0;
+    folderModeToEdit = 0;
     flipbookFpsToEdit = 12.0f;
     flipbookStyleToEdit = 0;
     flipbookTriggerToEdit = 0;
@@ -189,8 +203,10 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             depthValToEdit = tempPtr->get_parallax_depth();
                             auto it = std::find(get_blend_mode_useful_list().begin(), get_blend_mode_useful_list().end(), tempPtr->get_blend_mode());
                             blendModeValToEdit = (it == get_blend_mode_useful_list().end()) ? 0 : (it - get_blend_mode_useful_list().begin());
-                            // PHASE10 Feature B — flip-book edit state. Show 12 fps
-                            // as the pre-enable default so ticking the box starts sane.
+                            // PHASE10 Feature B — folder mode + flip-book edit state.
+                            // Show 12 fps as the pre-enable default so switching to
+                            // Flip-Book starts sane.
+                            folderModeToEdit = tempPtr->is_folder() ? folder_mode_index(*tempPtr) : 0;
                             flipbookFpsToEdit = tempPtr->get_flipbook_fps() > 0.0f ? tempPtr->get_flipbook_fps() : 12.0f;
                             flipbookStyleToEdit = static_cast<size_t>(tempPtr->get_flipbook_play_style());
                             flipbookTriggerToEdit = static_cast<size_t>(tempPtr->get_flipbook_trigger_mode());
@@ -200,6 +216,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             alphaValToEdit = 0.0f;
                             depthValToEdit = 0.0f;
                             blendModeValToEdit = 0;
+                            folderModeToEdit = 0;
                             flipbookFpsToEdit = 12.0f;
                             flipbookStyleToEdit = 0;
                             flipbookTriggerToEdit = 0;
@@ -210,6 +227,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                         alphaValToEdit = 0.0f;
                         depthValToEdit = 0.0f;
                         blendModeValToEdit = 0;
+                        folderModeToEdit = 0;
                         flipbookFpsToEdit = 12.0f;
                         flipbookStyleToEdit = 0;
                         flipbookTriggerToEdit = 0;
@@ -487,31 +505,39 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     }
                 });
             });
-            // PARALLAX-SCENES (docs/design/PARALLAX-SCENES.md §6): parallax is
-            // now group-anchored. A FOLDER is the parallax *scene* — it holds
-            // the anchor (neutral-viewpoint position) + reference scale; a
-            // LAYER inside it gets a per-plane depth.
+            // A FOLDER is Normal, a Parallax Scene, OR a Flip-Book. Parallax
+            // (all children as depth planes at once) and flip-book (one child
+            // frame at a time) are opposite readings of the same children, so a
+            // folder can be at most one — a single Folder Mode dropdown enforces
+            // it. See docs/design/PHASE10.md Feature B §B.2 + PARALLAX-SCENES.md §6.
             if(editingLayerLock->is_folder()) {
-                text_label_centered(gui, "Parallax Scene");
-                // Enable = capture the current camera as the scene's neutral
-                // viewpoint (anchor = cam.pos, refScale = cam.inverseScale).
-                // Because cam.pos == anchor at capture, every child registers
-                // at offset 0 → no jump. Untick disables (refScale = 0).
-                checkbox_field(gui, "parallax scene enable", "Parallax Scene (this folder)",
-                    [&]() -> bool {
-                        auto lk = editingLayer.lock();
-                        return lk && lk->is_parallax_group();
-                    },
-                    [&] {
-                        auto lk = editingLayer.lock();
-                        if(!lk) return;
-                        if(lk->is_parallax_group())
-                            lk->set_parallax_group(layerMan, WorldScalar{0}, lk->get_parallax_anchor());
-                        else {
+                left_to_right_line_layout(gui, [&]() {
+                    text_label(gui, "Folder Mode");
+                    gui.element<DropDown<size_t>>("folder mode", &folderModeToEdit, folder_mode_names(), DropdownOptions{
+                        .onClick = [&] {
+                            auto lk = editingLayer.lock();
+                            if(!lk) return;
                             const CoordSpaceHelper& cam = world.drawData.cam.c;
-                            lk->set_parallax_group(layerMan, cam.inverseScale, cam.pos);
+                            switch(folderModeToEdit) {
+                                case 1: // Parallax Scene — capture the current view as
+                                        // the neutral viewpoint (cam.pos == anchor → no
+                                        // jump); flip-book off.
+                                    lk->set_flipbook_fps(layerMan, 0.0f);
+                                    lk->set_parallax_group(layerMan, cam.inverseScale, cam.pos);
+                                    break;
+                                case 2: // Flip-Book — default 12 fps; parallax off.
+                                    lk->set_parallax_group(layerMan, WorldScalar{0}, lk->get_parallax_anchor());
+                                    flipbookFpsToEdit = 12.0f;
+                                    lk->set_flipbook_fps(layerMan, flipbookFpsToEdit);
+                                    break;
+                                default: // Normal Folder — both off.
+                                    lk->set_parallax_group(layerMan, WorldScalar{0}, lk->get_parallax_anchor());
+                                    lk->set_flipbook_fps(layerMan, 0.0f);
+                                    break;
+                            }
                         }
                     });
+                });
                 if(editingLayerLock->is_parallax_group()) {
                     text_button(gui, "parallax set anchor", "Set Anchor and Scale to Current View", {
                         .wide = true,
@@ -544,26 +570,10 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                         }
                     });
                 }
-                // PHASE10 Feature B — flip-book group: treat this folder's child
-                // layers as animation frames (top row = frame 1). Playback runs
-                // only in reader/viewer mode (or via Preview below); see PHASE10.md.
-                text_label_centered(gui, "Flip-Book Group");
-                checkbox_field(gui, "flipbook enable", "Flip-Book (this folder)",
-                    [&]() -> bool {
-                        auto lk = editingLayer.lock();
-                        return lk && lk->is_flipbook_group();
-                    },
-                    [&] {
-                        auto lk = editingLayer.lock();
-                        if(!lk) return;
-                        if(lk->is_flipbook_group())
-                            lk->set_flipbook_fps(layerMan, 0.0f);          // disable
-                        else {
-                            flipbookFpsToEdit = 12.0f;
-                            lk->set_flipbook_fps(layerMan, flipbookFpsToEdit); // default 12 fps
-                        }
-                    });
-                if(editingLayerLock->is_flipbook_group()) {
+                // PHASE10 Feature B — flip-book controls (Folder Mode == Flip-Book).
+                // Child layers are animation frames (top row = frame 1); playback
+                // runs only in reader/viewer mode or via Preview. See PHASE10.md.
+                else if(editingLayerLock->is_flipbook_group()) {
                     slider_scalar_field(gui, "flipbook fps", "Frames / sec", &flipbookFpsToEdit, 1.0f, 60.0f, {
                         .decimalPrecision = 0,
                         .onEdit = [&] {
