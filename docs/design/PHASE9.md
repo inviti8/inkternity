@@ -22,12 +22,12 @@ app-level Character & Scene presets — see [PHASE9.5.md].** Note: M4's gizmo is
 2D Skia overlay (RGB axis grab-dots), NOT im3d** — Decision §3 superseded, because
 the editor composites the GL render back through Skia (per-frame readback), so a
 Skia-overlay manipulator integrates far more cleanly than wiring im3d's GL
-draw-lists into that pass. im3d is therefore not vendored. First half of the
-PHASE9/10 split (the other half is the lobby carousel, [PHASE10.md]). This is the
+draw-lists into that pass. im3d is therefore not vendored. This is the
 **large, architecturally-novel** phase: Inkternity is a 2D app and gains its
-first 3D subsystem. It is scheduled **first by choice** (zynx, 2026-06-21) — the
-carousel is the smaller, low-risk follow-on — so take a clean, deliberate run at
-this and gate it on the M1 spike.
+first 3D subsystem. It is scheduled **first by choice** (zynx, 2026-06-21) — so
+take a clean, deliberate run at this and gate it on the M1 spike. (Note: the
+armature is now the springboard for [PHASE10.md]'s CV hand-tracking; the lobby
+carousel once paired with this phase was rescheduled to [PHASE11.md].)
 
 **✅ M1 GATE PASSED (2026-06-21).** The context spike (raw GL lit cube → own
 FBO → `resetContext()` → bake to a `MYPAINTLAYER`) renders and bakes correctly,
