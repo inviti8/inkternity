@@ -1,6 +1,7 @@
 #include "DrawingProgramLayerFolder.hpp"
 #include "DrawingProgramLayerListItem.hpp"
 #include "DrawingProgramLayer.hpp"
+#include <algorithm>
 #include <Helpers/Parallel.hpp>
 #include "DrawingProgramLayerManager.hpp"
 #include "../DrawingProgram.hpp"
@@ -9,6 +10,100 @@
 void DrawingProgramLayerFolder::draw(SkCanvas* canvas, const DrawData& drawData) const {
     for(auto& p : (*folderList) | std::views::reverse)
         p.obj->draw(canvas, drawData);
+}
+
+size_t DrawingProgramLayerFolder::frame_count() const {
+    return folderList ? folderList->size() : 0;
+}
+
+void DrawingProgramLayerFolder::draw_flipbook_frame(SkCanvas* canvas, const DrawData& drawData) const {
+    const size_t n = frame_count();
+    if(n == 0)
+        return;
+    // frameIndex IS the panel/child index: plain iteration of folderList yields
+    // index 0 first, and index 0 is the panel's TOP row (it draws last in the
+    // normal reverse composite, so it sits on top). Draw only that one child.
+    size_t idx = flipbookRuntime.frameIndex;
+    if(idx >= n)
+        idx = n - 1;
+    size_t i = 0;
+    for(auto& p : *folderList) {
+        if(i == idx) {
+            p.obj->draw(canvas, drawData);
+            return;
+        }
+        ++i;
+    }
+}
+
+// Advance flipbookRuntime.frameIndex by one frame per the play style. Panel
+// index space: 0 = top row = frame 1. "forward" (fwd) is top -> bottom by
+// default, reversed by invert.
+static void flipbook_step_once(DrawingProgramLayerFolder::FlipbookRuntime& rt, size_t n, FlipbookPlayStyle style, bool invert) {
+    const int fwd = invert ? -1 : 1;
+    long idx = static_cast<long>(rt.frameIndex);
+    switch(style) {
+        case FlipbookPlayStyle::LOOP:
+            idx += fwd;
+            if(idx < 0) idx = static_cast<long>(n) - 1;
+            else if(idx >= static_cast<long>(n)) idx = 0;
+            break;
+        case FlipbookPlayStyle::ONCE: {
+            const long last = invert ? 0 : static_cast<long>(n) - 1;
+            if(idx != last) {
+                idx += fwd;
+                if(idx < 0) idx = 0;
+                else if(idx >= static_cast<long>(n)) idx = static_cast<long>(n) - 1;
+            }
+            if(idx == last)
+                rt.playing = false;   // reached the end -> hold here, stop advancing
+            break;
+        }
+        case FlipbookPlayStyle::PING_PONG: {
+            int dir = rt.pingPongReversing ? -fwd : fwd;
+            long next = idx + dir;
+            if(next < 0 || next >= static_cast<long>(n)) {
+                rt.pingPongReversing = !rt.pingPongReversing;
+                dir = -dir;
+                next = idx + dir;
+                if(next < 0) next = 0;
+                else if(next >= static_cast<long>(n)) next = static_cast<long>(n) - 1;
+            }
+            idx = next;
+            break;
+        }
+    }
+    rt.frameIndex = static_cast<size_t>(std::clamp<long>(idx, 0, static_cast<long>(n) - 1));
+}
+
+void DrawingProgramLayerFolder::flipbook_begin(bool invert) {
+    const size_t n = frame_count();
+    flipbookRuntime.frameIndex = (invert && n > 0) ? n - 1 : 0;
+    flipbookRuntime.frameTimer = 0.0;
+    flipbookRuntime.pingPongReversing = false;
+    flipbookRuntime.playing = true;
+}
+
+void DrawingProgramLayerFolder::flipbook_advance(FlipbookPlayStyle style, bool invert, float fps, float deltaTime) {
+    auto& rt = flipbookRuntime;
+    const size_t n = frame_count();
+    if(!rt.playing || n <= 1 || fps <= 0.0f)
+        return;
+    const double frameDur = 1.0 / static_cast<double>(fps);
+    rt.frameTimer += static_cast<double>(deltaTime);
+    // Cap steps so a long stall / tab-out (huge deltaTime) can't spin the whole
+    // sequence many times in one frame.
+    const int maxSteps = static_cast<int>(n) + 1;
+    int steps = 0;
+    while(rt.frameTimer >= frameDur && steps < maxSteps) {
+        rt.frameTimer -= frameDur;
+        ++steps;
+        flipbook_step_once(rt, n, style, invert);
+        if(!rt.playing)   // ONCE finished this step
+            break;
+    }
+    if(steps >= maxSteps)
+        rt.frameTimer = 0.0;   // drop the backlog rather than freeze next frame
 }
 
 void DrawingProgramLayerFolder::set_component_list_callbacks(DrawingProgramLayerManager& layerMan) {

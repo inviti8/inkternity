@@ -245,6 +245,20 @@ format.
 
 # FEATURE B — Flip-book layer group
 
+## Implementation status
+
+**Core shipped (B-M1…B-M4), 2026-07-09.** Data model + save bump (INFPNT000028 /
+0.27.0), draw-one-frame + cache bypass, playback clock (once/loop/ping-pong ×
+auto/on-touch, viewer-mode-gated + drawing-mode Preview), and the folder GUI
+(fps / play-style / trigger / invert / Preview + row badge) are implemented and
+build clean. **Remaining:** B-M5 (stretch position/scale keys) and B-M6
+(MANUAL/README docs + edge-case polish), plus interactive verification on a real
+canvas. One deviation from the plan below: `DrawData::FlipbookGroup` was **not**
+needed — frame selection is local to the folder (runtime `frameIndex` on
+`DrawingProgramLayerFolder::FlipbookRuntime`), unlike parallax which threads
+context to deep descendants. `frameIndex` is the panel/child index directly;
+invert flips the advance direction, not a coordinate remap.
+
 ## B.1 Product summary
 
 A **flip-book group** is a folder variant whose child layers are treated as

@@ -6,6 +6,7 @@
 #include "DrawingProgramLayerFolder.hpp"
 #include "DrawingProgramLayer.hpp"
 #include "LayerKind.hpp"
+#include "FlipbookMode.hpp"
 #include "SerializedBlendMode.hpp"
 #include "../../CanvasComponents/CanvasComponentContainer.hpp"
 
@@ -37,6 +38,14 @@ struct DrawingProgramLayerListItemMetaInfo {
     WorldScalar parallaxAnchorX{0};
     WorldScalar parallaxAnchorY{0};
     WorldScalar parallaxRefScale{0};
+    // PHASE10 Feature B — flip-book group (FOLDER property; see FlipbookMode.hpp
+    // and docs/design/PHASE10.md). flipbookFps > 0 marks the folder a flip-book;
+    // the rest are the play-style / trigger / frame-order axes. Plain
+    // enum/float/bool only — no Eigen (undo-struct SMF-trait gotcha, above).
+    float flipbookFps = 0.0f;
+    FlipbookPlayStyle flipbookPlayStyle = FlipbookPlayStyle::ONCE;
+    FlipbookTriggerMode flipbookTriggerMode = FlipbookTriggerMode::AUTO;
+    bool flipbookInvert = false;
     bool operator==(const DrawingProgramLayerListItemMetaInfo&) const = default;
 };
 
@@ -107,6 +116,34 @@ class DrawingProgramLayerListItem {
         // depth "no active group" hint and the edit-lock test.
         bool target_in_active_parallax_group(NetworkingObjects::NetObjID targetId, bool ancestorGroupActive) const;
 
+        // PHASE10 Feature B — flip-book group (folder). fps == 0 disables
+        // (folder composites its children normally); fps > 0 makes it a
+        // flip-book that draws one frame at a time. See FlipbookMode.hpp and
+        // docs/design/PHASE10.md Feature B.
+        void set_flipbook_fps(DrawingProgramLayerManager& layerMan, float fps) const;
+        void set_flipbook_play_style(DrawingProgramLayerManager& layerMan, FlipbookPlayStyle style) const;
+        void set_flipbook_trigger_mode(DrawingProgramLayerManager& layerMan, FlipbookTriggerMode trigger) const;
+        void set_flipbook_invert(DrawingProgramLayerManager& layerMan, bool invert) const;
+        float get_flipbook_fps() const;
+        FlipbookPlayStyle get_flipbook_play_style() const;
+        FlipbookTriggerMode get_flipbook_trigger_mode() const;
+        bool get_flipbook_invert() const;
+        bool is_flipbook_group() const;
+        // Recursive cache-bypass test: is there a visible flip-book group (with
+        // >1 frame) anywhere in this subtree? Mirrors has_active_parallax_descendant
+        // — a live flip-book can't share the static composite cache.
+        bool has_active_flipbook_descendant() const;
+        // PHASE10 Feature B — per-frame flip-book playback tick (recurses the
+        // tree). Advances each live flip-book group's frame per its play style
+        // + trigger, but ONLY in a playback context (viewerActive OR the group's
+        // transient preview override); otherwise holds the "edit frame" (the
+        // selected direct child). See docs/design/PHASE10.md §B.4.
+        void update_flipbook_playback(float deltaTime, bool viewerActive, const DrawData& drawData, const DrawingProgramLayerListItem* editingLayer);
+        // ON_TOUCH trigger dispatch (recurses): start any visible ON_TOUCH
+        // flip-book group whose content is under the tap collider. Mirrors the
+        // particle trigger_touch path.
+        void trigger_touch_flipbook(const CoordSpaceHelper& camCoords, const SCollision::ColliderCollection<WorldScalar>& tapCollider);
+
         void set_metainfo(DrawingProgramLayerManager& layerMan, const DrawingProgramLayerListItemMetaInfo& metaInfo);
         DrawingProgramLayerListItemMetaInfo get_metainfo() const;
 
@@ -141,8 +178,16 @@ class DrawingProgramLayerListItem {
             WorldScalar parallaxAnchorX{0};
             WorldScalar parallaxAnchorY{0};
             WorldScalar parallaxRefScale{0};
+            // PHASE10 Feature B — flip-book group (folder). flipbookFps > 0
+            // enables; file-load is version-gated in load_file (< 0.27.0 read
+            // only the parallax layout, no flip-book fields). See FlipbookMode.hpp.
+            float flipbookFps = 0.0f;
+            FlipbookPlayStyle flipbookPlayStyle = FlipbookPlayStyle::ONCE;
+            FlipbookTriggerMode flipbookTriggerMode = FlipbookTriggerMode::AUTO;
+            bool flipbookInvert = false;
             template <typename Archive> void serialize(Archive& a) {
-                a(alpha, visible, blendMode, parallaxDepth, parallaxAnchorX, parallaxAnchorY, parallaxRefScale);
+                a(alpha, visible, blendMode, parallaxDepth, parallaxAnchorX, parallaxAnchorY, parallaxRefScale,
+                  flipbookFps, flipbookPlayStyle, flipbookTriggerMode, flipbookInvert);
             }
         };
         NetworkingObjects::NetObjOwnerPtr<NameData> nameData;

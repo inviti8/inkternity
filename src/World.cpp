@@ -345,6 +345,10 @@ void World::focus_update() {
     readerMode.update(main.deltaTime);
     rs.readerUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readerStart).count();
 
+    // PHASE10 Feature B — advance flip-book groups. Placed after the camera tick
+    // so the AUTO on-screen trigger reads the current frame's view collider.
+    drawProg.update_flipbook_playback(main.deltaTime);
+
     const auto rManStart = std::chrono::steady_clock::now();
     rMan.update();
     rs.rManUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - rManStart).count();
@@ -489,9 +493,12 @@ void World::input_mouse_button_callback(const InputManager::MouseButtonCallbackA
         // state.
         if(readerMode.is_active()) {
             // Reader mode ignores canvas tools, but a tap can still trigger
-            // PARTICLE_PLAY_ON_TOUCH effects under the cursor (PHASE5.1 polish).
-            if(button.down)
+            // PARTICLE_PLAY_ON_TOUCH effects (PHASE5.1) and ON_TOUCH flip-book
+            // groups (PHASE10 Feature B) under the cursor.
+            if(button.down) {
                 drawProg.trigger_touch_particles(button.pos);
+                drawProg.trigger_touch_flipbooks(button.pos);
+            }
             return;
         }
         drawProg.input_mouse_button_callback(button);

@@ -1012,6 +1012,32 @@ void DrawingProgram::trigger_touch_particles(Vector2f camPos) {
 #endif
 }
 
+void DrawingProgram::update_flipbook_playback(float deltaTime) {
+    // PHASE10 Feature B — advance every live flip-book group's frame. Playback
+    // only runs in viewer/reader mode or under a group's transient preview
+    // override; the manager walk enforces that + holds the edit frame otherwise.
+    if(!layerMan.layer_tree_root_exists())
+        return;
+    layerMan.update_flipbook_playback(deltaTime, world.readerMode.is_active(), world.drawData);
+}
+
+void DrawingProgram::trigger_touch_flipbooks(Vector2f camPos) {
+    // PHASE10 Feature B — reader-mode tap starts any ON_TOUCH flip-book group
+    // under the cursor. Mirrors trigger_touch_particles' tap collider.
+    using namespace SCollision;
+    if(!layerMan.layer_tree_root_exists())
+        return;
+    ColliderCollection<float> cC;
+    const float r = 4.0f;
+    Vector2f lo = camPos - Vector2f{r, r};
+    Vector2f hi = camPos + Vector2f{r, r};
+    std::array<Vector2f, 4> t = triangle_from_rect_points(lo, hi);
+    cC.triangle.emplace_back(t[0], t[1], t[2]);
+    cC.triangle.emplace_back(t[2], t[3], t[0]);
+    auto cCWorld = world.drawData.cam.c.collider_to_world<ColliderCollection<WorldScalar>, ColliderCollection<float>>(cC);
+    layerMan.trigger_touch_flipbooks(world.drawData.cam.c, cCWorld);
+}
+
 void DrawingProgram::import_fx_library(const std::filesystem::path& filePath) {
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
     // Host-authored, like dropped effects: a joined (non-server) client may not import.
@@ -1112,7 +1138,11 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
     ++stats.live.drawCalls;   // counters reset per real frame in SDL_AppIterate; accumulate here
     const auto drawStart = std::chrono::steady_clock::now();
 
-    if(layerMan.any_visible_parallax_layer()) {
+    if(layerMan.any_visible_parallax_layer() || layerMan.any_visible_flipbook_layer()) {
+        // PHASE10 Feature B shares this bypass: a live flip-book group draws one
+        // frame of N, which the cache (composites all children) can't represent,
+        // so the tree is walked directly each frame — DrawingProgramLayerFolder::
+        // draw_flipbook_frame picks the active frame. Same rationale as parallax:
         // PHASE4 Part A M2: parallax bypass. The window/BVH caches bake
         // cross-layer composites under ONE camera; with per-layer derived
         // cameras those composites are wrong, so while any visible layer

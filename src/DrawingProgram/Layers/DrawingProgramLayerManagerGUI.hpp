@@ -32,6 +32,10 @@ class DrawingProgramLayerManagerGUI {
         float alphaValToEdit = 0.0f;
         float depthValToEdit = 0.0f;  // PHASE4 Part A: parallax depth
         size_t blendModeValToEdit = 0;
+        // PHASE10 Feature B — flip-book group edit state (folders).
+        float flipbookFpsToEdit = 12.0f;
+        size_t flipbookStyleToEdit = 0;    // FlipbookPlayStyle
+        size_t flipbookTriggerToEdit = 0;  // FlipbookTriggerMode
 
         std::set<GUIStuff::TreeListingObjIndexList> selectedLayerIndices;
         NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> editingLayer;

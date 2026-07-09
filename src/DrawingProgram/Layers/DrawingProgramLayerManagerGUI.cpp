@@ -19,6 +19,17 @@
 #include "../../GUIStuff/Elements/SVGIcon.hpp"
 #include "../../GUIStuff/Elements/DropDown.hpp"
 
+// PHASE10 Feature B — dropdown label lists; order matches the enum values in
+// FlipbookMode.hpp (ONCE/LOOP/PING_PONG, AUTO/ON_TOUCH).
+static const std::vector<std::string>& flipbook_play_style_names() {
+    static const std::vector<std::string> v = {"Play Once", "Loop", "Ping-Pong"};
+    return v;
+}
+static const std::vector<std::string>& flipbook_trigger_names() {
+    static const std::vector<std::string> v = {"Auto (on view)", "On Touch"};
+    return v;
+}
+
 DrawingProgramLayerManagerGUI::DrawingProgramLayerManagerGUI(DrawingProgramLayerManager& drawLayerMan):
     layerMan(drawLayerMan)
 {}
@@ -32,6 +43,9 @@ void DrawingProgramLayerManagerGUI::refresh_gui_data() {
     alphaValToEdit = 0.0f;
     depthValToEdit = 0.0f;
     blendModeValToEdit = 0;
+    flipbookFpsToEdit = 12.0f;
+    flipbookStyleToEdit = 0;
+    flipbookTriggerToEdit = 0;
 }
 
 NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> DrawingProgramLayerManagerGUI::get_layer_parent_from_obj_index(const GUIStuff::TreeListingObjIndexList& objIndex) {
@@ -119,6 +133,10 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             snprintf(depthBuf, sizeof(depthBuf), "  (depth %.2f)", layer->get_parallax_depth());
                             rowName += depthBuf;
                         }
+                        // PHASE10 Feature B — flip-book badge so it's obvious the
+                        // folder shows one frame at a time.
+                        if(layer->is_flipbook_group())
+                            rowName += "  (flip-book)";
                         text_label(gui, rowName);
                     }
                     if(!layer->is_folder()) {
@@ -171,12 +189,20 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             depthValToEdit = tempPtr->get_parallax_depth();
                             auto it = std::find(get_blend_mode_useful_list().begin(), get_blend_mode_useful_list().end(), tempPtr->get_blend_mode());
                             blendModeValToEdit = (it == get_blend_mode_useful_list().end()) ? 0 : (it - get_blend_mode_useful_list().begin());
+                            // PHASE10 Feature B — flip-book edit state. Show 12 fps
+                            // as the pre-enable default so ticking the box starts sane.
+                            flipbookFpsToEdit = tempPtr->get_flipbook_fps() > 0.0f ? tempPtr->get_flipbook_fps() : 12.0f;
+                            flipbookStyleToEdit = static_cast<size_t>(tempPtr->get_flipbook_play_style());
+                            flipbookTriggerToEdit = static_cast<size_t>(tempPtr->get_flipbook_trigger_mode());
                         }
                         else {
                             nameToEdit.clear();
                             alphaValToEdit = 0.0f;
                             depthValToEdit = 0.0f;
                             blendModeValToEdit = 0;
+                            flipbookFpsToEdit = 12.0f;
+                            flipbookStyleToEdit = 0;
+                            flipbookTriggerToEdit = 0;
                         }
                     }
                     else {
@@ -184,6 +210,9 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                         alphaValToEdit = 0.0f;
                         depthValToEdit = 0.0f;
                         blendModeValToEdit = 0;
+                        flipbookFpsToEdit = 12.0f;
+                        flipbookStyleToEdit = 0;
+                        flipbookTriggerToEdit = 0;
                     }
                 },
                 .moveObj = [&](const std::vector<TreeListingObjIndexList>& objectIndicesTreeListing, const TreeListingObjIndexList& newObjIndexTreeListing) {
@@ -511,6 +540,81 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             if(lk && lk->is_parallax_group()) {
                                 CoordSpaceHelper neutral{lk->get_parallax_anchor(), lk->get_parallax_ref_scale(), world.drawData.cam.c.rotation};
                                 world.drawData.cam.smooth_move_to(world, neutral, world.main.window.size.cast<float>());
+                            }
+                        }
+                    });
+                }
+                // PHASE10 Feature B — flip-book group: treat this folder's child
+                // layers as animation frames (top row = frame 1). Playback runs
+                // only in reader/viewer mode (or via Preview below); see PHASE10.md.
+                text_label_centered(gui, "Flip-Book Group");
+                checkbox_field(gui, "flipbook enable", "Flip-Book (this folder)",
+                    [&]() -> bool {
+                        auto lk = editingLayer.lock();
+                        return lk && lk->is_flipbook_group();
+                    },
+                    [&] {
+                        auto lk = editingLayer.lock();
+                        if(!lk) return;
+                        if(lk->is_flipbook_group())
+                            lk->set_flipbook_fps(layerMan, 0.0f);          // disable
+                        else {
+                            flipbookFpsToEdit = 12.0f;
+                            lk->set_flipbook_fps(layerMan, flipbookFpsToEdit); // default 12 fps
+                        }
+                    });
+                if(editingLayerLock->is_flipbook_group()) {
+                    slider_scalar_field(gui, "flipbook fps", "Frames / sec", &flipbookFpsToEdit, 1.0f, 60.0f, {
+                        .decimalPrecision = 0,
+                        .onEdit = [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk) lk->set_flipbook_fps(layerMan, flipbookFpsToEdit);
+                        }
+                    });
+                    left_to_right_line_layout(gui, [&]() {
+                        text_label(gui, "Play Style");
+                        gui.element<DropDown<size_t>>("flipbook style", &flipbookStyleToEdit, flipbook_play_style_names(), DropdownOptions{
+                            .onClick = [&] {
+                                auto lk = editingLayer.lock();
+                                if(lk) lk->set_flipbook_play_style(layerMan, static_cast<FlipbookPlayStyle>(flipbookStyleToEdit));
+                            }
+                        });
+                    });
+                    left_to_right_line_layout(gui, [&]() {
+                        text_label(gui, "Trigger");
+                        gui.element<DropDown<size_t>>("flipbook trigger", &flipbookTriggerToEdit, flipbook_trigger_names(), DropdownOptions{
+                            .onClick = [&] {
+                                auto lk = editingLayer.lock();
+                                if(lk) lk->set_flipbook_trigger_mode(layerMan, static_cast<FlipbookTriggerMode>(flipbookTriggerToEdit));
+                            }
+                        });
+                    });
+                    checkbox_field(gui, "flipbook invert", "Invert direction (bottom to top)",
+                        [&]() -> bool {
+                            auto lk = editingLayer.lock();
+                            return lk && lk->get_flipbook_invert();
+                        },
+                        [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk) lk->set_flipbook_invert(layerMan, !lk->get_flipbook_invert());
+                        });
+                    // Preview: play in drawing mode to debug timing. Transient
+                    // per-folder override (not saved, not synced, not undoable).
+                    bool previewing = editingLayerLock->get_folder().flipbookRuntime.previewPlaying;
+                    text_button(gui, "flipbook preview", previewing ? "Stop Preview" : "Preview Animation", {
+                        .wide = true,
+                        .onClick = [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk && lk->is_folder()) {
+                                auto& rt = lk->get_folder().flipbookRuntime;
+                                if(rt.previewPlaying) {
+                                    rt.previewPlaying = false;
+                                    rt.playing = false;
+                                }
+                                else {
+                                    rt.previewPlaying = true;
+                                    lk->get_folder().flipbook_begin(lk->get_flipbook_invert());
+                                }
                             }
                         }
                     });

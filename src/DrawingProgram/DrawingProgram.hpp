@@ -72,6 +72,10 @@ class DrawingProgram {
         // PHASE5.1 polish — trigger any PARTICLE_PLAY_ON_TOUCH effects under a
         // cam-space point (reader-mode tap). No-op without the legacy path.
         void trigger_touch_particles(Vector2f camPos);
+        // PHASE10 Feature B — per-frame flip-book playback tick (called from
+        // World::focus_update) + ON_TOUCH dispatch for a reader-mode tap.
+        void update_flipbook_playback(float deltaTime);
+        void trigger_touch_flipbooks(Vector2f camPos);
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
         // Imported FX libraries (M1). null until the first successful import.
         FxLibraryStore* fx_store() { return fxStore.get(); }

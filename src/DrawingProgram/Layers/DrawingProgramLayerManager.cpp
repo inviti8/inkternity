@@ -156,6 +156,27 @@ bool DrawingProgramLayerManager::any_visible_parallax_layer() {
     return layerTreeRoot->has_active_parallax_descendant(false);
 }
 
+bool DrawingProgramLayerManager::any_visible_flipbook_layer() {
+    if(!layerTreeRoot) return false;
+    // PHASE10 Feature B: the cache composites all children of a folder, so it
+    // can't show "one frame of N". Bypass it whenever a visible flip-book group
+    // with more than one frame exists (hidden subtrees don't draw → no bypass).
+    return layerTreeRoot->has_active_flipbook_descendant();
+}
+
+void DrawingProgramLayerManager::update_flipbook_playback(float deltaTime, bool viewerActive, const DrawData& drawData) {
+    if(!layerTreeRoot) return;
+    // The edit frame follows the selected layer (when a flip-book is static in
+    // drawing mode) — resolve it once here and pass it down.
+    const DrawingProgramLayerListItem* editing = editingLayer.expired() ? nullptr : editingLayer.lock().get();
+    layerTreeRoot->update_flipbook_playback(deltaTime, viewerActive, drawData, editing);
+}
+
+void DrawingProgramLayerManager::trigger_touch_flipbooks(const CoordSpaceHelper& camCoords, const SCollision::ColliderCollection<WorldScalar>& tapCollider) {
+    if(layerTreeRoot)
+        layerTreeRoot->trigger_touch_flipbook(camCoords, tapCollider);
+}
+
 bool DrawingProgramLayerManager::editing_layer_in_active_parallax_group() {
     if(editingLayer.expired() || !layerTreeRoot) return false;
     return layerTreeRoot->target_in_active_parallax_group(editingLayer.get_net_id(), false);

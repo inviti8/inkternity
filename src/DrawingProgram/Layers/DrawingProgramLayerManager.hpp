@@ -70,6 +70,14 @@ class DrawingProgramLayerManager {
         // window/BVH caches while this holds (per-layer derived cameras
         // make cross-layer cached composites wrong).
         bool any_visible_parallax_layer();
+        // PHASE10 Feature B: true if a visible flip-book group with >1 frame
+        // exists. Like parallax, the cache can't represent "show one frame of
+        // N", so the live draw path bypasses the cache while this holds.
+        bool any_visible_flipbook_layer();
+        // PHASE10 Feature B: per-frame flip-book playback tick + ON_TOUCH
+        // dispatch. Thin walkers over the tree (see the ListItem methods).
+        void update_flipbook_playback(float deltaTime, bool viewerActive, const DrawData& drawData);
+        void trigger_touch_flipbooks(const CoordSpaceHelper& camCoords, const SCollision::ColliderCollection<WorldScalar>& tapCollider);
         // True if the current edit target actually parallaxes (non-zero
         // depth AND inside an active parallax group) — editing is locked
         // for such layers until edit-at-neutral lands (PARALLAX-SCENES §8).

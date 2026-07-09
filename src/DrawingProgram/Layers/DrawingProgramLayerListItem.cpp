@@ -189,8 +189,17 @@ void DrawingProgramLayerListItem::load_file(cereal::PortableBinaryInputArchive& 
     a(*nameData);
 
     displayData = layerMan.drawP.world.netObjMan.make_obj<DisplayData>();
-    if(version >= VersionNumber(0, 20, 0))
-        a(*displayData);  // PARALLAX-SCENES layout: depth + anchor + refScale
+    if(version >= VersionNumber(0, 27, 0))
+        a(*displayData);  // Current layout: parallax + flip-book fields
+    else if(version >= VersionNumber(0, 20, 0)) {
+        // PARALLAX-SCENES layout (INFPNT000021-27, 0.20-0.26): parallax fields
+        // present, but no flip-book fields. Read the seven explicitly to keep
+        // the stream aligned; flip-book fields keep their defaults (fps 0 =
+        // not a flip-book group).
+        a(displayData->alpha, displayData->visible, displayData->blendMode,
+          displayData->parallaxDepth, displayData->parallaxAnchorX, displayData->parallaxAnchorY,
+          displayData->parallaxRefScale);
+    }
     else if(version >= VersionNumber(0, 12, 0)) {
         // INFPNT000013-20: parallax depth + per-layer anchor present, but no
         // refScale. Consume those six fields to keep the stream aligned;
@@ -304,8 +313,16 @@ void DrawingProgramLayerListItem::draw(SkCanvas* canvas, const DrawData& drawDat
             canvas->saveLayer(nullptr, &layerPaint);
         }
 
-        if(folderData)
-            folderData->draw(canvas, *dd);
+        if(folderData) {
+            // PHASE10 Feature B — a flip-book group draws one frame at a time
+            // (chosen by its runtime frameIndex), not the full composite. Only
+            // reachable on the direct-draw path (the cache is bypassed while a
+            // flip-book is live — see DrawingProgramLayerManager::any_visible_flipbook_layer).
+            if(is_flipbook_group() && folderData->frame_count() > 1)
+                folderData->draw_flipbook_frame(canvas, *dd);
+            else
+                folderData->draw(canvas, *dd);
+        }
         else {
             // PHASE7: this is the direct draw path (screenshots, SVG export, and
             // the parallax bypass) — apply the layer's mask clip here too, not
@@ -452,6 +469,156 @@ bool DrawingProgramLayerListItem::target_in_active_parallax_group(NetworkingObje
     return false;
 }
 
+void DrawingProgramLayerListItem::set_flipbook_fps(DrawingProgramLayerManager& layerMan, float fps) const {
+    if(!displayData) return;
+    if(fps < 0.0f) fps = 0.0f;
+    if(displayData->flipbookFps == fps) return;
+    // Crossing the fps 0 <-> >0 boundary flips the draw path (composite ALL
+    // children vs. show ONE frame), so the cached composite must be rebuilt. A
+    // pure rate change draws identically in the static/edit view, so it must
+    // NOT clear — clearing on every slider tick is exactly the stall the
+    // incremental-BVH work removed.
+    const bool enabledChanged = (displayData->flipbookFps > 0.0f) != (fps > 0.0f);
+    displayData->flipbookFps = fps;
+    if(enabledChanged)
+        layerMan.drawP.drawCache.clear_own_cached_surfaces();
+    layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
+}
+
+void DrawingProgramLayerListItem::set_flipbook_play_style(DrawingProgramLayerManager& layerMan, FlipbookPlayStyle style) const {
+    // Play style / trigger / invert only affect PLAYBACK (viewer mode or the
+    // preview override), never the static edit-mode pixels, so no cache clear.
+    if(!displayData || displayData->flipbookPlayStyle == style) return;
+    displayData->flipbookPlayStyle = style;
+    layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
+}
+
+void DrawingProgramLayerListItem::set_flipbook_trigger_mode(DrawingProgramLayerManager& layerMan, FlipbookTriggerMode trigger) const {
+    if(!displayData || displayData->flipbookTriggerMode == trigger) return;
+    displayData->flipbookTriggerMode = trigger;
+    layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
+}
+
+void DrawingProgramLayerListItem::set_flipbook_invert(DrawingProgramLayerManager& layerMan, bool invert) const {
+    if(!displayData || displayData->flipbookInvert == invert) return;
+    displayData->flipbookInvert = invert;
+    layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
+}
+
+float DrawingProgramLayerListItem::get_flipbook_fps() const {
+    return displayData ? displayData->flipbookFps : 0.0f;
+}
+
+FlipbookPlayStyle DrawingProgramLayerListItem::get_flipbook_play_style() const {
+    return displayData ? displayData->flipbookPlayStyle : FlipbookPlayStyle::ONCE;
+}
+
+FlipbookTriggerMode DrawingProgramLayerListItem::get_flipbook_trigger_mode() const {
+    return displayData ? displayData->flipbookTriggerMode : FlipbookTriggerMode::AUTO;
+}
+
+bool DrawingProgramLayerListItem::get_flipbook_invert() const {
+    return displayData && displayData->flipbookInvert;
+}
+
+bool DrawingProgramLayerListItem::is_flipbook_group() const {
+    // Only meaningful on a folder; callers gate on is_folder()/folderData. The
+    // fps > 0 sentinel doubles as the enable flag (like parallaxRefScale != 0).
+    return displayData && displayData->flipbookFps > 0.0f;
+}
+
+bool DrawingProgramLayerListItem::has_active_flipbook_descendant() const {
+    // A hidden subtree doesn't draw, so it never needs the cache bypass. A
+    // flip-book with 0 or 1 frames can't animate either.
+    if(!displayData || !displayData->visible) return false;
+    if(!folderData) return false;
+    if(is_flipbook_group() && folderData->folderList->size() > 1)
+        return true;
+    for(auto& c : *folderData->folderList)
+        if(c.obj->has_active_flipbook_descendant())
+            return true;
+    return false;
+}
+
+// True if any component under this item has cached world bounds intersecting
+// the generous view collider — i.e. the group's content is on screen. Uses the
+// cached worldAABB (no recompute), so it's O(components) with no allocation
+// beyond the flattened list.
+static bool flipbook_content_on_screen(const DrawingProgramLayerListItem& item, const DrawData& drawData) {
+    std::vector<CanvasComponentContainer::ObjInfo*> comps;
+    item.get_flattened_component_list(comps);
+    for(auto* c : comps) {
+        const auto& wb = c->obj->get_world_bounds();
+        if(wb.has_value() && SCollision::collide(wb.value(), drawData.cam.viewingAreaGenerousCollider))
+            return true;
+    }
+    return false;
+}
+
+void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool viewerActive, const DrawData& drawData, const DrawingProgramLayerListItem* editingLayer) {
+    if(!folderData) return;
+    if(is_flipbook_group() && folderData->frame_count() > 1) {
+        auto& rt = folderData->flipbookRuntime;
+        const bool invert = get_flipbook_invert();
+        const bool playContext = viewerActive || rt.previewPlaying;
+        if(!playContext) {
+            // Drawing mode, no preview: static. Hold the "edit frame" — the
+            // selected direct child, so the artist edits the frame they picked
+            // in the layer panel. Reset the clock + AUTO rising-edge memory so
+            // entering viewer mode / re-entering view re-triggers cleanly.
+            rt.playing = false;
+            rt.frameTimer = 0.0;
+            rt.pingPongReversing = false;
+            rt.onScreenLast = false;
+            if(editingLayer) {
+                size_t p = 0;
+                bool found = false;
+                for(auto& c : *folderData->folderList) {
+                    if(&(*c.obj) == editingLayer) { found = true; break; }
+                    ++p;
+                }
+                if(found)
+                    rt.frameIndex = p;
+            }
+        }
+        else if(rt.previewPlaying) {
+            // Drawing-mode debug preview ignores the trigger axis — just play.
+            folderData->flipbook_advance(get_flipbook_play_style(), invert, get_flipbook_fps(), deltaTime);
+        }
+        else if(get_flipbook_trigger_mode() == FlipbookTriggerMode::AUTO) {
+            const bool onScreen = flipbook_content_on_screen(*this, drawData);
+            if(onScreen && !rt.onScreenLast)
+                folderData->flipbook_begin(invert);   // rising edge (re)starts
+            rt.onScreenLast = onScreen;
+            if(onScreen)
+                folderData->flipbook_advance(get_flipbook_play_style(), invert, get_flipbook_fps(), deltaTime);
+        }
+        else {
+            // ON_TOUCH: playing is set by trigger_touch_flipbook; runs per style.
+            folderData->flipbook_advance(get_flipbook_play_style(), invert, get_flipbook_fps(), deltaTime);
+        }
+    }
+    for(auto& c : *folderData->folderList)
+        c.obj->update_flipbook_playback(deltaTime, viewerActive, drawData, editingLayer);
+}
+
+void DrawingProgramLayerListItem::trigger_touch_flipbook(const CoordSpaceHelper& camCoords, const SCollision::ColliderCollection<WorldScalar>& tapCollider) {
+    if(!folderData) return;
+    if(get_visible() && is_flipbook_group() && folderData->frame_count() > 1 &&
+       get_flipbook_trigger_mode() == FlipbookTriggerMode::ON_TOUCH) {
+        std::vector<CanvasComponentContainer::ObjInfo*> comps;
+        get_flattened_component_list(comps);
+        for(auto* c : comps) {
+            if(c->obj->collides_with_world_coords(camCoords, tapCollider)) {
+                folderData->flipbook_begin(get_flipbook_invert());
+                break;
+            }
+        }
+    }
+    for(auto& c : *folderData->folderList)
+        c.obj->trigger_touch_flipbook(camCoords, tapCollider);
+}
+
 void DrawingProgramLayerListItem::set_metainfo(DrawingProgramLayerManager& layerMan, const DrawingProgramLayerListItemMetaInfo& metaInfo) {
     set_blend_mode(layerMan, metaInfo.blendMode);
     set_alpha(layerMan, metaInfo.alpha);
@@ -459,6 +626,10 @@ void DrawingProgramLayerListItem::set_metainfo(DrawingProgramLayerManager& layer
     // tuple, not re-derive anything against wherever the camera is now.
     set_parallax_raw(layerMan, metaInfo.parallaxDepth, metaInfo.parallaxRefScale,
                      WorldVec{metaInfo.parallaxAnchorX, metaInfo.parallaxAnchorY});
+    set_flipbook_fps(layerMan, metaInfo.flipbookFps);
+    set_flipbook_play_style(layerMan, metaInfo.flipbookPlayStyle);
+    set_flipbook_trigger_mode(layerMan, metaInfo.flipbookTriggerMode);
+    set_flipbook_invert(layerMan, metaInfo.flipbookInvert);
     set_name(layerMan.drawP.world.delayedUpdateObjectManager, metaInfo.name);
 }
 
@@ -470,7 +641,11 @@ DrawingProgramLayerListItemMetaInfo DrawingProgramLayerListItem::get_metainfo() 
         .parallaxDepth = get_parallax_depth(),
         .parallaxAnchorX = displayData->parallaxAnchorX,
         .parallaxAnchorY = displayData->parallaxAnchorY,
-        .parallaxRefScale = displayData->parallaxRefScale
+        .parallaxRefScale = displayData->parallaxRefScale,
+        .flipbookFps = displayData->flipbookFps,
+        .flipbookPlayStyle = displayData->flipbookPlayStyle,
+        .flipbookTriggerMode = displayData->flipbookTriggerMode,
+        .flipbookInvert = displayData->flipbookInvert
     };
 }
 
