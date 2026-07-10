@@ -525,6 +525,114 @@ composited, no animation). Mixed-version collab still requires matching builds f
 the wire `DisplayData::serialize` (the standing caveat at
 `DrawingProgramLayerListItem.hpp:137-139`).
 
+## B.11 Stretch (B-M5) design sketch — transform animation without a timeline
+
+**Status: design sketch, not scheduled.** This expands the B-M5 stretch (per-frame
+position/scale keys) into an actual authoring model, because "animate a transform"
+normally implies a timeline/curve editor — which Inkternity doesn't have and
+doesn't want. Grounded in a research pass on **Deluxe Paint (Amiga III/IV)**, which
+solved exactly this: it authored motion with **no timeline**, via two on-canvas
+gestures. We modernize both. (Sources: DPaint IV manual + PyDPainter mechanics
+reference; see the 2026-07-09 research note.)
+
+### The problem
+
+Each flip-book frame is a child layer drawn in place. B-M5 wants each frame to also
+carry a **transform** (offset / scale / rotation) so the sequence can travel, zoom,
+or spin as it plays — a bouncing ball, a title sliding in, a spinning icon. But we
+have **no timeline UI** and don't want one. DPaint is the proof that you don't need
+one.
+
+### Two timeline-free authoring models (both from DPaint, modernized)
+
+**Model A — Record motion (DPaint "Animpainting", modernized).** The artist selects
+the flip-book group, hits **Record Motion**, and drags on the canvas; we sample the
+pointer and write each sample as the **next frame's transform key**, auto-advancing
+frames as they drag (DPaint auto-stepped frames while you painted). The hand gesture
+*is* the motion path.
+- *DPaint did:* capture the path's geometry, but threw away velocity — playback was
+  a uniform FPS, so speed was encoded only as sample spacing.
+- *We add (the modern wins):* (1) **keep true timing optionally** — timestamp
+  samples so pauses/speed-ups survive, with a toggle to "resample to uniform
+  frames" (DPaint behaviour) vs. "keep recorded timing"; (2) **non-destructive +
+  editable** — writes editable per-frame keys, not a baked result, so a frame's key
+  can be nudged or the whole path re-recorded; (3) **smoothing** — optional
+  Chaikin/Catmull-Rom resample to de-jitter a shaky hand; (4) record **scale** (a
+  modifier while dragging) and rotation, not just position.
+
+**Model B — Transform-over-N (DPaint "Move requester", modernized).** A small inline
+requester on the flip-book group: **ΔX, ΔY, Δscale (%), Δrotation (°)** applied
+across the N frames, plus **ease** (none / in / out / in-out). It distributes the
+delta over the frames (frame *i* gets the eased fraction of the total) from a start
+state = the group's base. This is keyframe-free: **start + delta + count(= frame
+count) + ease = a full tween**, no curve editor.
+- *Keep from DPaint:* the **wireframe/ghost Preview** — draw the per-frame bounding
+  boxes along the trajectory *before* committing, instant and non-destructive.
+- *Drop/fix:* DPaint's opaque `Dist`/`Angle` labels and its Z-as-perspective
+  overloading; use plain X/Y/scale/rotate with drag-handles + numeric fields.
+
+The two compose: **Record** lays a rough hand path, **Transform-over-N** adds a
+uniform drift/spin on top — DPaint allowed exactly this stacking.
+
+### Data model (the load-bearing part)
+
+Store the transform **per frame layer**, not on the folder — a frame's transform is
+a natural per-layer property that travels with the layer when it's added, deleted,
+or reordered (exactly how `parallaxDepth` is a per-layer property inert unless the
+parent is a parallax group). Append to `DisplayData` / `MetaInfo`, gated at the next
+version:
+- `flipbookFrameOffsetX`, `flipbookFrameOffsetY` — **`WorldScalar` pair** (world-space
+  offset; **never a `WorldVec`** — the undo-struct Eigen/SMF-trait gotcha,
+  `[[project_layer_metainfo_eigen_gotcha]]`).
+- `flipbookFrameScale` — `float` (1.0 = identity).
+- `flipbookFrameRotation` — `float` degrees (optional; can defer).
+- All **inert unless the parent folder is a flip-book group** (like depth is inert
+  outside a parallax group). `scale_up` must rescale the world-space offset in both
+  the live and undo paths (the parallax anchor precedent, `.cpp:161-173` + `:13-27`).
+
+### Draw application
+
+In `DrawingProgramLayerFolder::draw_flipbook_frame`, wrap the chosen child's draw in
+a canvas transform built from that frame's keys — `canvas->save()`, apply
+offset/scale/rotation **through the camera** (offset is a `WorldVec` → projected via
+`CoordSpaceHelper` like any world-space transform; scale/rotation pivot around a
+chosen point), `child->draw()`, `canvas->restore()`. **Pivot decision to settle:**
+the group's base/anchor vs. each frame's own origin (recommend the group anchor so
+scale/rotate feel like they're about the whole flip-book). Playback already advances
+`frameIndex`; this just adds a transform to the frame being shown, so it animates
+with zero playback-clock changes.
+
+### Why this fits (and what we still skip)
+
+- **No timeline, on purpose.** Both models author on the canvas (a gesture or a tiny
+  numeric delta). The **Preview** button we already built is the "scrubber" — hit it
+  to watch, in drawing mode, with no reader-mode round-trip.
+- **Onion-skin still skipped** (per §B.9) — but note transform animation is the one
+  case where seeing *adjacent* frames at their transforms genuinely helps (they're
+  in different places, so opacity-as-onion is weaker here). If it bites, a minimal
+  "ghost the neighbouring frames at their keyed transforms" is the smallest possible
+  addition — flagged, not committed.
+
+### Open decisions (for zynx, before any B-M5 build)
+
+1. **Which model first?** Recommend **Transform-over-N** first — deterministic, no
+   input-capture plumbing, immediately useful — then **Record** as the flashier
+   follow-on.
+2. **Which transform components?** Recommend **position + scale** (the doc's original
+   stretch), rotation optional.
+3. **Record: real-time vs step capture** — recommend **step** (frame-by-frame,
+   precise) first; real-time timed capture second.
+4. **Pivot** for scale/rotation — group anchor (recommended) vs. frame origin.
+5. **Ghost/onion for moving frames** — defer, or the minimal neighbour-ghost above.
+
+### Rough milestones if we proceed
+
+- **B-M5a** — data model (per-frame transform keys) + save bump + draw application
+  (static: a frame just sits at its keyed transform). ~1.5–2 days.
+- **B-M5b** — Transform-over-N requester + wireframe Preview. ~2 days.
+- **B-M5c** — Record Motion (step capture first). ~2–3 days.
+- (Real-time timed capture, smoothing, rotation, neighbour-ghost = further options.)
+
 ---
 ---
 
