@@ -47,6 +47,10 @@ struct DrawingProgramLayerListItemMetaInfo {
     FlipbookPlayStyle flipbookPlayStyle = FlipbookPlayStyle::ONCE;
     FlipbookTriggerMode flipbookTriggerMode = FlipbookTriggerMode::AUTO;
     bool flipbookInvert = false;
+    // PHASE10.1 — Anim-FX group (FOLDER property): the particle FX inside it
+    // travels the folder's MotionPath (with real trailing). Mutually exclusive
+    // with parallax/flip-book (enforced by the Folder Mode dropdown).
+    bool animFxGroup = false;
     bool operator==(const DrawingProgramLayerListItemMetaInfo&) const = default;
 };
 
@@ -130,6 +134,11 @@ class DrawingProgramLayerListItem {
         FlipbookTriggerMode get_flipbook_trigger_mode() const;
         bool get_flipbook_invert() const;
         bool is_flipbook_group() const;
+
+        // PHASE10.1 — Anim-FX group (folder): its particle FX travels the folder's
+        // MotionPath. See PHASE10.1.md.
+        void set_anim_fx_group(DrawingProgramLayerManager& layerMan, bool on) const;
+        bool is_anim_fx_group() const;
         // Recursive cache-bypass test: is there a visible flip-book group (with
         // >1 frame) anywhere in this subtree? Mirrors has_active_parallax_descendant
         // — a live flip-book can't share the static composite cache.
@@ -196,9 +205,12 @@ class DrawingProgramLayerListItem {
             FlipbookPlayStyle flipbookPlayStyle = FlipbookPlayStyle::ONCE;
             FlipbookTriggerMode flipbookTriggerMode = FlipbookTriggerMode::AUTO;
             bool flipbookInvert = false;
+            // PHASE10.1 — Anim-FX group (folder). File-load gated in load_file
+            // (< 0.29.0 has no such field). See PHASE10.1.md.
+            bool animFxGroup = false;
             template <typename Archive> void serialize(Archive& a) {
                 a(alpha, visible, blendMode, parallaxDepth, parallaxAnchorX, parallaxAnchorY, parallaxRefScale,
-                  flipbookFps, flipbookPlayStyle, flipbookTriggerMode, flipbookInvert);
+                  flipbookFps, flipbookPlayStyle, flipbookTriggerMode, flipbookInvert, animFxGroup);
             }
         };
         NetworkingObjects::NetObjOwnerPtr<NameData> nameData;

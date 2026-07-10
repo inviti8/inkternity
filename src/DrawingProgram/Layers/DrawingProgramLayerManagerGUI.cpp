@@ -26,10 +26,11 @@
 // mutually exclusive, since parallax draws all children as depth planes at once
 // while a flip-book shows one child frame at a time).
 static const std::vector<std::string>& folder_mode_names() {
-    static const std::vector<std::string> v = {"Normal Folder", "Parallax Scene", "Flip-Book"};
+    static const std::vector<std::string> v = {"Normal Folder", "Parallax Scene", "Flip-Book", "Anim-FX"};
     return v;
 }
 static size_t folder_mode_index(const DrawingProgramLayerListItem& f) {
+    if(f.is_anim_fx_group()) return 3;
     if(f.is_flipbook_group()) return 2;
     if(f.is_parallax_group()) return 1;
     return 0;
@@ -521,21 +522,30 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             auto lk = editingLayer.lock();
                             if(!lk) return;
                             const CoordSpaceHelper& cam = world.drawData.cam.c;
+                            // The four modes are mutually exclusive — clear the
+                            // other two, then enable the chosen one.
                             switch(folderModeToEdit) {
                                 case 1: // Parallax Scene — capture the current view as
-                                        // the neutral viewpoint (cam.pos == anchor → no
-                                        // jump); flip-book off.
+                                        // the neutral viewpoint (cam.pos == anchor → no jump).
                                     lk->set_flipbook_fps(layerMan, 0.0f);
+                                    lk->set_anim_fx_group(layerMan, false);
                                     lk->set_parallax_group(layerMan, cam.inverseScale, cam.pos);
                                     break;
-                                case 2: // Flip-Book — default 12 fps; parallax off.
+                                case 2: // Flip-Book — default 12 fps.
                                     lk->set_parallax_group(layerMan, WorldScalar{0}, lk->get_parallax_anchor());
+                                    lk->set_anim_fx_group(layerMan, false);
                                     flipbookFpsToEdit = 12.0f;
                                     lk->set_flipbook_fps(layerMan, flipbookFpsToEdit);
                                     break;
-                                default: // Normal Folder — both off.
+                                case 3: // Anim-FX — particle FX travels a motion path.
                                     lk->set_parallax_group(layerMan, WorldScalar{0}, lk->get_parallax_anchor());
                                     lk->set_flipbook_fps(layerMan, 0.0f);
+                                    lk->set_anim_fx_group(layerMan, true);
+                                    break;
+                                default: // Normal Folder — all off.
+                                    lk->set_parallax_group(layerMan, WorldScalar{0}, lk->get_parallax_anchor());
+                                    lk->set_flipbook_fps(layerMan, 0.0f);
+                                    lk->set_anim_fx_group(layerMan, false);
                                     break;
                             }
                         }
@@ -681,6 +691,42 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             }
                         }
                     });
+                }
+                else if(editingLayerLock->is_anim_fx_group()) {
+                    // PHASE10.1 — Anim-FX group: the particle FX inside travels the
+                    // folder's motion path (with real trailing). Place a particle
+                    // effect on a layer in this folder, then draw the path here.
+                    text_label_centered(gui, "Anim-FX Group");
+                    text_label_light(gui, "Put a particle effect on a layer in this\nfolder; it travels the motion path below.");
+                    if(editingLayerLock->has_motion_path()) {
+                        text_button(gui, "animfx edit path", "Edit Motion Path", { .wide = true, .onClick = [&] {
+                            if(editingLayer.lock())
+                                world.drawProg.switch_to_tool_ptr(std::make_unique<MotionPathTool>(world.drawProg, editingLayer.get_net_id()));
+                        }});
+                        text_button(gui, "animfx remove path", "Remove Motion Path", { .wide = true, .onClick = [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk) lk->remove_motion_path(layerMan);
+                        }});
+                    }
+                    else {
+                        text_button(gui, "animfx add path", "Add Motion Path", { .wide = true, .onClick = [&] {
+                            auto lk = editingLayer.lock();
+                            if(!lk) return;
+                            MotionPath& mp = lk->ensure_motion_path(layerMan);
+                            mp.coords = world.drawData.cam.c;
+                            const Vector2f ws = world.main.window.size.cast<float>();
+                            mp.points = { Vector2f{ws.x() * 0.3f, ws.y() * 0.5f}, Vector2f{ws.x() * 0.7f, ws.y() * 0.5f} };
+                            mp.controlIn = { Vector2f{0.0f, 0.0f}, Vector2f{0.0f, 0.0f} };
+                            mp.controlOut = { Vector2f{0.0f, 0.0f}, Vector2f{0.0f, 0.0f} };
+                            mp.nodeType = { 0, 0 };
+                            mp.nodeSeconds = { 0.0f, 2.0f };
+                            mp.nodeScale = { 1.0f, 1.0f };
+                            mp.nodeEasing = { 1, 1 };
+                            mp.nodeRotation = { 0.0f, 0.0f };
+                            lk->commit_motion_path(layerMan);
+                            world.drawProg.switch_to_tool_ptr(std::make_unique<MotionPathTool>(world.drawProg, editingLayer.get_net_id()));
+                        }});
+                    }
                 }
             }
             else {

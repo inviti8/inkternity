@@ -191,8 +191,18 @@ void DrawingProgramLayerListItem::load_file(cereal::PortableBinaryInputArchive& 
     a(*nameData);
 
     displayData = layerMan.drawP.world.netObjMan.make_obj<DisplayData>();
-    if(version >= VersionNumber(0, 27, 0))
-        a(*displayData);  // Current layout: parallax + flip-book fields
+    if(version >= VersionNumber(0, 29, 0))
+        a(*displayData);  // Current layout: parallax + flip-book + animFxGroup
+    else if(version >= VersionNumber(0, 27, 0)) {
+        // INFPNT000028-29 (0.27-0.28): parallax + flip-book fields, but no
+        // animFxGroup. Read the eleven explicitly so the stream stays aligned;
+        // animFxGroup keeps its default (false).
+        a(displayData->alpha, displayData->visible, displayData->blendMode,
+          displayData->parallaxDepth, displayData->parallaxAnchorX, displayData->parallaxAnchorY,
+          displayData->parallaxRefScale,
+          displayData->flipbookFps, displayData->flipbookPlayStyle, displayData->flipbookTriggerMode,
+          displayData->flipbookInvert);
+    }
     else if(version >= VersionNumber(0, 20, 0)) {
         // PARALLAX-SCENES layout (INFPNT000021-27, 0.20-0.26): parallax fields
         // present, but no flip-book fields. Read the seven explicitly to keep
@@ -569,6 +579,19 @@ bool DrawingProgramLayerListItem::is_flipbook_group() const {
     return displayData && displayData->flipbookFps > 0.0f;
 }
 
+void DrawingProgramLayerListItem::set_anim_fx_group(DrawingProgramLayerManager& layerMan, bool on) const {
+    if(!displayData || displayData->animFxGroup == on) return;
+    displayData->animFxGroup = on;
+    // Enabling/disabling changes the folder's draw semantics (composite children
+    // vs. drive the FX along the path), so rebuild the cached composite.
+    layerMan.drawP.drawCache.clear_own_cached_surfaces();
+    layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
+}
+
+bool DrawingProgramLayerListItem::is_anim_fx_group() const {
+    return displayData && displayData->animFxGroup;
+}
+
 bool DrawingProgramLayerListItem::has_active_flipbook_descendant() const {
     // A hidden subtree doesn't draw, so it never needs the cache bypass. A
     // flip-book with 0 or 1 frames can't animate either.
@@ -720,6 +743,7 @@ void DrawingProgramLayerListItem::set_metainfo(DrawingProgramLayerManager& layer
     set_flipbook_play_style(layerMan, metaInfo.flipbookPlayStyle);
     set_flipbook_trigger_mode(layerMan, metaInfo.flipbookTriggerMode);
     set_flipbook_invert(layerMan, metaInfo.flipbookInvert);
+    set_anim_fx_group(layerMan, metaInfo.animFxGroup);
     set_name(layerMan.drawP.world.delayedUpdateObjectManager, metaInfo.name);
 }
 
@@ -735,7 +759,8 @@ DrawingProgramLayerListItemMetaInfo DrawingProgramLayerListItem::get_metainfo() 
         .flipbookFps = displayData->flipbookFps,
         .flipbookPlayStyle = displayData->flipbookPlayStyle,
         .flipbookTriggerMode = displayData->flipbookTriggerMode,
-        .flipbookInvert = displayData->flipbookInvert
+        .flipbookInvert = displayData->flipbookInvert,
+        .animFxGroup = displayData->animFxGroup
     };
 }
 
