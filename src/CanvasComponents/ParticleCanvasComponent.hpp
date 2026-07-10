@@ -43,6 +43,13 @@ class ParticleCanvasComponent : public CanvasComponent {
         // Request a play (ON_TOUCH effects, or replay any). Picked up next update.
         void trigger_touch();
 
+        // PHASE10.1 — Anim-FX group drive: translate this effect by a shared
+        // WORLD-space delta (the group's travel along its motion path), converted
+        // into this component's own sim space. Because the effect emitter moves
+        // while non-relative particles keep their spawn coords, this produces a
+        // real trail; passing a zero delta parks it at its painted position.
+        void drive_anim_fx(const WorldVec& worldDelta);
+
         // Serialized authoring data.
         struct Data {
             NetworkingObjects::NetObjID libraryResourceId;  // embedded .eff asset
@@ -60,6 +67,10 @@ class ParticleCanvasComponent : public CanvasComponent {
         virtual SCollision::AABB<float> get_obj_coord_bounds() const override;
 
         void create_collider();
+        // Rebuild the collider/BVH from a given half-extent (does not reset the
+        // radius the way create_collider does). Used to grow bounds so an Anim-FX
+        // trail isn't cropped by the draw-cache clip region.
+        void rebuild_collider(float radius);
         // Builds the PIMPL runtime: resolves the library + particle manager
         // (needs drawP). draw() passes nullptr and relies on update()/init having
         // built it first (focus_update runs update before draw each frame).

@@ -40,6 +40,7 @@ constexpr float kVpHalf = kVp * 0.5f;
 struct ParticleCanvasComponent::Runtime {
     LegacyFxLibrary* lib = nullptr;          // non-owning (FxLibraryStore owns it)
     std::unique_ptr<LegacyFxRenderer> pm;    // owns the spawned effect (ClearAll deletes)
+    TLFX::Effect* eff = nullptr;             // the spawned instance (owned by pm); for Anim-FX drive
     float accum = 0.f;                        // real-time -> fixed-step accumulator
     bool started = false;                    // an effect instance has been spawned
     int emptyFrames = 0;                      // consecutive frames with 0 particles
@@ -75,8 +76,24 @@ void ParticleCanvasComponent::play_effect() const {
     rt->pm->ClearAll();   // remove + delete any prior instance -> fresh play
     TLFX::Effect* eff = new TLFX::Effect(*tmpl, rt->pm.get(), true);
     rt->pm->AddEffect(eff);
+    rt->eff = eff;        // keep the handle for Anim-FX drive (pm owns it)
     rt->started = true;
     rt->emptyFrames = 0;
+}
+
+void ParticleCanvasComponent::drive_anim_fx(const WorldVec& worldDelta) {
+    if (!rt || !rt->eff || !compContainer) return;
+    // Shared world delta -> this component's LOCAL delta (dir_to_space = the
+    // linear part, no translation) -> sim units (local = sim * localScale).
+    const Vector2f localDelta = compContainer->coords.dir_to_space(worldDelta);
+    const float inv = (d.localScale != 0.0f) ? (1.0f / d.localScale) : 0.0f;
+    rt->eff->SetX(localDelta.x() * inv);
+    rt->eff->SetY(localDelta.y() * inv);
+    // Grow bounds (monotonic) so the trail isn't cropped by the cache clip.
+    const float base = std::max(400.0f, d.localScale * 250.0f);
+    const float need = localDelta.norm() + base;
+    if (need > d.radius * 1.05f)
+        rebuild_collider(need);
 }
 
 void ParticleCanvasComponent::update(DrawingProgram& drawP) {
@@ -141,6 +158,7 @@ void ParticleCanvasComponent::ensure_runtime(DrawingProgram*) const {}
 void ParticleCanvasComponent::play_effect() const {}
 void ParticleCanvasComponent::update(DrawingProgram&) {}
 void ParticleCanvasComponent::draw(SkCanvas*, const DrawData&, const std::shared_ptr<void>&) const {}
+void ParticleCanvasComponent::drive_anim_fx(const WorldVec&) {}
 
 #endif // HVYM_HAS_TIMELINEFX_LEGACY
 // ---------------------------------------------------------------------------
@@ -169,14 +187,18 @@ void ParticleCanvasComponent::initialize_draw_data(DrawingProgram& drawP) {
 }
 
 void ParticleCanvasComponent::create_collider() {
-    using namespace SCollision;
-    ColliderCollection<float> objs;
     // Bounds drive the draw-cache clip region; particles that spill past them get
     // cropped to a square. Size the half-extent to the placement scale so the
     // effect fits (effect world spread x localScale, with margin). Stored so
     // selection/BVH stay consistent.
-    d.radius = std::max(400.0f, d.localScale * 250.0f);
-    float r = d.radius;
+    rebuild_collider(std::max(400.0f, d.localScale * 250.0f));
+}
+
+void ParticleCanvasComponent::rebuild_collider(float radius) {
+    using namespace SCollision;
+    ColliderCollection<float> objs;
+    d.radius = radius;
+    const float r = d.radius;
     std::array<Vector2f, 4> t = triangle_from_rect_points(Vector2f{-r, -r}, Vector2f{r, r});
     objs.triangle.emplace_back(t[0], t[1], t[2]);
     objs.triangle.emplace_back(t[2], t[3], t[0]);

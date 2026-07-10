@@ -6,6 +6,7 @@
 #include "../../MainProgram.hpp"
 #include "../../ReaderMode/ReaderMode.hpp"
 #include "../../World.hpp"
+#include "../../CanvasComponents/ParticleCanvasComponent.hpp"
 #include "SerializedBlendMode.hpp"
 
 using namespace NetworkingObjects;
@@ -672,6 +673,30 @@ void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool
             // ON_TOUCH: playing is set by trigger_touch_flipbook; runs per style.
             folderData->flipbook_advance(get_flipbook_play_style(), invert, get_flipbook_fps(), deltaTime);
             if(mp) mp->advance(deltaTime);
+        }
+    }
+    // PHASE10.1 — Anim-FX group: drive every particle effect inside it by the
+    // shared world-space path delta (relative arrangement preserved; each trails).
+    if(is_anim_fx_group() && has_motion_path()) {
+        MotionPath* mp = get_motion_path();
+        auto& rt = folderData->flipbookRuntime;   // reuse the transient preview flag
+        const bool playContext = viewerActive || rt.previewPlaying;
+        WorldVec worldDelta{0, 0};
+        if(playContext && mp->points.size() >= 2) {
+            mp->advance(deltaTime);   // the path's OWN play style over its seconds
+            const MotionPath::Sample smp = mp->sample(mp->pathProgress);
+            const Vector2f pathLocalDelta = smp.pos - mp->points[0];
+            worldDelta = mp->coords.dir_from_space(pathLocalDelta);
+        }
+        else if(mp) {
+            mp->reset();   // static → park the FX at their painted positions (delta 0)
+        }
+        std::vector<CanvasComponentContainer::ObjInfo*> comps;
+        get_flattened_component_list(comps);
+        for(auto* c : comps) {
+            CanvasComponent& comp = c->obj->get_comp();
+            if(comp.get_type() == CanvasComponentType::PARTICLE)
+                static_cast<ParticleCanvasComponent&>(comp).drive_anim_fx(worldDelta);
         }
     }
     for(auto& c : *folderData->folderList)

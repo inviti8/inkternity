@@ -727,6 +727,22 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             world.drawProg.switch_to_tool_ptr(std::make_unique<MotionPathTool>(world.drawProg, editingLayer.get_net_id()));
                         }});
                     }
+                    // Preview: run the FX along the path in drawing mode to check it
+                    // (playback is otherwise reader-mode-only). Transient per-group.
+                    if(editingLayerLock->has_motion_path()) {
+                        bool previewing = editingLayerLock->get_folder().flipbookRuntime.previewPlaying;
+                        text_button(gui, "animfx preview", previewing ? "Stop Preview" : "Preview Animation", {
+                            .wide = true,
+                            .onClick = [&] {
+                                auto lk = editingLayer.lock();
+                                if(lk && lk->is_folder()) {
+                                    auto& rt = lk->get_folder().flipbookRuntime;
+                                    rt.previewPlaying = !rt.previewPlaying;
+                                    if(MotionPath* mp = lk->get_motion_path()) mp->reset();
+                                }
+                            }
+                        });
+                    }
                 }
             }
             else {
