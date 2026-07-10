@@ -1,11 +1,11 @@
 #pragma once
 #include "DrawingProgramToolBase.hpp"
+#include "../Layers/MotionPath.hpp"
 #include <Helpers/NetworkingObjects/NetObjID.hpp>
 #include <optional>
 
 class DrawingProgram;
 struct DrawData;
-struct MotionPath;
 class DrawingProgramLayerListItem;
 
 // MOTION-PATH.md P2 — canvas editor for a flip-book group's animation path.
@@ -37,6 +37,14 @@ class MotionPathTool : public DrawingProgramToolBase {
         MotionPath* path() const;
         // Push the path's edited state to peers + relayout (whole-struct sync).
         void commit();
+        // Shared inspector body (desktop + phone toolboxes both call it).
+        void build_toolbox();
+        // Undo batching: begin_edit snapshots the path at a session start (no-op
+        // if one is pending); end_edit pushes a swap-based undo if it changed and
+        // clears the snapshot. Sessions bound drags, discrete ops, and inspector
+        // edits (flushed on selection change / tool exit).
+        void begin_edit();
+        void end_edit();
 
         NetworkingObjects::NetObjID folderId;
 
@@ -50,4 +58,7 @@ class MotionPathTool : public DrawingProgramToolBase {
         bool dragTangentIn = false;
         bool dragMoved = false;
         Vector2f dragDownScreen{0.0f, 0.0f};
+
+        // Snapshot of the path at the current edit-session start (for undo).
+        std::optional<MotionPath> undoBaseline;
 };
