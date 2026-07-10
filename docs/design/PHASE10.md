@@ -633,6 +633,134 @@ with zero playback-clock changes.
 - **B-M5c** — Record Motion (step capture first). ~2–3 days.
 - (Real-time timed capture, smoothing, rotation, neighbour-ghost = further options.)
 
+## B.12 Motion-path object — the PREFERRED transform-animation approach (scoped 2026-07-09)
+
+**Status: scoped, one architectural fork open (below).** This supersedes §B.11's
+requester/record models as the *primary* direction (zynx's proposal); §B.11 stays
+as the lighter fallback if this proves too big. The idea: instead of numeric
+requesters or recorded jitter-paths, the artist **draws the motion as a bezier
+curve** — direct manipulation, reusing systems we already ship.
+
+### Concept
+
+A **Motion Path** is a bezier curve bound to one flip-book group. Adding it puts a
+line on the canvas (start + end); the artist adds/moves points and drags tangents
+**exactly like editing a shape**. Handles read green (first) / red (last) / yellow
+(middle) diamonds. It is **visible/editable only while its flip-book group is
+selected, and NEVER rendered in viewer mode**. As the flip-book plays, the whole
+group travels the curve while its frames cycle independently.
+
+Each node carries **position + time + scale**:
+- **position** — the bezier node (with `controlIn`/`controlOut` tangents).
+- **time** — warps how the animation's progress distributes along the path
+  (hold/accelerate), reusing the *waypoint* timing vocabulary (`stopTime`-style
+  hold + `TransitionEasing`).
+- **scale** — a per-node value (default 1.0) that **tweens between nodes** (zynx) —
+  so the group can grow/shrink along the path. A per-node field, no curve needed.
+- (**rotation** — optional freebie from the path tangent, "orient along path"; can
+  defer.)
+
+### Reuse map (what the two scoping passes found)
+
+Shape side (`RectangleCanvasComponent` + `EditTool`, PHASE6/8):
+- **Node data = four parallel arrays** `points` / `controlIn` / `controlOut` /
+  `nodeType` in **local `Vector2f`** + a `CoordSpaceHelper` for world placement
+  (`RectangleCanvasComponent.hpp:24-54`). A motion path uses the *same shape* and
+  inherits the Eigen-gotcha workaround (local floats, not `WorldVec`). Add two
+  parallel arrays: `nodeTime` (float) + `nodeScale` (float) + `nodeEasing` (uint8).
+- **~70% of the editing is the generic `EditTool` handle machinery** (drag / insert
+  / tangent / mirror / marquee, `EditTool.cpp:144-225`) — but its seam is the
+  `CanvasComponentContainer::ObjInfo`/`obj` object model, **not** the rectangle.
+- **Node math is free functions** (`make_node_curve`/`make_node_corner`/de-Casteljau
+  `add_polygon_point`, `RectDrawEditTool.cpp:15-92`) — reusable on any same-shaped
+  node arrays (~1 day lift-out).
+- **No t-/arc-length sampler exists** and `SkPathMeasure` is used nowhere — so
+  "position at progress p" is **net-new** (build the `SkPath` with the shape's
+  edge rule, drive it with `SkPathMeasure::getPosTan`). Standard, low-risk.
+- **Handles are circles, cyan/green, no first/last role** (`EditTool.cpp:390-412`).
+  Green/red/yellow **diamonds** need a diamond draw helper + a per-handle role —
+  a modest change to a *shared* struct + draw path.
+
+Waypoint side (the editor-only-object template):
+- **Editor-only rendering is a solved pattern**: `WaypointCanvasComponent::draw`
+  bails on `readerMode.is_active()` (`WaypointCanvasComponent.cpp:54`); tool chrome
+  in `WaypointTool::draw` is gated on selection (`WaypointTool.cpp:92`). Copy both.
+- **Timing reuse is free**: `TransitionEasing {LINEAR,EASE,EASE_IN,EASE_OUT,
+  EASE_IN_OUT}` (`Waypoint.hpp:23-29`) + `transition_easing_to_bezier_curve()`
+  (`Waypoint.cpp:23-32`) + the `stopTime` hold idiom. Carry an easing byte per node.
+- **Separate-graph storage template**: `WaypointGraph` is a World member
+  (`World.hpp:78`), NetObj-registered (`World.cpp:244`), index-remapped file
+  serialization (`WaypointGraph.cpp:114-216`), version-gated load. A
+  `MotionPathGraph` would mirror this exactly.
+- **Owner-by-NetObjID precedent**: `Edge::from/to` and `Waypoint::audioId` store
+  cross-object `NetObjID`s (index-remapped on save); cascade-delete like
+  `erase_waypoint_by_id` (`WaypointGraph.cpp:87-112`). A path stores its flip-book
+  folder's id and dies with it.
+- **Consumer pattern**: `ReaderMode::update` + `snap_camera_to_current` snapshot a
+  duration, tick a local timer, apply the easing vector (`ReaderMode.cpp:178-205,
+  298-370`). Mirror it to advance path progress + per-node holds.
+
+### THE FORK (decision needed before building)
+
+The two passes recommend opposite object models. Honest tradeoff:
+
+- **Route 1 — Motion path is a `CanvasComponent` (`MOTION_PATH` type).** *Cheapest
+  editing* — plugs into `EditTool`/`edit_start`, gets `coords`/`commit_update`/undo
+  free. **But** components live inside *layers*, and a flip-book folder's children
+  *are its frames* — so a path-component has no natural home (it'd either pollute
+  the frame set or orphan in the tree), and "bound to a folder / never in viewer"
+  needs custom gates. The placement wart is permanent.
+- **Route 2 — World-owned `MotionPathGraph` + refactor `EditTool` to an interface.**
+  *Cleanest model* (visibility, binding, lifetime, timing) **and** still reuses the
+  editing — but the refactor rewires `EditTool`'s ~8 `objInfoBeingEdited->obj`
+  call-sites to an abstract `EditableHandleObject`, touching **shipped shape / text
+  / brush editing**. The right long-term decoupling; real regression blast radius.
+- **Route 3 (recommended) — World-owned `MotionPathGraph` + a small dedicated node
+  editor.** Clean model (Route 2's object side) with **no EditTool refactor** — the
+  path draws/edits its own handles via a focused interaction (path editing is
+  narrower than shapes: no fill/mask/affine/marquee needed). Reuses the node *math*
+  (free functions) + curve construction, reimplements only the ~2 days of
+  drag/add/tangent interaction. Zero risk to shipped shape editing.
+
+**My recommendation: Route 3.** The object model is what you live with forever, and
+Route 3 gets the clean one without destabilizing the shape/text/brush editing all
+your existing objects share (given the recent regression-sensitivity, that safety
+is worth the modest reimplementation). Route 2 is the "correct" decoupling but is a
+separate, riskier refactor I wouldn't bundle into this feature. Route 1's
+placement wart is a lasting smell. (If minimizing *new* code matters more than the
+object model, Route 1 flips to the front — hence: a fork for you.)
+
+### Playback integration (small, on top of shipped B-M3)
+
+Two independent clocks: the **frame cycle** (N frames at `fps`, existing) and the
+**path traversal** (progress 0→1 over a path duration, its own play-style/trigger —
+recommend: follows the group's). Each tick, sample the path at the eased progress →
+a world offset + interpolated scale → apply to the shown frame inside
+`draw_flipbook_frame` (wrap the child draw in a camera-projected transform). Frames
+keep cycling independently. **No change to the playback clock**, just a transform
+on the drawn frame.
+
+### Open decisions
+
+1. **The fork** (Route 1 / 2 / 3) — recommend **3**.
+2. **Path play-style/trigger** — follow the group's (recommended) or independent.
+3. **Rotation-along-tangent** — include or defer (defer recommended).
+4. **Sampling** — arc-length (even spacing, `SkPathMeasure`) vs. parametric-t
+   (easier, uneven). Recommend arc-length + per-node time warp.
+5. **Multiple paths per group?** — v1 one path per flip-book (recommended).
+
+### Rough milestones (Route 3)
+
+- **P1** — `MotionPathGraph` (World member, NetObj-registered, save/load gated at
+  **INFPNT000029 / 0.28.0**) + owner-folder binding + cascade-delete. ~2 days.
+- **P2** — node editor: draw green/red/yellow **diamond** handles (selection-gated,
+  never in viewer), drag/add/tangent, per-node inspector (time + scale + easing),
+  reusing the node-math free functions. ~3–4 days.
+- **P3** — `SkPathMeasure` sampler + playback integration (offset+scale the shown
+  frame) + preview. ~2 days.
+- **Rough total: ~1.5 weeks**, vs. ~1 week for §B.11's requester/record — buys a
+  far better, direct-manipulation tool.
+
 ---
 ---
 
