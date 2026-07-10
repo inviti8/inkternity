@@ -33,6 +33,9 @@ struct MotionPath {
                                            //   the start has no incoming segment).
     std::vector<float>    nodeScale;       // scale at this node (default 1.0), tweens
     std::vector<uint8_t>  nodeEasing;      // TransitionEasing for the segment after i
+    std::vector<float>    nodeRotation;    // rotation-along-tangent amount, -1..1 (0 = none;
+                                           //   the tangent's turn from the start heading is
+                                           //   multiplied by this), tweens between nodes.
 
     // The path has its OWN play-style, independent of the group's frame cycle
     // (zynx: e.g. a walk cycle that LOOPS its frames while the body travels the
@@ -47,7 +50,7 @@ struct MotionPath {
     bool   pathReversing = false;          // ping-pong direction
 
     template <typename Archive> void serialize(Archive& a) {
-        a(coords, points, controlIn, controlOut, nodeType, nodeSeconds, nodeScale, nodeEasing, playStyle);
+        a(coords, points, controlIn, controlOut, nodeType, nodeSeconds, nodeScale, nodeEasing, nodeRotation, playStyle);
     }
 
     // Total traversal time = sum of the per-segment seconds.
@@ -56,7 +59,7 @@ struct MotionPath {
     // MOTION-PATH.md P3 — sample the path at progress ∈ [0,1]: the position
     // (path-local) + interpolated scale. Parametric-per-segment (nodeTime warps
     // the distribution; nodeEasing eases within a segment). See MotionPath.cpp.
-    struct Sample { Vector2f pos; float scale; };
+    struct Sample { Vector2f pos; float scale; float rotationDeg; };
     Sample sample(double progress) const;
     // Advance pathProgress by deltaTime over `duration`, per playStyle
     // (once/loop/ping-pong). reset() returns to the start.

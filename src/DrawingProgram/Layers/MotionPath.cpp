@@ -4,6 +4,26 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+// Geometric tangent (direction of travel) of the segment seg->seg+1 at local t.
+Vector2f segment_tangent(const MotionPath& mp, size_t seg, float t) {
+    const Vector2f p0 = mp.points[seg];
+    const Vector2f p3 = mp.points[seg + 1];
+    const Vector2f cOut = (seg < mp.controlOut.size()) ? mp.controlOut[seg] : Vector2f{0.0f, 0.0f};
+    const Vector2f cIn  = ((seg + 1) < mp.controlIn.size()) ? mp.controlIn[seg + 1] : Vector2f{0.0f, 0.0f};
+    const bool curved = (cOut.x() != 0.0f || cOut.y() != 0.0f || cIn.x() != 0.0f || cIn.y() != 0.0f);
+    if(!curved) return p3 - p0;
+    const Vector2f c1 = p0 + cOut;
+    const Vector2f c2 = p3 + cIn;
+    const float mt = 1.0f - t;
+    // Cubic Bezier derivative B'(t).
+    return 3.0f * mt * mt * (c1 - p0) + 6.0f * mt * t * (c2 - c1) + 3.0f * t * t * (p3 - c2);
+}
+float tangent_angle(const Vector2f& v) {
+    return (v.squaredNorm() > 1e-12f) ? std::atan2(v.y(), v.x()) : 0.0f;
+}
+}
+
 float MotionPath::total_seconds() const {
     float t = 0.0f;
     for(float s : nodeSeconds)
@@ -61,7 +81,22 @@ MotionPath::Sample MotionPath::sample(double elapsed) const {
     const float s0 = (seg < nodeScale.size()) ? nodeScale[seg] : 1.0f;
     const float s1 = ((seg + 1) < nodeScale.size()) ? nodeScale[seg + 1] : 1.0f;
     const float scale = s0 + (s1 - s0) * eu;
-    return { pos, scale };
+
+    // Rotation-along-tangent: the tangent's turn from the START heading, scaled by
+    // the per-node factor (−1..1, tweened). Deviation-from-start so progress 0 is
+    // unrotated (the element keeps its authored orientation). Computed in path-local
+    // space, so it's camera-independent; the factor also lets the artist flip the
+    // sign if the visual sense is reversed.
+    const float r0 = (seg < nodeRotation.size()) ? nodeRotation[seg] : 0.0f;
+    const float r1 = ((seg + 1) < nodeRotation.size()) ? nodeRotation[seg + 1] : 0.0f;
+    const float rFactor = r0 + (r1 - r0) * eu;
+    float rotationDeg = 0.0f;
+    if(rFactor != 0.0f) {
+        const float angNow  = tangent_angle(segment_tangent(*this, seg, static_cast<float>(u)));
+        const float angStart = tangent_angle(segment_tangent(*this, 0, 0.0f));
+        rotationDeg = rFactor * (angNow - angStart) * (180.0f / 3.14159265358979323846f);
+    }
+    return { pos, scale, rotationDeg };
 }
 
 void MotionPath::advance(float deltaTime) {

@@ -204,7 +204,7 @@ because tools are inherently editor-only (never active in reader mode → the
 | Editor | reuse EditTool vs dedicated | **Dedicated tool** (Route 3), reuse node *math* only |
 | Play-style | own vs group's | **Path's OWN** (zynx) — trigger still shared for v1 |
 | Sampling | arc-length vs parametric | **Parametric-per-segment** (arc-length = later) |
-| Rotation-along-tangent | in vs out | **Deferred** |
+| Rotation-along-tangent | in vs out | **Done** — per-node −1..1 factor, tweened |
 | Paths per group | 1 vs N | **1** |
 | Scale pivot | anchor vs sample point | **Sample point** |
 
@@ -226,7 +226,7 @@ because tools are inherently editor-only (never active in reader mode → the
   A tuning problem, not a switch-flip. File under motion-path v2.
 - **Arc-length (constant-speed) sampling** — v1 is parametric-per-segment; even
   spacing along the curve is the refinement (needs `SkPathMeasure`).
-- **Rotation-along-tangent** ("orient to path"); **multiple paths per group**.
+- **Multiple paths per group** (rotation-along-tangent is now implemented).
 
 ## Effort
 

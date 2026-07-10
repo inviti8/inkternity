@@ -348,9 +348,11 @@ void DrawingProgramLayerListItem::draw(SkCanvas* canvas, const DrawData& drawDat
                     const Vector2f curScr   = dd->cam.c.to_space(mp->coords.from_space(smp.pos));
                     const Vector2f delta = curScr - startScr;
                     canvas->save();
-                    // Scale about the current sample position, then shift the frame
-                    // so its origin (node 0) follows the sampled point.
+                    // Rotate (along-tangent) + scale about the current sample
+                    // position, then shift the frame so its origin (node 0) follows
+                    // the sampled point.
                     canvas->translate(curScr.x(), curScr.y());
+                    canvas->rotate(smp.rotationDeg);
                     canvas->scale(smp.scale, smp.scale);
                     canvas->translate(-curScr.x(), -curScr.y());
                     canvas->translate(delta.x(), delta.y());

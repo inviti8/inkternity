@@ -56,6 +56,7 @@ void mp_ensure_arrays(MotionPath& mp) {
     mp.nodeSeconds.resize(n, 1.0f);   // seconds for the segment ending at this node
     mp.nodeScale.resize(n, 1.0f);
     mp.nodeEasing.resize(n, static_cast<uint8_t>(1));   // TransitionEasing::EASE
+    mp.nodeRotation.resize(n, 0.0f);
     if(!mp.nodeSeconds.empty()) mp.nodeSeconds[0] = 0.0f;   // start has no incoming segment
 }
 void mp_make_curve(MotionPath& mp, size_t i) {
@@ -101,12 +102,14 @@ void mp_insert_after(MotionPath& mp, size_t after) {
     const float segHalf = ((j < mp.nodeSeconds.size()) ? mp.nodeSeconds[j] : 1.0f) * 0.5f;
     if(j < mp.nodeSeconds.size()) mp.nodeSeconds[j] = segHalf;   // becomes new->oldj after the shift
     const float newScale = (mp.nodeScale[after] + mp.nodeScale[j]) * 0.5f;
+    const float newRot   = (mp.nodeRotation[after] + mp.nodeRotation[j]) * 0.5f;
     const uint8_t newEasing = mp.nodeEasing[after];
     auto insert_channels = [&](uint8_t type) {
         mp.nodeType.insert(mp.nodeType.begin() + at, type);
         mp.nodeSeconds.insert(mp.nodeSeconds.begin() + at, segHalf);   // after->new
         mp.nodeScale.insert(mp.nodeScale.begin() + at, newScale);
         mp.nodeEasing.insert(mp.nodeEasing.begin() + at, newEasing);
+        mp.nodeRotation.insert(mp.nodeRotation.begin() + at, newRot);
     };
     if(!iCurve && !jCurve) {
         mp.points.insert(mp.points.begin() + at, mid(p0, p3));
@@ -136,7 +139,7 @@ void mp_delete_node(MotionPath& mp, size_t i) {
         mp.nodeSeconds[i + 1] += mp.nodeSeconds[i];
     auto era = [&](auto& v) { if(i < v.size()) v.erase(v.begin() + static_cast<long>(i)); };
     era(mp.points); era(mp.controlIn); era(mp.controlOut);
-    era(mp.nodeType); era(mp.nodeSeconds); era(mp.nodeScale); era(mp.nodeEasing);
+    era(mp.nodeType); era(mp.nodeSeconds); era(mp.nodeScale); era(mp.nodeEasing); era(mp.nodeRotation);
     if(!mp.nodeSeconds.empty()) mp.nodeSeconds[0] = 0.0f;   // the new start has no incoming segment
 }
 
@@ -150,7 +153,7 @@ const std::vector<std::string>& play_style_names() {
 bool mp_data_equal(const MotionPath& a, const MotionPath& b) {
     return a.points == b.points && a.controlIn == b.controlIn && a.controlOut == b.controlOut
         && a.nodeType == b.nodeType && a.nodeSeconds == b.nodeSeconds && a.nodeScale == b.nodeScale
-        && a.nodeEasing == b.nodeEasing && a.playStyle == b.playStyle;
+        && a.nodeEasing == b.nodeEasing && a.nodeRotation == b.nodeRotation && a.playStyle == b.playStyle;
 }
 
 // Swap-based undo: stores one MotionPath snapshot and swaps it with the live path
@@ -249,6 +252,8 @@ void MotionPathTool::build_toolbox() {
             if(i >= 1 && i < mp->nodeSeconds.size())
                 slider_scalar_field(gui, "mp node seconds", "Seconds (from prev)", &mp->nodeSeconds[i], 0.1f, 10.0f, { .decimalPrecision = 1, .onEdit = [this] { begin_edit(); commit(); } });
             slider_scalar_field(gui, "mp node scale", "Scale", &mp->nodeScale[i], 0.1f, 10.0f, { .decimalPrecision = 2, .onEdit = [this] { begin_edit(); commit(); } });
+            if(i < mp->nodeRotation.size())
+                slider_scalar_field(gui, "mp node rotation", "Rotate along path (-1..1)", &mp->nodeRotation[i], -1.0f, 1.0f, { .decimalPrecision = 2, .onEdit = [this] { begin_edit(); commit(); } });
             left_to_right_line_layout(gui, [&] {
                 text_label(gui, "Easing");
                 gui.element<DropDown<uint8_t>>("mp node easing", &mp->nodeEasing[i], transition_easing_display_names(), DropdownOptions{ .onClick = [this] { begin_edit(); commit(); } });

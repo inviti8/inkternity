@@ -655,6 +655,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             mp.nodeSeconds = { 0.0f, 2.0f };   // start has no segment; end takes 2s
                             mp.nodeScale = { 1.0f, 1.0f };
                             mp.nodeEasing = { 1, 1 };   // TransitionEasing::EASE
+                            mp.nodeRotation = { 0.0f, 0.0f };   // no rotation-along-tangent by default
                             lk->commit_motion_path(layerMan);
                             world.drawProg.switch_to_tool_ptr(std::make_unique<MotionPathTool>(world.drawProg, editingLayer.get_net_id()));
                         }});
