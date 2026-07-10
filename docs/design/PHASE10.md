@@ -635,9 +635,10 @@ with zero playback-clock changes.
 
 ## B.12 Motion-path object — the PREFERRED transform-animation approach (scoped 2026-07-09)
 
-**Status: scoped, one architectural fork open (below).** This supersedes §B.11's
-requester/record models as the *primary* direction (zynx's proposal); §B.11 stays
-as the lighter fallback if this proves too big. The idea: instead of numeric
+**Status: scoped; fork decided — Route 3 (zynx, 2026-07-09). Build plan:
+[MOTION-PATH.md](MOTION-PATH.md).** This supersedes §B.11's requester/record models
+as the *primary* direction (zynx's proposal); §B.11 stays as the lighter fallback
+if this proves too big. The idea: instead of numeric
 requesters or recorded jitter-paths, the artist **draws the motion as a bezier
 curve** — direct manipulation, reusing systems we already ship.
 
