@@ -52,8 +52,9 @@ struct MotionPath {
 
     // Path-level playback:
     float duration = 2.0f;                // seconds for one full traversal
-    // (play-style + trigger are READ from the owning flip-book folder — the path
-    //  does not duplicate them.)
+    FlipbookPlayStyle playStyle;          // the path's OWN once/loop/ping-pong
+                                          //   (independent of the frame cycle)
+    // (TRIGGER — what starts it — is still shared with the group for v1.)
 
     // Transient runtime (NOT serialized/synced) — mirrors FlipbookRuntime:
     double pathProgress = 0.0;            // 0..1 along the traversal
@@ -69,6 +70,11 @@ struct MotionPath {
   "scale is just a per-point field."
 - **`nodeEasing`** reuses `TransitionEasing` (`Waypoint.hpp:23-29`) +
   `transition_easing_to_bezier_curve()` (`Waypoint.cpp:23-32`) — no new easing code.
+- **`playStyle`** — the path's own once/loop/ping-pong, **independent of the group's
+  frame cycle** (zynx, 2026-07-09: a walk cycle can loop its frames while the body
+  travels the path once and stops). Reuses the `FlipbookPlayStyle` enum. Set in the
+  path editor's inspector when the curve / first node is selected. The **trigger**
+  (what starts playback) stays shared with the group in v1.
 
 ## Milestones
 
@@ -129,8 +135,10 @@ because tools are inherently editor-only (never active in reader mode → the
      `EditCanvasComponentWorldUndoAction` `EditTool.cpp:251-284`).
 4. **Per-node inspector** in the tool's toolbox (model `WaypointTool.cpp:194-286`):
    when one node is selected, show `slider_scalar_field` **Time** (0–1) + **Scale**
-   (0.1–10) + a `DropDown` **Easing** (`transition_easing_display_names()`), plus
-   path-level **Duration** (s) and **Delete Node** / **Done** buttons.
+   (0.1–10) + a `DropDown` **Easing** (`transition_easing_display_names()`). Show the
+   **path-level** controls — **Play Style** (once/loop/ping-pong `DropDown`) +
+   **Duration** (s) — when the **first node** (or the whole curve) is selected, plus
+   **Delete Node** / **Done** buttons.
 5. **Verify:** draw a path, add/move/curve nodes, set a node's time/scale/easing,
    confirm undo/redo of each; confirm handles vanish on tool switch and in reader
    mode.
@@ -150,9 +158,10 @@ because tools are inherently editor-only (never active in reader mode → the
 2. **Advance the path clock** in the flip-book playback tick (extend
    `DrawingProgramLayerListItem::update_flipbook_playback`, the B-M3 function): if
    the folder has a path and the group is playing, advance `pathProgress` over
-   `duration` using the **folder's** play-style (once/loop/ping-pong) + the same
-   playback gate (reader mode OR preview). Independent of the frame-cycle timer
-   (walk cycle loops many times over one traversal).
+   `duration` using the **path's OWN** `playStyle` (once/loop/ping-pong), gated by
+   the group's playback context (reader mode OR preview) + trigger. Independent of
+   the frame-cycle timer — the frames can loop many times while the body travels
+   the path once and stops.
 3. **Apply the transform** in `DrawingProgramLayerFolder::draw_flipbook_frame`:
    sample at `pathProgress` → `{localPos, scale}`; compute the world **delta** =
    `coords.from_space(localPos) − coords.from_space(points[0])`; `canvas->save()`,
@@ -189,11 +198,31 @@ because tools are inherently editor-only (never active in reader mode → the
 |---|---|---|
 | Storage | World-graph vs folder-owned | **Folder-owned** `NetObjOwnerPtr<MotionPath>` |
 | Editor | reuse EditTool vs dedicated | **Dedicated tool** (Route 3), reuse node *math* only |
-| Play-style/trigger | own vs group's | **Follows the group's** |
+| Play-style | own vs group's | **Path's OWN** (zynx) — trigger still shared for v1 |
 | Sampling | arc-length vs parametric | **Parametric-per-segment** (arc-length = later) |
 | Rotation-along-tangent | in vs out | **Deferred** |
 | Paths per group | 1 vs N | **1** |
 | Scale pivot | anchor vs sample point | **Sample point** |
+
+## v2 / future ideas (not in this plan)
+
+- **Particle secondary motion along the path (zynx, 2026-07-09 — "cool if it did").**
+  Today a particle effect on a flip-book frame simulates around a *fixed local
+  origin* (`ParticleCanvasComponent.cpp:65` `SetOrigin(0,0,localScale)`; the sim is
+  local, not world-space), and the motion path adds a *draw-time* canvas transform
+  on top — so particles slide **rigidly** with the group: correct primary motion,
+  **zero** trailing/inertia. The opening for real secondary motion is *inside the
+  local sim*, NOT via world coords (moving real coords each frame would reintroduce
+  the BVH/cache churn the perf work removed): compute the path's instantaneous
+  velocity (derivative of the sampler) and feed it to the emitter as **inherited
+  spawn velocity** so particles trail — cheap, cache-safe. Two gates: (1) confirm
+  TimelineFX exposes an emitter-velocity-inheritance hook; (2) reconcile it with the
+  draw-transform so the two motions don't double-count (the draw transform already
+  moves the emitter visually — the inherited velocity must add *lag*, not re-move).
+  A tuning problem, not a switch-flip. File under motion-path v2.
+- **Arc-length (constant-speed) sampling** — v1 is parametric-per-segment; even
+  spacing along the curve is the refinement (needs `SkPathMeasure`).
+- **Rotation-along-tangent** ("orient to path"); **multiple paths per group**.
 
 ## Effort
 

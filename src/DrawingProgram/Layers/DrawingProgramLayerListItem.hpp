@@ -7,6 +7,7 @@
 #include "DrawingProgramLayer.hpp"
 #include "LayerKind.hpp"
 #include "FlipbookMode.hpp"
+#include "MotionPath.hpp"
 #include "SerializedBlendMode.hpp"
 #include "../../CanvasComponents/CanvasComponentContainer.hpp"
 
@@ -133,6 +134,14 @@ class DrawingProgramLayerListItem {
         // >1 frame) anywhere in this subtree? Mirrors has_active_parallax_descendant
         // — a live flip-book can't share the static composite cache.
         bool has_active_flipbook_descendant() const;
+
+        // MOTION-PATH.md P1 — optional bezier animation path bound to this
+        // (flip-book) folder. Null until the artist adds one; owned as a NetObj
+        // like nameData/displayData, so it dies with the folder. See MotionPath.hpp.
+        bool has_motion_path() const;
+        MotionPath* get_motion_path() const;                       // null if none
+        MotionPath& ensure_motion_path(DrawingProgramLayerManager& layerMan);   // create if absent
+        void remove_motion_path(DrawingProgramLayerManager& layerMan);
         // PHASE10 Feature B — per-frame flip-book playback tick (recurses the
         // tree). Advances each live flip-book group's frame per its play style
         // + trigger, but ONLY in a playback context (viewerActive OR the group's
@@ -192,6 +201,9 @@ class DrawingProgramLayerListItem {
         };
         NetworkingObjects::NetObjOwnerPtr<NameData> nameData;
         NetworkingObjects::NetObjOwnerPtr<DisplayData> displayData;
+        // MOTION-PATH.md P1 — optional; null unless this folder has an animation
+        // path. Synced/serialized like displayData but gated by a presence bool.
+        NetworkingObjects::NetObjOwnerPtr<MotionPath> motionPath;
         // Set at construction; immutable for the lifetime of the layer
         // (named-kind invariants are enforced by the layer manager, not
         // by mutating this field). NetObj-synced via constructor data;

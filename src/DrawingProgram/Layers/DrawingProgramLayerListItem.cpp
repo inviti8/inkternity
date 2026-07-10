@@ -102,6 +102,8 @@ void DrawingProgramLayerListItem::reassign_netobj_ids_call() {
         layerData->components.reassign_ids();
     nameData.reassign_ids();
     displayData.reassign_ids();
+    if(motionPath)
+        motionPath.reassign_ids();
 }
 
 void DrawingProgramLayerListItem::set_to_erase() {
@@ -224,6 +226,17 @@ void DrawingProgramLayerListItem::load_file(cereal::PortableBinaryInputArchive& 
     }
     // Pre-0.8 layers stay LayerKind::DEFAULT (the ctor default).
 
+    // MOTION-PATH.md (INFPNT000029 / 0.28.0): optional animation path. Older
+    // files have none → motionPath stays null.
+    if(version >= VersionNumber(0, 28, 0)) {
+        bool hasMotionPath;
+        a(hasMotionPath);
+        if(hasMotionPath) {
+            motionPath = layerMan.drawP.world.netObjMan.make_obj<MotionPath>();
+            a(*motionPath);
+        }
+    }
+
     bool isFolder;
     a(isFolder);
     if(isFolder) {
@@ -240,6 +253,11 @@ void DrawingProgramLayerListItem::save_file(cereal::PortableBinaryOutputArchive&
     a(*nameData);
     a(*displayData);
     a(static_cast<uint8_t>(kind));
+    // MOTION-PATH.md (INFPNT000029 / 0.28.0): optional per-folder animation path.
+    bool hasMotionPath = static_cast<bool>(motionPath);
+    a(hasMotionPath);
+    if(hasMotionPath)
+        a(*motionPath);
     a(static_cast<bool>(folderData));
     if(folderData)
         folderData->save_file(a);
@@ -619,6 +637,37 @@ void DrawingProgramLayerListItem::trigger_touch_flipbook(const CoordSpaceHelper&
         c.obj->trigger_touch_flipbook(camCoords, tapCollider);
 }
 
+bool DrawingProgramLayerListItem::has_motion_path() const {
+    // A *usable* path needs at least a start + end node; an emptied path (after
+    // remove_motion_path) keeps its NetObj but reads as "no path".
+    return motionPath && motionPath->points.size() >= 2;
+}
+
+MotionPath* DrawingProgramLayerListItem::get_motion_path() const {
+    return motionPath ? motionPath.get() : nullptr;
+}
+
+MotionPath& DrawingProgramLayerListItem::ensure_motion_path(DrawingProgramLayerManager& layerMan) {
+    if(!motionPath)
+        motionPath = layerMan.drawP.world.netObjMan.make_obj<MotionPath>();
+    return *motionPath;
+}
+
+void DrawingProgramLayerListItem::remove_motion_path(DrawingProgramLayerManager& layerMan) {
+    // NetObjOwnerPtr is create-once / destroy-with-holder (no runtime destroy),
+    // so "remove" clears the path's content — the NetObj lingers, empty, and
+    // has_motion_path() reads false. Re-adding reuses it.
+    if(!motionPath) return;
+    motionPath->points.clear();
+    motionPath->controlIn.clear();
+    motionPath->controlOut.clear();
+    motionPath->nodeType.clear();
+    motionPath->nodeTime.clear();
+    motionPath->nodeScale.clear();
+    motionPath->nodeEasing.clear();
+    layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<MotionPath>(motionPath, false);
+}
+
 void DrawingProgramLayerListItem::set_metainfo(DrawingProgramLayerManager& layerMan, const DrawingProgramLayerListItemMetaInfo& metaInfo) {
     set_blend_mode(layerMan, metaInfo.blendMode);
     set_alpha(layerMan, metaInfo.alpha);
@@ -676,6 +725,14 @@ void DrawingProgramLayerListItem::register_class(World& w) {
             w.set_to_layout_gui_if_focus();
         }
     });
+    // MOTION-PATH.md P1 — the optional per-folder animation path syncs whole-
+    // struct like DisplayData. A path edit changes playback/chrome, not the
+    // static composite, so no cache clear — just relayout.
+    w.delayedUpdateObjectManager.register_class<MotionPath>(w.netObjMan, NetworkingObjects::DelayUpdateSerializedClassManager::CustomConstructors<MotionPath>{
+        .postUpdateFunc = [&](MotionPath& o) {
+            w.set_to_layout_gui_if_focus();
+        }
+    });
 }
 
 void DrawingProgramLayerListItem::write_constructor_func(const NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem>& o, cereal::PortableBinaryOutputArchive& a) {
@@ -687,6 +744,11 @@ void DrawingProgramLayerListItem::write_constructor_func(const NetworkingObjects
     o->nameData.write_create_message(a);
     o->displayData.write_create_message(a);
     a(static_cast<uint8_t>(o->kind));
+    // MOTION-PATH.md P1 — optional; presence bool then the create-message.
+    bool hasMotionPath = static_cast<bool>(o->motionPath);
+    a(hasMotionPath);
+    if(hasMotionPath)
+        o->motionPath.write_create_message(a);
 }
 
 void DrawingProgramLayerListItem::read_constructor_func(const NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem>& o, cereal::PortableBinaryInputArchive& a, const std::shared_ptr<NetServer::ClientData>& c) {
@@ -705,4 +767,8 @@ void DrawingProgramLayerListItem::read_constructor_func(const NetworkingObjects:
     uint8_t kindByte;
     a(kindByte);
     o->kind = static_cast<LayerKind>(kindByte);
+    bool hasMotionPath;
+    a(hasMotionPath);
+    if(hasMotionPath)
+        o->motionPath = o.get_obj_man()->read_create_message<MotionPath>(a, c);
 }
