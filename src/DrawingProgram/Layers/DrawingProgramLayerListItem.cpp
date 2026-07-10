@@ -668,6 +668,11 @@ void DrawingProgramLayerListItem::remove_motion_path(DrawingProgramLayerManager&
     layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<MotionPath>(motionPath, false);
 }
 
+void DrawingProgramLayerListItem::commit_motion_path(DrawingProgramLayerManager& layerMan) const {
+    if(motionPath)
+        layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<MotionPath>(motionPath, false);
+}
+
 void DrawingProgramLayerListItem::set_metainfo(DrawingProgramLayerManager& layerMan, const DrawingProgramLayerListItemMetaInfo& metaInfo) {
     set_blend_mode(layerMan, metaInfo.blendMode);
     set_alpha(layerMan, metaInfo.alpha);

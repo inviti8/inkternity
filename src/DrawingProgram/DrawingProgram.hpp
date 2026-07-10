@@ -195,6 +195,7 @@ class DrawingProgram {
         friend class TextBoxTool;
         friend class ScreenshotTool;
         friend class EditTool;
+        friend class MotionPathTool;
         friend class ImageEditTool;
         friend class RectDrawEditTool;
         friend class EllipseDrawEditTool;

@@ -2,6 +2,9 @@
 #include "DrawingProgramLayerListItem.hpp"
 #include "DrawingProgramLayerManager.hpp"
 #include "../DrawingProgram.hpp"
+#include "../Tools/MotionPathTool.hpp"
+#include "MotionPath.hpp"
+#include <memory>
 #include "../../World.hpp"
 #include "../../MainProgram.hpp"
 #include "Helpers/ConvertVec.hpp"
@@ -608,6 +611,40 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             auto lk = editingLayer.lock();
                             if(lk) lk->set_flipbook_invert(layerMan, !lk->get_flipbook_invert());
                         });
+                    // MOTION-PATH.md — add/edit/remove the animation path (the
+                    // group travels this bezier curve as it plays). The path
+                    // itself is edited by MotionPathTool (editor-only chrome).
+                    if(editingLayerLock->has_motion_path()) {
+                        text_button(gui, "flipbook edit path", "Edit Motion Path", { .wide = true, .onClick = [&] {
+                            if(editingLayer.lock())
+                                world.drawProg.switch_to_tool_ptr(std::make_unique<MotionPathTool>(world.drawProg, editingLayer.get_net_id()));
+                        }});
+                        text_button(gui, "flipbook remove path", "Remove Motion Path", { .wide = true, .onClick = [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk) lk->remove_motion_path(layerMan);
+                        }});
+                    }
+                    else {
+                        text_button(gui, "flipbook add path", "Add Motion Path", { .wide = true, .onClick = [&] {
+                            auto lk = editingLayer.lock();
+                            if(!lk) return;
+                            MotionPath& mp = lk->ensure_motion_path(layerMan);
+                            // Default 2-node path across the current view. Anchoring
+                            // the path coords to the live camera makes path-local ==
+                            // screen space at creation, so the nodes land where set.
+                            mp.coords = world.drawData.cam.c;
+                            const Vector2f ws = world.main.window.size.cast<float>();
+                            mp.points = { Vector2f{ws.x() * 0.3f, ws.y() * 0.5f}, Vector2f{ws.x() * 0.7f, ws.y() * 0.5f} };
+                            mp.controlIn = { Vector2f{0.0f, 0.0f}, Vector2f{0.0f, 0.0f} };
+                            mp.controlOut = { Vector2f{0.0f, 0.0f}, Vector2f{0.0f, 0.0f} };
+                            mp.nodeType = { 0, 0 };
+                            mp.nodeTime = { 0.0f, 1.0f };
+                            mp.nodeScale = { 1.0f, 1.0f };
+                            mp.nodeEasing = { 1, 1 };   // TransitionEasing::EASE
+                            lk->commit_motion_path(layerMan);
+                            world.drawProg.switch_to_tool_ptr(std::make_unique<MotionPathTool>(world.drawProg, editingLayer.get_net_id()));
+                        }});
+                    }
                     // Preview: play in drawing mode to debug timing. Transient
                     // per-folder override (not saved, not synced, not undoable).
                     bool previewing = editingLayerLock->get_folder().flipbookRuntime.previewPlaying;

@@ -142,6 +142,8 @@ class DrawingProgramLayerListItem {
         MotionPath* get_motion_path() const;                       // null if none
         MotionPath& ensure_motion_path(DrawingProgramLayerManager& layerMan);   // create if absent
         void remove_motion_path(DrawingProgramLayerManager& layerMan);
+        // Push the (locally-edited) path to peers + relayout. Whole-struct sync.
+        void commit_motion_path(DrawingProgramLayerManager& layerMan) const;
         // PHASE10 Feature B — per-frame flip-book playback tick (recurses the
         // tree). Advances each live flip-book group's frame per its play style
         // + trigger, but ONLY in a playback context (viewerActive OR the group's

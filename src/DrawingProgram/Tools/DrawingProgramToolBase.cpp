@@ -18,6 +18,7 @@
 #include "WaypointTool.hpp"
 #include "ButtonSelectTool.hpp"
 #include "StrokeVectorizeTool.hpp"
+#include "MotionPathTool.hpp"
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 #include "ParticleBrushTool.hpp"
 #endif
@@ -66,6 +67,10 @@ std::unique_ptr<DrawingProgramToolBase> DrawingProgramToolBase::allocate_tool_ty
             return std::make_unique<ButtonSelectTool>(drawP);
         case DrawingProgramToolType::STROKEVECTORIZE:
             return std::make_unique<StrokeVectorizeTool>(drawP);
+        case DrawingProgramToolType::MOTIONPATH:
+            // Usually installed via switch_to_tool_ptr with a folder binding; the
+            // by-type path yields an unbound editor (draws/does nothing until bound).
+            return std::make_unique<MotionPathTool>(drawP);
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
         case DrawingProgramToolType::PARTICLEBRUSH:
             return std::make_unique<ParticleBrushTool>(drawP);

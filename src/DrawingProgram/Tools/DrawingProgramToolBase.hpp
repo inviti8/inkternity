@@ -29,6 +29,7 @@ enum class DrawingProgramToolType : int {
     BUTTONSELECT,
     STROKEVECTORIZE,
     PARTICLEBRUSH,   // PHASE5.1 M2 — stamp FX Library effects onto the canvas
+    MOTIONPATH,      // MOTION-PATH.md P2 — edit a flip-book group's animation path
     // PHASE3.md Shared.M1 — short-lived capture tool, constructed
     // directly with target-size + callback args via switch_to_tool_ptr.
     // Never reached through allocate_tool_type (the by-type path has no
