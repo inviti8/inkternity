@@ -4,24 +4,36 @@
 #include <algorithm>
 #include <cmath>
 
-MotionPath::Sample MotionPath::sample(double progress) const {
+float MotionPath::total_seconds() const {
+    float t = 0.0f;
+    for(float s : nodeSeconds)
+        t += (s > 0.0f) ? s : 0.0f;
+    return t;
+}
+
+MotionPath::Sample MotionPath::sample(double elapsed) const {
     const size_t n = points.size();
     if(n == 0) return { Vector2f{0.0f, 0.0f}, 1.0f };
     if(n == 1) return { points[0], nodeScale.empty() ? 1.0f : nodeScale[0] };
 
-    const double p = std::clamp(progress, 0.0, 1.0);
-    // Normalized arrival time of node i (falls back to uniform if unset).
-    auto t_at = [&](size_t i) -> double {
-        return (i < nodeTime.size()) ? static_cast<double>(nodeTime[i])
-                                     : static_cast<double>(i) / static_cast<double>(n - 1);
+    // Per-segment duration (seconds) of the edge ENDING at node i (i >= 1).
+    auto seg_secs = [&](size_t i) -> double {
+        const float s = (i < nodeSeconds.size()) ? nodeSeconds[i] : 1.0f;
+        return (s > 0.0f) ? static_cast<double>(s) : 0.0f;
     };
-    // First segment whose end-time exceeds p (else the last segment).
+    const double total = static_cast<double>(total_seconds());
+    double e = std::clamp(elapsed, 0.0, total);
+
+    // Walk segments, accumulating seconds, to find the active one + local t.
     size_t seg = n - 2;
+    double segStart = 0.0, segLen = seg_secs(n - 1);
+    double cum = 0.0;
     for(size_t i = 0; i + 1 < n; ++i) {
-        if(p < t_at(i + 1)) { seg = i; break; }
+        const double len = seg_secs(i + 1);
+        if(e <= cum + len || i + 1 == n - 1) { seg = i; segStart = cum; segLen = len; break; }
+        cum += len;
     }
-    const double t0 = t_at(seg), t1 = t_at(seg + 1);
-    double u = (t1 > t0) ? (p - t0) / (t1 - t0) : 0.0;
+    double u = (segLen > 0.0) ? (e - segStart) / segLen : 0.0;
     u = std::clamp(u, 0.0, 1.0);
 
     // Ease within the segment (reuse the waypoint easing vocabulary).
@@ -53,21 +65,23 @@ MotionPath::Sample MotionPath::sample(double progress) const {
 }
 
 void MotionPath::advance(float deltaTime) {
-    if(duration <= 0.0f || points.size() < 2) return;
-    const double step = static_cast<double>(deltaTime) / static_cast<double>(duration);
+    const double total = static_cast<double>(total_seconds());
+    if(total <= 0.0 || points.size() < 2) return;
+    const double dt = static_cast<double>(deltaTime);
     switch(playStyle) {
         case FlipbookPlayStyle::ONCE:
-            pathProgress = std::min(1.0, pathProgress + step);
+            pathProgress = std::min(total, pathProgress + dt);
             break;
         case FlipbookPlayStyle::LOOP:
-            pathProgress += step;
-            pathProgress -= std::floor(pathProgress);   // wrap into [0,1)
+            pathProgress += dt;
+            pathProgress = std::fmod(pathProgress, total);
+            if(pathProgress < 0.0) pathProgress += total;
             break;
         case FlipbookPlayStyle::PING_PONG:
-            pathProgress += pathReversing ? -step : step;
-            if(pathProgress > 1.0)      { pathProgress = 2.0 - pathProgress; pathReversing = true; }
-            else if(pathProgress < 0.0) { pathProgress = -pathProgress;      pathReversing = false; }
-            pathProgress = std::clamp(pathProgress, 0.0, 1.0);
+            pathProgress += pathReversing ? -dt : dt;
+            if(pathProgress > total)    { pathProgress = 2.0 * total - pathProgress; pathReversing = true; }
+            else if(pathProgress < 0.0) { pathProgress = -pathProgress;              pathReversing = false; }
+            pathProgress = std::clamp(pathProgress, 0.0, total);
             break;
     }
 }

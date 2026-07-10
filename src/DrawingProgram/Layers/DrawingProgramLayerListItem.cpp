@@ -696,7 +696,7 @@ void DrawingProgramLayerListItem::remove_motion_path(DrawingProgramLayerManager&
     motionPath->controlIn.clear();
     motionPath->controlOut.clear();
     motionPath->nodeType.clear();
-    motionPath->nodeTime.clear();
+    motionPath->nodeSeconds.clear();
     motionPath->nodeScale.clear();
     motionPath->nodeEasing.clear();
     layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<MotionPath>(motionPath, false);

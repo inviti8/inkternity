@@ -611,6 +611,20 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             auto lk = editingLayer.lock();
                             if(lk) lk->set_flipbook_invert(layerMan, !lk->get_flipbook_invert());
                         });
+                    // Onion skin: ghost the frame below + above the one being edited
+                    // (a flip-book otherwise shows only one frame). Session-only aid.
+                    checkbox_field(gui, "flipbook onion", "Onion skin (ghost adjacent frames)",
+                        [&]() -> bool {
+                            auto lk = editingLayer.lock();
+                            return lk && lk->is_folder() && lk->get_folder().flipbookRuntime.onionSkin;
+                        },
+                        [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk && lk->is_folder()) {
+                                auto& rt = lk->get_folder().flipbookRuntime;
+                                rt.onionSkin = !rt.onionSkin;
+                            }
+                        });
                     // MOTION-PATH.md — add/edit/remove the animation path (the
                     // group travels this bezier curve as it plays). The path
                     // itself is edited by MotionPathTool (editor-only chrome).
@@ -638,7 +652,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             mp.controlIn = { Vector2f{0.0f, 0.0f}, Vector2f{0.0f, 0.0f} };
                             mp.controlOut = { Vector2f{0.0f, 0.0f}, Vector2f{0.0f, 0.0f} };
                             mp.nodeType = { 0, 0 };
-                            mp.nodeTime = { 0.0f, 1.0f };
+                            mp.nodeSeconds = { 0.0f, 2.0f };   // start has no segment; end takes 2s
                             mp.nodeScale = { 1.0f, 1.0f };
                             mp.nodeEasing = { 1, 1 };   // TransitionEasing::EASE
                             lk->commit_motion_path(layerMan);

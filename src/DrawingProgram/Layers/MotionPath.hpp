@@ -28,11 +28,12 @@ struct MotionPath {
     std::vector<Vector2f> controlOut;      // tangent offset from points[i]
     std::vector<uint8_t>  nodeType;        // 0 corner / 1 smooth / 2 cusp
 
-    std::vector<float>    nodeTime;        // normalized arrival time 0..1 (monotonic)
+    std::vector<float>    nodeSeconds;     // SECONDS to travel here from the previous
+                                           //   node (per-segment duration; [0] unused,
+                                           //   the start has no incoming segment).
     std::vector<float>    nodeScale;       // scale at this node (default 1.0), tweens
     std::vector<uint8_t>  nodeEasing;      // TransitionEasing for the segment after i
 
-    float duration = 2.0f;                 // seconds for one full traversal
     // The path has its OWN play-style, independent of the group's frame cycle
     // (zynx: e.g. a walk cycle that LOOPS its frames while the body travels the
     // path ONCE and stops). Set in the path editor when the curve / first node is
@@ -42,12 +43,15 @@ struct MotionPath {
 
     // Transient runtime — NEVER serialized/synced (per-viewer, like FlipbookRuntime).
     // Advanced by the flip-book playback tick, read by draw_flipbook_frame.
-    double pathProgress = 0.0;             // 0..1 along the traversal
+    double pathProgress = 0.0;             // ELAPSED seconds along the traversal
     bool   pathReversing = false;          // ping-pong direction
 
     template <typename Archive> void serialize(Archive& a) {
-        a(coords, points, controlIn, controlOut, nodeType, nodeTime, nodeScale, nodeEasing, duration, playStyle);
+        a(coords, points, controlIn, controlOut, nodeType, nodeSeconds, nodeScale, nodeEasing, playStyle);
     }
+
+    // Total traversal time = sum of the per-segment seconds.
+    float total_seconds() const;
 
     // MOTION-PATH.md P3 — sample the path at progress ∈ [0,1]: the position
     // (path-local) + interpolated scale. Parametric-per-segment (nodeTime warps

@@ -503,10 +503,14 @@ the flip-book group deliberately skips onion-skin; see §B.9.)
 - **Tweening / interpolation between frames** — every frame is an authored layer;
   play mode swaps them (hard cut). Position/scale keying (B-M5) interpolates the
   *transform*, not the pixels.
-- **Onion-skin between frames (dropped, zynx 2026-07-09).** Not needed — each
-  child layer already has an **opacity** setting (`DisplayData::alpha`), so an
-  artist who wants to see adjacent frames while drawing can just lower a frame's
-  opacity and read the layers below through it. No dedicated onion overlay.
+- **Onion-skin between frames — RE-ADDED (zynx, 2026-07-09).** Initially dropped
+  (opacity-as-onion), but a flip-book shows **only one frame at a time**, so an
+  artist editing a frame can't see the one below/above at all. Now: while *editing*
+  a flip-book (drawing mode, not playing), the frame directly below + above the
+  edit frame ghost at 0.5 alpha (`DrawingProgramLayerFolder::draw_flipbook_frame`);
+  a per-group **Onion skin** toggle (transient, default on) in the panel. Only the
+  group being edited ghosts (its editing layer is a direct child), to avoid
+  cluttering every flip-book on the canvas.
 - **Audio sync / per-frame timing markers / scrub bar.**
 - **Export to GIF/MP4** — possible follow-up via `WorldScreenshot` (loop the group,
   capture each frame). Not v1.

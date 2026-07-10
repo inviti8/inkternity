@@ -6,6 +6,7 @@
 #include "DrawingProgramLayerManager.hpp"
 #include "../DrawingProgram.hpp"
 #include "../../World.hpp"
+#include "../../MainProgram.hpp"
 
 void DrawingProgramLayerFolder::draw(SkCanvas* canvas, const DrawData& drawData) const {
     for(auto& p : (*folderList) | std::views::reverse)
@@ -22,18 +23,51 @@ void DrawingProgramLayerFolder::draw_flipbook_frame(SkCanvas* canvas, const Draw
         return;
     // frameIndex IS the panel/child index: plain iteration of folderList yields
     // index 0 first, and index 0 is the panel's TOP row (it draws last in the
-    // normal reverse composite, so it sits on top). Draw only that one child.
+    // normal reverse composite, so it sits on top).
     size_t idx = flipbookRuntime.frameIndex;
     if(idx >= n)
         idx = n - 1;
-    size_t i = 0;
-    for(auto& p : *folderList) {
-        if(i == idx) {
-            p.obj->draw(canvas, drawData);
-            return;
+
+    // Draw the child at panel index k, optionally at reduced alpha (onion ghost).
+    auto draw_child_at = [&](size_t k, float alpha) {
+        if(k >= n) return;
+        size_t i = 0;
+        for(auto& p : *folderList) {
+            if(i == k) {
+                if(alpha < 1.0f) {
+                    SkPaint lp;
+                    lp.setAlphaf(alpha);
+                    canvas->saveLayer(nullptr, &lp);
+                    p.obj->draw(canvas, drawData);
+                    canvas->restore();
+                }
+                else
+                    p.obj->draw(canvas, drawData);
+                return;
+            }
+            ++i;
         }
-        ++i;
+    };
+
+    // Onion skin: while EDITING this flip-book in drawing mode (not playing), a
+    // flip-book shows only one frame — so ghost the adjacent frames at half alpha
+    // so the artist can register against the frame below/above. Only for the group
+    // currently being edited (its editing layer is a direct child), to avoid
+    // ghosting every flip-book on the canvas.
+    bool showOnion = false;
+    if(flipbookRuntime.onionSkin && !flipbookRuntime.previewPlaying && !flipbookRuntime.playing &&
+       drawData.main && drawData.main->world && !drawData.main->world->readerMode.is_active()) {
+        auto editing = drawData.main->world->drawProg.layerMan.get_editing_layer();
+        DrawingProgramLayerListItem* el = editing.expired() ? nullptr : editing.lock().get();
+        if(el)
+            for(auto& p : *folderList)
+                if(&(*p.obj) == el) { showOnion = true; break; }
     }
+    if(showOnion) {
+        if(idx >= 1)     draw_child_at(idx - 1, 0.5f);   // previous frame
+        if(idx + 1 < n)  draw_child_at(idx + 1, 0.5f);   // next frame
+    }
+    draw_child_at(idx, 1.0f);   // active frame on top
 }
 
 // Advance flipbookRuntime.frameIndex by one frame per the play style. Panel

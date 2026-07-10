@@ -62,10 +62,14 @@ struct MotionPath {
 };
 ```
 
-- **`nodeTime`** gives pacing: the endpoint's time is the end of the traversal
-  ("time of translation set when the end point is selected" — set `duration`
-  there). Intermediate nodes' times control accel/hold. Default uniform
-  `i/(n-1)`.
+- **`nodeSeconds`** (revised 2026-07-09 — was a normalized 0–1 `nodeTime`): the
+  **per-segment duration in seconds** — the time to travel here *from the previous
+  node*. The start node has none ([0] = 0). Total traversal time = sum. This
+  replaced the normalized-fraction model, which was cumulative and confusing (a
+  middle node set to 1.0 meant "arrive at the very end here," collapsing the rest —
+  zynx hit exactly that). Per-segment seconds is non-cumulative from the artist's
+  view and closer to the waypoint per-edge feel. Inserting a node splits the
+  segment's seconds in half (timing preserved); deleting folds them back.
 - **`nodeScale`** default 1.0, linearly (eased) interpolated between nodes — zynx's
   "scale is just a per-point field."
 - **`nodeEasing`** reuses `TransitionEasing` (`Waypoint.hpp:23-29`) +

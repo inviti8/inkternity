@@ -46,6 +46,7 @@ class DrawingProgramLayerFolder {
             bool pingPongReversing = false;
             bool onScreenLast = false;    // AUTO trigger rising-edge tracking
             bool previewPlaying = false;  // drawing-mode debug override (transient)
+            bool onionSkin = true;        // ghost adjacent frames while editing this group
         } flipbookRuntime;
 
         void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version, DrawingProgramLayerManager& layerMan);

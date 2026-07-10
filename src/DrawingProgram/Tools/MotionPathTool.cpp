@@ -20,6 +20,7 @@
 #include <include/core/SkPathBuilder.h>
 #include <algorithm>
 #include <string>
+#include <cstdio>
 
 namespace {
 inline bool is_zero(const Vector2f& v) { return v.x() == 0.0f && v.y() == 0.0f; }
@@ -52,9 +53,10 @@ void mp_ensure_arrays(MotionPath& mp) {
     mp.controlIn.resize(n, Vector2f{0.0f, 0.0f});
     mp.controlOut.resize(n, Vector2f{0.0f, 0.0f});
     mp.nodeType.resize(n, static_cast<uint8_t>(0));
-    mp.nodeTime.resize(n, 0.0f);
+    mp.nodeSeconds.resize(n, 1.0f);   // seconds for the segment ending at this node
     mp.nodeScale.resize(n, 1.0f);
     mp.nodeEasing.resize(n, static_cast<uint8_t>(1));   // TransitionEasing::EASE
+    if(!mp.nodeSeconds.empty()) mp.nodeSeconds[0] = 0.0f;   // start has no incoming segment
 }
 void mp_make_curve(MotionPath& mp, size_t i) {
     mp_ensure_arrays(mp);
@@ -94,12 +96,15 @@ void mp_insert_after(MotionPath& mp, size_t after) {
     const bool jCurve = mp.nodeType[j] != 0;
     const long at = static_cast<long>(after) + 1;
     auto mid = [](const Vector2f& a, const Vector2f& b) { return Vector2f{(a.x() + b.x()) * 0.5f, (a.y() + b.y()) * 0.5f}; };
-    const float newTime  = (mp.nodeTime[after]  + mp.nodeTime[j])  * 0.5f;
+    // Split the segment's seconds in half so inserting a control point doesn't
+    // change the overall timing (after->new and new->oldj each get half).
+    const float segHalf = ((j < mp.nodeSeconds.size()) ? mp.nodeSeconds[j] : 1.0f) * 0.5f;
+    if(j < mp.nodeSeconds.size()) mp.nodeSeconds[j] = segHalf;   // becomes new->oldj after the shift
     const float newScale = (mp.nodeScale[after] + mp.nodeScale[j]) * 0.5f;
     const uint8_t newEasing = mp.nodeEasing[after];
     auto insert_channels = [&](uint8_t type) {
         mp.nodeType.insert(mp.nodeType.begin() + at, type);
-        mp.nodeTime.insert(mp.nodeTime.begin() + at, newTime);
+        mp.nodeSeconds.insert(mp.nodeSeconds.begin() + at, segHalf);   // after->new
         mp.nodeScale.insert(mp.nodeScale.begin() + at, newScale);
         mp.nodeEasing.insert(mp.nodeEasing.begin() + at, newEasing);
     };
@@ -126,9 +131,13 @@ void mp_insert_after(MotionPath& mp, size_t after) {
 }
 void mp_delete_node(MotionPath& mp, size_t i) {
     if(i >= mp.points.size()) return;
+    // Preserve total time: fold this node's incoming segment into the next one.
+    if(i < mp.nodeSeconds.size() && i + 1 < mp.nodeSeconds.size())
+        mp.nodeSeconds[i + 1] += mp.nodeSeconds[i];
     auto era = [&](auto& v) { if(i < v.size()) v.erase(v.begin() + static_cast<long>(i)); };
     era(mp.points); era(mp.controlIn); era(mp.controlOut);
-    era(mp.nodeType); era(mp.nodeTime); era(mp.nodeScale); era(mp.nodeEasing);
+    era(mp.nodeType); era(mp.nodeSeconds); era(mp.nodeScale); era(mp.nodeEasing);
+    if(!mp.nodeSeconds.empty()) mp.nodeSeconds[0] = 0.0f;   // the new start has no incoming segment
 }
 
 const std::vector<std::string>& play_style_names() {
@@ -140,8 +149,8 @@ const std::vector<std::string>& play_style_names() {
 // transient runtime), so end_edit only pushes an undo when something changed.
 bool mp_data_equal(const MotionPath& a, const MotionPath& b) {
     return a.points == b.points && a.controlIn == b.controlIn && a.controlOut == b.controlOut
-        && a.nodeType == b.nodeType && a.nodeTime == b.nodeTime && a.nodeScale == b.nodeScale
-        && a.nodeEasing == b.nodeEasing && a.duration == b.duration && a.playStyle == b.playStyle;
+        && a.nodeType == b.nodeType && a.nodeSeconds == b.nodeSeconds && a.nodeScale == b.nodeScale
+        && a.nodeEasing == b.nodeEasing && a.playStyle == b.playStyle;
 }
 
 // Swap-based undo: stores one MotionPath snapshot and swaps it with the live path
@@ -235,7 +244,10 @@ void MotionPathTool::build_toolbox() {
         if(selectedNode.has_value() && selectedNode.value() < n) {
             const size_t i = selectedNode.value();
             text_label(gui, i == 0 ? "Start node (green)" : (i == n - 1 ? "End node (red)" : ("Node " + std::to_string(i))));
-            slider_scalar_field(gui, "mp node time",  "Time",  &mp->nodeTime[i],  0.0f, 1.0f, { .decimalPrecision = 2, .onEdit = [this] { begin_edit(); commit(); } });
+            // Per-segment duration: seconds to travel here from the previous node.
+            // The start node has no incoming segment, so it has no Seconds field.
+            if(i >= 1 && i < mp->nodeSeconds.size())
+                slider_scalar_field(gui, "mp node seconds", "Seconds (from prev)", &mp->nodeSeconds[i], 0.1f, 10.0f, { .decimalPrecision = 1, .onEdit = [this] { begin_edit(); commit(); } });
             slider_scalar_field(gui, "mp node scale", "Scale", &mp->nodeScale[i], 0.1f, 10.0f, { .decimalPrecision = 2, .onEdit = [this] { begin_edit(); commit(); } });
             left_to_right_line_layout(gui, [&] {
                 text_label(gui, "Easing");
@@ -283,7 +295,9 @@ void MotionPathTool::build_toolbox() {
                 text_label(gui, "Play Style");
                 gui.element<DropDown<uint8_t>>("mp play style", reinterpret_cast<uint8_t*>(&mp->playStyle), play_style_names(), DropdownOptions{ .onClick = [this] { begin_edit(); commit(); } });
             });
-            slider_scalar_field(gui, "mp duration", "Duration (s)", &mp->duration, 0.1f, 30.0f, { .decimalPrecision = 1, .onEdit = [this] { begin_edit(); commit(); } });
+            char totalBuf[48];
+            std::snprintf(totalBuf, sizeof(totalBuf), "Total: %.1f s", mp->total_seconds());
+            text_label(gui, totalBuf);
         }
 
         text_button(gui, "mp done", "Done", { .wide = true, .onClick = [this] { drawP.switch_to_tool(DrawingProgramToolType::EDIT); }});
