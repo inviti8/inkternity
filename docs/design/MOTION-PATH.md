@@ -5,6 +5,17 @@
 > editor object with a dedicated node editor, *no* `EditTool` refactor). File:line
 > anchors were captured during the 2026-07-09 scoping passes; they drift, re-grep.
 
+> **STATUS: SHIPPED (2026-07-09).** P1 (MotionPath NetObj, folder-owned, save
+> gated at INFPNT000029 / 0.28.0), P2 (the `MotionPathTool` node editor —
+> diamond handles, drag/insert/curve/delete, per-node inspector, undo), and P3
+> (sampler + playback: the group travels the curve with position + scale +
+> rotation) all landed. Post-ship fixes from testing: the per-node timing became
+> **per-segment seconds** (was a confusing normalized 0–1 fraction), **onion skin**
+> was added for flip-book editing, and **rotation-along-tangent** (per-node −1..1
+> factor) completed the transform set. Milestone text below is the original plan;
+> where it says `nodeTime`/`duration` read `nodeSeconds` (per-segment) + derived
+> total, and note `nodeRotation` was added.
+
 ## What we're building
 
 A **Motion Path**: a bezier curve bound to one flip-book group. The artist draws

@@ -1,263 +1,46 @@
-# PHASE 10 — Hand-tracking armature posing + Flip-book layer groups
+# PHASE 10 — Flip-book layer groups + motion paths
 
 ## Status
 
-**SCOPED — not started.** Two new authoring features, chosen (zynx, 2026-07-09)
-to sharpen Inkternity as a Clip-Studio competitor. The previously-scoped "New
-Publications" lobby carousel that lived here was **rescheduled to [PHASE11.md]**
-(not needed yet); this phase is repurposed for the two features below.
+**SHIPPED (2026-07-09).** Flip-book layer groups + bezier **motion paths** — the
+"animate a group of frames" authoring feature. A folder can be set to **Flip-Book
+Group** mode (its child layers become animation frames): fps, play style
+(once/loop/ping-pong) × trigger (auto-on-view / on-touch), invert direction, onion
+skin, and a drawing-mode Preview. An optional **Motion Path** (see
+[MOTION-PATH.md]) makes the whole group **travel a drawn bezier curve** as it
+plays — per-node timing (seconds), scale, easing, and rotation-along-tangent —
+while its frames cycle independently. Folder Mode is a single dropdown (Normal /
+Parallax Scene / Flip-Book — mutually exclusive). Save format at **INFPNT000029 /
+0.28.0**.
 
-Both are grounded against the shipped code (armature poser [PHASE9.md] +
-[PHASE9.5.md]; the layer/folder tree). File:line anchors were captured during
-scoping (2026-07-09) and drift — re-grep before relying on an exact line.
+The other feature originally scoped in this phase — **CV hand-tracking for the
+armature's hands** — was **moved to [PHASE11.md]** as future work (zynx,
+2026-07-09); its full scoping is preserved there.
 
-The two features are **independent** and can ship in either order or separately:
-
-- **Feature A — CV hand-tracking → armature hand pose.** Pose the 3D armature's
-  hands (and fingers) from a webcam, à la Clip Studio's hand-tracking. **This is
-  the exploratory one** — "scope how hard it is, then decide" (zynx). The honest
-  verdict below is *feasible and license-clean, moderate effort, one legal
-  sign-off needed*; the go/no-go decision is called out explicitly (§A.7).
-- **Feature B — Flip-book layer group.** A folder variant whose child layers are
-  animation frames, with fps + play modes (once-on-camera-enter / loop /
-  ping-pong). **This is the committed, lower-risk one** — it maps almost exactly
-  onto the shipped parallax-group mechanism. Stretch: per-frame position/scale
-  keys.
-
-Both bump the save format only if their persisted state lands (Feature A adds
-**no** new persisted fields — it writes through the existing armature pose
-struct; Feature B adds folder fields → one version bump). See each part's
-Backward-compatibility note.
+The design/rationale below (Feature B) is retained as the delivered spec; the
+motion-path build plan is [MOTION-PATH.md].
 
 ---
 ---
 
-# FEATURE A — CV hand-tracking → armature hand pose
-
-## A.1 Product summary
-
-Inside the existing armature editor (the full-screen `ArmatureModalScreen` from
-PHASE9), the artist opens a **Hand Tracking** panel, grants webcam access, holds
-their hand up to the camera, and the on-screen 3D armature's matching hand
-**mirrors their finger pose in real time**. A **Capture** action freezes the
-current solved pose onto the rig; **Bake** (the existing button) writes it to the
-canvas like any other pose edit. It's a pose *assist*, not motion capture — the
-goal is "get the hand 80% posed in two seconds instead of rotating 15 finger
-joints by hand."
-
-## A.2 The honest verdict (read first)
-
-**Feasible, license-clean, moderate effort — but the clean path is NOT "embed
-MediaPipe."** MediaPipe-the-C++-library is welded to Bazel (no CMake/Conan
-package, "experimental" Windows support, JS-only WASM) and fighting it would be a
-standing tax against our Conan/CMake/Emscripten build. The right architecture
-uses MediaPipe's *model* (which is redistributable) on our *own* runtime:
-
-```
-SDL3 SDL_Camera  →  RGB convert  →  palm+hand-landmark ONNX model  →  ONNX Runtime
-   (Zlib, we           (ours)          (Apache-2.0, OpenCV-Zoo          (MIT)
-   already ship it)                     conversion of MediaPipe)
-        │
-        ▼
-  21 landmarks/hand  →  One-Euro filter  →  analytic retarget  →  per-finger
-                                              (ours, ~Kalidokit)    local quats
-                                                     │
-                                                     ▼
-                              ArmatureModel::set_joint_pose(jointIdx, quat)  ← EXISTING
-```
-
-Every link is **MIT / BSD / Apache-2.0 / Zlib** — zero copyleft, zero
-non-commercial, and (if we skip MediaPipe's code) **zero new heavyweight
-dependency**. The one item needing a human legal glance is the model-weight
-license (§A.6, risk 1).
-
-## A.3 Why the codebase side is nearly free (grounding)
-
-The PHASE9 pose pipeline is already exactly the shape a solver needs to feed:
-
-- **Pose is name-keyed quaternions end-to-end.** `ArmatureModel::set_joint_pose(int
-  jointIndex, const Eigen::Quaternionf& localPose)`
-  (`src/Armature/ArmatureModel.cpp:575`) normalizes, writes xyzw, and refreshes the
-  GPU skin — the exact call the manual rotate-gizmo already uses
-  (`ArmatureModalScreen.cpp:498`). A solver just calls it per finger joint.
-- **Finger bones are already first-class posable joints.** The default rig
-  (`assets/data/models/inkternity_default_armature.glb`) has **15 finger bones per
-  hand**, Mixamo/VRM-named `{side}{Thumb|Index|Middle|Ring|Little}{Proximal|Intermediate|Distal}`
-  plus `{side}Hand`. All are in the pickable/posable set already
-  (`build_pickable_set()`, `ArmatureModel.cpp:642`); L/R is the `left`/`right`
-  name prefix. Address by `find_joint(name)` → index.
-- **The bake/undo path is unchanged.** `do_bake()`
-  (`ArmatureModalScreen.cpp:1008`) serializes every non-identity `joint_pose(j)`
-  into the component's plain-float `PoseEntry` struct
-  (`ArmatureCanvasComponent.hpp:38`, `d.pose`) and pushes an undo action. A
-  hand-tracked pose is already in `mJointPose` by bake time, so it round-trips
-  with **no serialization change and no new persisted fields.**
-- **Eigen is free in the modal/model layer** (already uses `Eigen::Quaternionf`,
-  `AngleAxisf`, `FromTwoVectors`, `joint_world_matrix()`), while the undo-tracked
-  `d` struct stays plain floats — respecting `[[project_layer_metainfo_eigen_gotcha]]`.
-  The solver lives in the modal/model layer and only writes plain-float quats.
-
-So the genuinely new work is **all in the modal + a new subsystem**, not in the
-pose/skin/bake/serialize core.
-
-## A.4 What's actually new (the real work)
-
-1. **Webcam capture via `SDL_Camera`.** Shipped in SDL 3.2.0 (Jan 2025), which we
-   already depend on — **no new dependency, stays under Zlib.** Backends cover all
-   targets: Media Foundation (Win), AVFoundation (mac), V4L2/PipeWire (Linux),
-   Emscripten (web, incl. the browser permission flow). Frames arrive as
-   `SDL_Surface`s in camera-native formats (often YUV) → we color-convert to RGB
-   before inference. Young API (~1.5 yr): known rough edges (PipeWire enumeration,
-   format variance, permission callbacks) — bounded integration cost, not a
-   blocker. `OpenCV videoio` (Apache-2.0) is a documented fallback we likely won't
-   need.
-2. **Inference runtime — ONNX Runtime (MIT).** Official Emscripten/WASM build,
-   `--minimal_build` to shrink, Conan-workable. Pairs directly with the ONNX hand
-   model. (Alt: **ncnn**, BSD-3, lighter binary + better WASM size, if ORT-Web
-   bloat bites — evaluate as a WASM-only backend later.)
-3. **The model — Apache-2.0 ONNX conversion of MediaPipe Hands.** Ship the
-   **OpenCV-Zoo** `palm_detection_mediapipe` + `handpose_estimation_mediapipe`
-   ONNX artifacts (both HF cards state "All files … licensed under Apache 2.0").
-   Two-stage: palm detect → 21-landmark regress (3D, wrist-relative metres) +
-   handedness. Bundle under `assets/data/models/` like the rig. Cite *that*
-   artifact's license, not Google's SPDX-less model card (§A.6 risk 1).
-4. **The retarget solver (ours, ~few hundred lines).** 21 landmarks → per-finger
-   local quaternions. Known, largely-solved problem (reference:
-   **Kalidokit**, MIT — *port the math, don't link the TS*). Recipe: build a
-   palm/wrist reference frame from wrist + MCP knuckles; per finger walk
-   Proximal→Intermediate→Distal, bone direction = normalized delta between
-   consecutive landmarks; `Eigen::Quaternionf::FromTwoVectors(bindDir,
-   targetDirInParentLocal)` → local quat → `set_joint_pose`. Convert MediaPipe's
-   frame (+X right, +Y down, image-plane Z) onto the rig's **+X-forward / +Y-up
-   RH** space with a fixed change-of-basis; mirror for L/R by name prefix. The
-   analytic pass gets ~80%; the last 20% (our rig's exact rest axes, anatomical
-   joint-limit clamps, **One-Euro/EMA jitter filter**) is where the time goes.
-   Monocular depth is noisy — finger *curl* reads well, out-of-plane *splay* is
-   the weak axis.
-5. **UI + capture loop in the modal.** Add a **Hand Tracking** tab
-   (`ArmatureModalScreen.cpp:585` tab list; new `else if (mTab == 7)` panel near
-   `:694`), gated on a poseable model **and** a build flag for the CV dep. The
-   per-frame webcam pull + inference goes in `update()`
-   (`ArmatureModalScreen.cpp:415`). **Critical: the modal is dirty-gated** —
-   `draw()` only re-renders when `mDirty` (`:892`), so the capture loop must call
-   `request_redraw()` each tick (or only when a new solve lands) or the preview
-   freezes. Run inference on a **worker thread**, `set_joint_pose` +
-   `request_redraw()` only when a fresh solve arrives (decouple camera fps from
-   render).
-6. **Webcam preview overlay (Skia).** Blit the camera `SkImage` + 21 landmark
-   dots straight to the Skia canvas in `draw()` after the figure composite
-   (`ArmatureModalScreen.cpp:920`, mirroring the joint-handle overlay at
-   `:934-979`). The camera frame never touches the GL/FBO path, so it sidesteps
-   the `resetContext()` gate entirely.
-
-## A.5 Build (milestones) — behind a `HVYM_HAS_HANDTRACK` build flag
-
-The whole feature compiles out when the flag is off, so the CV dependency is
-**optional** (like `HVYM_HAS_LIBMYPAINT`) and never blocks a plain build.
-
-1. **A-M1 — spike: camera → landmarks on screen (THE GATE).** `SDL_Camera` open +
-   RGB convert; run the ONNX palm+landmark model through ONNX Runtime; draw the 21
-   dots as a Skia overlay in the modal. No rig coupling yet. Proves the dep stack
-   (SDL_Camera maturity on our 3 desktop OSes + ORT + model) before any retarget
-   work. **Gate the feature on this.**
-2. **A-M2 — retarget solver + live finger posing.** Landmark→local-quat math on
-   the default rig; `set_joint_pose` per finger joint each solve; change-of-basis
-   + L/R mirror; the armature's hand mirrors the webcam live. Single hand.
-3. **A-M3 — filtering + UX.** One-Euro/EMA jitter filter; joint-limit clamps;
-   worker-thread inference + `request_redraw()`-on-new-solve; Hand Tracking tab
-   with start/stop + Capture; webcam preview inset. Which hand (L/R/both), which
-   arm gets the pose.
-4. **A-M4 — polish + licensing + docs.** `third_party_licenses/` entries + a
-   `deps/<lib>/VENDORING.md` for ONNX Runtime + the model artifact (commit SHA +
-   the OpenCV-Zoo Apache-2.0 line); MANUAL/README; graceful "no camera / permission
-   denied" states. **Legal sign-off on the model-weight license** lands here.
-5. **A-M5 (deferred, own phase) — WASM + two hands + accuracy polish.** ORT-Web +
-   Emscripten `SDL_Camera` + browser permission UX + perf; second hand; accuracy
-   tuning. This is the bulk of the "full path" cost — explicitly out of the MVP.
-
-## A.6 Risks (ranked)
-
-1. **Model-weight license paper-trail (Medium, mitigable — the classic trap).**
-   Weights often carry a different license than the code. *Mitigation:* ship the
-   **OpenCV-Zoo Apache-2.0** ONNX conversion and cite *its* license line (strongest
-   paper trail), not Google's SPDX-less card. **Hard-avoid** YOLO-pose (AGPL,
-   weights included) and OpenPose (non-commercial); MMPose weights are
-   dataset-tainted (research-only datasets) — avoid too. One human legal glance
-   before ship.
-2. **WASM portability (Medium-High).** Desktop is straightforward; the browser
-   path (ORT-Web size/perf, Emscripten `SDL_Camera` maturity, permission flow) is
-   where days evaporate. *Mitigation:* **desktop-first, WASM behind the feature
-   flag (A-M5).**
-3. **Retarget accuracy / jitter (Medium).** Monocular depth is noisy; mapping onto
-   our exact rig axes is bespoke. *Mitigation:* One-Euro filter + joint clamps;
-   frame it as a pose *assist*, and let the artist fine-tune with the existing
-   gizmo afterward.
-4. **Cross-platform camera edge cases (Low-Medium).** `SDL_Camera` is young.
-   *Mitigation:* OpenCV `videoio` fallback documented but likely unused.
-5. **Per-tick inference cost (Low-Medium).** Moving the modal to continuous redraw
-   + a 5–30 ms inference each frame. *Mitigation:* worker thread; solve throttle;
-   the GL render cost is already proven acceptable at interactive rates.
-
-## A.7 Decision gate (go / no-go — zynx's call)
-
-Since this was scoped as "decide after we know the difficulty," the explicit
-recommendation: **YES to the desktop MVP** (A-M1…A-M4, ~2–3 weeks, all
-permissive-licensed, one legal sign-off), **DEFER WASM + two-hands** (A-M5) to a
-later phase. The gate is **A-M1**: if `SDL_Camera` + ORT + the ONNX model don't
-come together cleanly on Win/mac/Linux in the spike, stop before building the
-solver. If the appetite is smaller, a valid trim is **desktop-only, one hand,
-Capture-only (no live preview loop)** — solve on a button press instead of every
-frame, which sidesteps the continuous-redraw + worker-thread work entirely.
-
-## A.8 Effort estimate
-
-| Work | Est. |
-|---|---|
-| A-M1 spike: SDL_Camera + ORT + ONNX model → landmark overlay (THE GATE) | ~2–3 days |
-| A-M2 retarget solver + live finger posing (one hand) | ~4–6 days |
-| A-M3 filtering + worker thread + Hand Tracking tab + preview | ~3–5 days |
-| A-M4 licensing + docs + graceful states + legal sign-off | ~2–3 days |
-| **Desktop MVP subtotal** | **~2–3 weeks** |
-| A-M5 WASM + two hands + accuracy polish (deferred, own phase) | ~2.5–5 weeks |
-
-## A.9 Out of scope (MVP)
-
-- **Full-body / face tracking** — hands (+fingers) only. Body/face pose is a much
-  larger CV problem for later.
-- **WASM/web build, two-hand simultaneous tracking, accuracy polish** — deferred
-  to A-M5.
-- **MediaPipe's C++/Bazel framework** — we use the *model*, not the framework.
-- **Recorded/animated capture** — single static pose per Capture, baked like any
-  pose. (A future "record a finger animation" ties into Feature B / FRAME_ANIM.)
-- **Retarget onto arbitrary user-loaded rigs** — MVP targets the bundled default
-  rig's known finger-bone names; arbitrary rigs pose by hand.
-
-## A.10 Backward compatibility
-
-**No save-format change.** A hand-tracked pose is written through the existing
-`d.pose` (`PoseEntry` plain floats) and the existing `do_bake()` path — identical
-bytes to a hand-posed armature. Old builds open the canvas unchanged. The CV
-dependency is build-bundled behind `HVYM_HAS_HANDTRACK`, never part of the canvas
-format.
-
----
----
-
-# FEATURE B — Flip-book layer group
+# Flip-book layer group + motion path (delivered spec)
 
 ## Implementation status
 
-**Core shipped (B-M1…B-M4), 2026-07-09.** Data model + save bump (INFPNT000028 /
-0.27.0), draw-one-frame + cache bypass, playback clock (once/loop/ping-pong ×
-auto/on-touch, viewer-mode-gated + drawing-mode Preview), and the folder GUI
-(fps / play-style / trigger / invert / Preview + row badge) are implemented and
-build clean. **Remaining:** B-M5 (stretch position/scale keys) and B-M6
-(MANUAL/README docs + edge-case polish), plus interactive verification on a real
-canvas. One deviation from the plan below: `DrawData::FlipbookGroup` was **not**
-needed — frame selection is local to the folder (runtime `frameIndex` on
-`DrawingProgramLayerFolder::FlipbookRuntime`), unlike parallax which threads
-context to deep descendants. `frameIndex` is the panel/child index directly;
-invert flips the advance direction, not a coordinate remap.
+**SHIPPED, 2026-07-09.** Flip-book core (B-M1…B-M4) + the **motion-path** approach
+to transform animation (the B-M5 stretch, built out as its own sub-feature — see
+[MOTION-PATH.md]) + onion skin. Delivered: folder Flip-Book mode (fps / play-style
+× trigger / invert / onion / Preview, Folder Mode dropdown), draw-one-frame + cache
+bypass, viewer-gated playback clock, and — via a drawn bezier **Motion Path** — the
+whole group travelling a curve with per-node **seconds / scale / easing /
+rotation-along-tangent** while frames cycle independently. Save format
+**INFPNT000029 / 0.28.0**. One deviation from the plan below: `DrawData::FlipbookGroup`
+was **not** needed — frame selection is local to the folder (runtime `frameIndex`
+on `DrawingProgramLayerFolder::FlipbookRuntime`); `frameIndex` is the panel/child
+index directly, and invert flips the advance direction, not a coordinate remap.
+The §B.11 requester/record sketch was superseded by the motion path (§B.12); §B.5's
+onion-skin "out of scope" was reversed once it became clear a flip-book shows only
+one frame at a time (onion is now on by default while editing).
 
 **Parallax ⊥ flip-book (mutual exclusion, zynx 2026-07-09).** Parallax (all
 children drawn as depth planes *at once*) and flip-book (one child frame *at a
@@ -765,20 +548,3 @@ on the drawn frame.
   frame) + preview. ~2 days.
 - **Rough total: ~1.5 weeks**, vs. ~1 week for §B.11's requester/record — buys a
   far better, direct-manipulation tool.
-
----
----
-
-## Cross-feature notes
-
-- **Independent & separately shippable.** A and B share no code; order them by
-  appetite. B is the safe, fast win; A is the flashier, decision-gated one.
-- **Save format:** Feature A bumps nothing; Feature B bumps once
-  (INFPNT000027 → INFPNT000028 / 0.27.0). If both ship, B owns the bump.
-- **Licensing discipline (Feature A):** BUSL-1.1 → MIT/BSD/Apache/Zlib/CC0 only.
-  Every A dependency was license-verified during scoping (SDL_Camera Zlib, ONNX
-  Runtime MIT, the hand model Apache-2.0 via OpenCV-Zoo, Kalidokit MIT as
-  *reference only*). YOLO-pose (AGPL) and OpenPose (non-commercial) are
-  disqualified; MMPose weights are dataset-tainted. Mirror licenses into
-  `assets/data/third_party_licenses/` + `deps/<lib>/VENDORING.md` per the
-  timelinefx precedent.

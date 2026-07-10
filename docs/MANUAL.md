@@ -234,6 +234,24 @@ Folder-panel controls (shown when the folder is a Parallax Scene):
 - **Editing is locked while a layer actually parallaxes** (non-zero depth inside an active Parallax Scene): drawing would land offset from the cursor, so content tools show a notice instead. Pan, zoom, screenshot, and eyedropper keep working. To edit, set the depth back to `0` (or untick the folder's Parallax Scene), edit, then restore it. A depth on a layer that is **not** inside a Parallax Scene does nothing (the panel tells you so) and stays editable
 - Layer rows show a badge — `(parallax scene)` on the folder, `(depth N)` on each depth layer — so it is obvious why content pans differently
 - Performance note: while a Parallax Scene is active, the canvas redraws without its usual caching. For heavy layers (lots of ink strokes), run **Flatten Layer** on them first — a flattened layer is a single image and parallax-pans for free
+## Flip-Book Groups
+A flip-book group turns a **layer folder** into an animation: each child layer is a frame, shown one at a time. Set it up from the folder's properties panel:
+
+1. **Group your frames in a folder**, one layer per frame. The **top** row in the layer panel is frame 1 (top → bottom by default; an **Invert direction** toggle plays bottom → top).
+2. **Select the folder and set Folder Mode → Flip-Book.** (Folder Mode is a single dropdown — *Normal / Parallax Scene / Flip-Book* — because a folder can be at most one; to combine effects, nest the groups.) Set the **fps**.
+3. Choose a **Play style** — *Play Once*, *Loop*, or *Ping-Pong* — and a **Trigger** — *Auto* (plays when the group scrolls into view) or *On Touch* (plays when tapped in reader mode). These mirror the particle-effect play modes.
+
+- **Playback only runs in reader/viewer mode** — a flip-book never animates while you're drawing. To check timing without leaving drawing mode, hit **Preview Animation** (a stop/start toggle on the group).
+- **Onion skin** (on by default, per-group toggle): while you edit a flip-book, the frame directly below and above the one you're on are ghosted at half opacity so you can register against them. Only the group you're editing ghosts.
+- Layer rows show a `(flip-book)` badge.
+
+### Motion Paths — make the group travel
+A flip-book group can also **move along a drawn curve** as it plays (a character walk-cycle that strides across the page, a title that sweeps in). With the flip-book folder selected, press **Add Motion Path**: a green→red line appears and the Motion Path tool activates.
+
+- **Draw the path** like editing a shape: drag the **green** (start) and **red** (end) diamonds; click **Add Node** to insert points (yellow); select a node and **Make Curve** to get bezier tangent handles you can drag for smooth arcs.
+- **Per-node controls** (select a node): **Seconds (from prev)** — how long the leg to this node takes (the total is the sum; independent per segment, so adding a node doesn't reshuffle the rest); **Scale** — grow/shrink the group as it passes (tweens between nodes); **Easing** — accelerate/decelerate into the node; **Rotate along path (−1..1)** — how much the group turns to follow the curve (0 = none, 1 = fully orient to the path, −1 = counter-rotate; tween it for flourishes).
+- **Path-level** (on the start node): its **own Play Style** (once/loop/ping-pong) — independent of the frame cycle, so the frames can loop while the body travels the path once and stops.
+- The path is **editor-only** — visible while its folder is selected, never in the finished reader-mode view. **Undo** reverses every path edit. Press **Done** to leave the tool; **Remove Motion Path** deletes it.
 ## Flatten Layer
 - Menu->Flatten Layer bakes **everything on the layer being edited** into a single pixel-layer component — the whole layer, not just what's on screen. Use it when a layer is "done" and the app is getting sluggish from sheer object count — hundreds of crosshatch strokes become one object. (You don't need to zoom out to fit the layer first; it bakes all of it.)
 - All visual object types are included: pixel (ink) strokes, vector strokes, lines, rectangles, ellipses, textboxes, and embedded images. Waypoints are never flattened. Still-downloading images, selected objects, and anything mid-edit are left untouched
