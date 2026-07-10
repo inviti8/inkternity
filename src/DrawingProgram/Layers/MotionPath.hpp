@@ -48,4 +48,14 @@ struct MotionPath {
     template <typename Archive> void serialize(Archive& a) {
         a(coords, points, controlIn, controlOut, nodeType, nodeTime, nodeScale, nodeEasing, duration, playStyle);
     }
+
+    // MOTION-PATH.md P3 — sample the path at progress ∈ [0,1]: the position
+    // (path-local) + interpolated scale. Parametric-per-segment (nodeTime warps
+    // the distribution; nodeEasing eases within a segment). See MotionPath.cpp.
+    struct Sample { Vector2f pos; float scale; };
+    Sample sample(double progress) const;
+    // Advance pathProgress by deltaTime over `duration`, per playStyle
+    // (once/loop/ping-pong). reset() returns to the start.
+    void advance(float deltaTime);
+    void reset();
 };

@@ -661,6 +661,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                                 else {
                                     rt.previewPlaying = true;
                                     lk->get_folder().flipbook_begin(lk->get_flipbook_invert());
+                                    if(MotionPath* mp = lk->get_motion_path()) mp->reset();   // MOTION-PATH.md P3
                                 }
                             }
                         }

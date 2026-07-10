@@ -336,8 +336,30 @@ void DrawingProgramLayerListItem::draw(SkCanvas* canvas, const DrawData& drawDat
             // (chosen by its runtime frameIndex), not the full composite. Only
             // reachable on the direct-draw path (the cache is bypassed while a
             // flip-book is live — see DrawingProgramLayerManager::any_visible_flipbook_layer).
-            if(is_flipbook_group() && folderData->frame_count() > 1)
-                folderData->draw_flipbook_frame(canvas, *dd);
+            if(is_flipbook_group() && folderData->frame_count() > 1) {
+                // MOTION-PATH.md P3 — if a motion path exists, the whole group
+                // travels it (translate + scale) as it plays. At progress 0 the
+                // sample is the start node + scale from node 0, so the transform
+                // is identity (no offset) — static/editing looks unchanged.
+                MotionPath* mp = get_motion_path();
+                if(mp && mp->points.size() >= 2) {
+                    const MotionPath::Sample smp = mp->sample(mp->pathProgress);
+                    const Vector2f startScr = dd->cam.c.to_space(mp->coords.from_space(mp->points[0]));
+                    const Vector2f curScr   = dd->cam.c.to_space(mp->coords.from_space(smp.pos));
+                    const Vector2f delta = curScr - startScr;
+                    canvas->save();
+                    // Scale about the current sample position, then shift the frame
+                    // so its origin (node 0) follows the sampled point.
+                    canvas->translate(curScr.x(), curScr.y());
+                    canvas->scale(smp.scale, smp.scale);
+                    canvas->translate(-curScr.x(), -curScr.y());
+                    canvas->translate(delta.x(), delta.y());
+                    folderData->draw_flipbook_frame(canvas, *dd);
+                    canvas->restore();
+                }
+                else
+                    folderData->draw_flipbook_frame(canvas, *dd);
+            }
             else
                 folderData->draw(canvas, *dd);
         }
@@ -579,6 +601,10 @@ void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool
         auto& rt = folderData->flipbookRuntime;
         const bool invert = get_flipbook_invert();
         const bool playContext = viewerActive || rt.previewPlaying;
+        // MOTION-PATH.md P3 — the path clock rides alongside the frame clock:
+        // advance whenever frames advance, reset when the group (re)starts or
+        // sits static. Its own playStyle governs how pathProgress wraps.
+        MotionPath* mp = get_motion_path();
         if(!playContext) {
             // Drawing mode, no preview: static. Hold the "edit frame" — the
             // selected direct child, so the artist edits the frame they picked
@@ -588,6 +614,7 @@ void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool
             rt.frameTimer = 0.0;
             rt.pingPongReversing = false;
             rt.onScreenLast = false;
+            if(mp) mp->reset();   // sit at the path start (identity transform)
             if(editingLayer) {
                 size_t p = 0;
                 bool found = false;
@@ -602,18 +629,24 @@ void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool
         else if(rt.previewPlaying) {
             // Drawing-mode debug preview ignores the trigger axis — just play.
             folderData->flipbook_advance(get_flipbook_play_style(), invert, get_flipbook_fps(), deltaTime);
+            if(mp) mp->advance(deltaTime);
         }
         else if(get_flipbook_trigger_mode() == FlipbookTriggerMode::AUTO) {
             const bool onScreen = flipbook_content_on_screen(*this, drawData);
-            if(onScreen && !rt.onScreenLast)
+            if(onScreen && !rt.onScreenLast) {
                 folderData->flipbook_begin(invert);   // rising edge (re)starts
+                if(mp) mp->reset();
+            }
             rt.onScreenLast = onScreen;
-            if(onScreen)
+            if(onScreen) {
                 folderData->flipbook_advance(get_flipbook_play_style(), invert, get_flipbook_fps(), deltaTime);
+                if(mp) mp->advance(deltaTime);
+            }
         }
         else {
             // ON_TOUCH: playing is set by trigger_touch_flipbook; runs per style.
             folderData->flipbook_advance(get_flipbook_play_style(), invert, get_flipbook_fps(), deltaTime);
+            if(mp) mp->advance(deltaTime);
         }
     }
     for(auto& c : *folderData->folderList)
@@ -629,6 +662,7 @@ void DrawingProgramLayerListItem::trigger_touch_flipbook(const CoordSpaceHelper&
         for(auto* c : comps) {
             if(c->obj->collides_with_world_coords(camCoords, tapCollider)) {
                 folderData->flipbook_begin(get_flipbook_invert());
+                if(MotionPath* mp = get_motion_path()) mp->reset();   // MOTION-PATH.md P3
                 break;
             }
         }
