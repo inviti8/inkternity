@@ -2,13 +2,18 @@
 
 ## Status
 
-**SCOPED — decision-gated. Feasible, but more involved than the earlier "cool if
-it did" framing (zynx, 2026-07-09).** The cheap path I'd hoped for — feed the
-motion path's velocity to the emitter as an *inherited spawn velocity* — **does
-not exist in the runtime we actually ship**. There is a viable path
-(sim-position-along-path), but it carries three real constraints. Read §Verdict
+**SCOPED — decision-gated. Feasible; cleanest as a dedicated Anim-FX group
+(zynx, 2026-07-09).** The cheap path I'd first hoped for — feed the motion path's
+velocity to the emitter as an *inherited spawn velocity* — **does not exist in the
+runtime we actually ship** (see §crux). The viable mechanism is
+**sim-position-along-path**, and the cleanest way to package it is a **dedicated
+Anim-FX group** (zynx's proposal — see that section) rather than tacking it onto
+flip-book groups, which removes the double-count and mixed-mechanism frictions and
+reuses the shipped `MotionPath` editor. Two inherent constraints remain
+(non-relative effects only; long paths = large animated region). Read §Verdict
 before greenlighting. Follow-on to the shipped flip-book/motion-path feature
-([PHASE10.md] + [MOTION-PATH.md]). No save-format bump (all runtime behaviour).
+([PHASE10.md] + [MOTION-PATH.md]). No save-format bump beyond the new group's
+mode flag.
 
 ## Goal
 
@@ -90,7 +95,49 @@ by `1/localScale`.
    1-frame visibility lag, `ParticleCanvasComponent.cpp:106-114`). Easy to get visibly
    wrong (reverse-slide / double-speed).
 
-## Recommended architecture (if greenlit)
+## Simpler alternative — a dedicated Anim-FX group (RECOMMENDED, zynx 2026-07-09)
+
+Rather than tack particle secondary-motion onto flip-book groups (whose
+frames-shown-one-at-a-time + rigid draw-transform model *causes* the double-count
+and the mixed-mechanism wart), add a **dedicated group type — Anim-FX** — designed
+from the start for "move an FX along a path." This removes the two worst frictions:
+
+| §-above friction (on flip-book) | On an Anim-FX group |
+|---|---|
+| **Double-count** with the motion-path draw-transform (§constraint 3) | **Eliminated** — travel is 100% sim-driven; there is no draw-transform to reconcile. |
+| **Two travel mechanisms in one group** (particle vs raster frames) | **Eliminated** — the group is homogeneous; it exists to move an FX. |
+| **Fighting the component's small fixed footprint** (§constraint 1) | **Honest, not a wart** — the group's bounds *are* the path bbox by design (size it to the path up front). |
+
+**It reuses what shipped:** the folder-owned `MotionPath` + the entire
+`MotionPathTool` editor (draw / curve / tangents / undo) drop straight in — an
+Anim-FX folder owns a path exactly like a flip-book folder does, so the
+path-authoring half is essentially free.
+
+**Still inherent (unchanged by the group type):**
+- **Only non-relative effects trail** (§constraint 2) — the lag is the sim keeping
+  particles at their spawn world-coords; a relative-particle `.eff` still moves
+  rigidly. Per-effect authoring constraint, documented.
+- **A trail across a long path is a large animated region** — real trailing needs
+  particles spread across the whole journey, so the uncached redraw area scales with
+  path length (vs. the flip-book's cheap small-relocated region *with no trail*).
+  Fine for short/medium paths; expensive for a long cross-canvas sweep. Now an
+  explicit, expected property rather than a surprise.
+
+**Shape:** a new **Folder Mode → Anim-FX** (4th mode alongside Normal / Parallax /
+Flip-Book; mutually exclusive). The folder owns a `MotionPath`; each frame it
+samples the path and drives the particle effect's sim position (`Effect::SetX/SetY`,
+`TLFXEffect.h:793`) along it → native trailing; renders through the sim (no
+draw-transform); its bounds/clip are sized to the path bbox. **Open impl questions:**
+(a) how the group drives its child particle effect — expose a "set effect position
+along path" hook on `ParticleCanvasComponent` (its effect handle is a local in
+`play_effect`, `ParticleCanvasComponent.cpp:76`); (b) who owns the path-sized
+bounds/clip (the group, overriding the component's `localScale*250` default).
+
+**Effort ~3–5 days** — similar to the flip-book tack-on but a cleaner result (no
+double-count tuning), plus the path editor is reused. This is the recommended
+route if the feature is greenlit.
+
+## Recommended architecture on flip-book (only if NOT doing the Anim-FX group)
 
 For a **particle frame** of a motion-path group, replace the draw-transform's
 **translate** with **sim-space effect motion** (keep scale/rotate on the
@@ -122,14 +169,18 @@ Effort: **~3–6 days.**
 
 ## Verdict
 
-**Feasible, but a "yes-but," not a slam dunk.** Best suited to **short/medium
-paths with non-relative effects**; long cross-canvas traverses fight the
-local-footprint/clip model. The clean velocity-inheritance path isn't available
-without forking the vendored runtime. Recommendation: **worth doing only if you
-have a concrete use case for particle trails on paths and accept the
-short-path/non-relative constraints** — otherwise defer. It's polish on an
-already-complete feature, not a gap. If greenlit, take the "move-the-effect,
-particle-frame translate via sim, grow the bounds" architecture above.
+**Feasible, and a **dedicated Anim-FX group** is the clean way to do it** — it
+eliminates the double-count and mixed-mechanism frictions and reuses the shipped
+motion-path editor, so it's ~3–5 days for a genuinely clean result. Two inherent
+constraints survive any architecture: **only non-relative effects trail**, and **a
+long-path trail is a large animated (uncached) region** — so it's best for
+**short/medium paths**. The tempting velocity-inheritance API is in the *unused*
+modern TimelineFX tree; our runtime can't inherit velocity without forking the dep.
+
+Recommendation: **greenlight only with a concrete use case** for FX trailing along
+a path (embers off a moving object, a comet, a magic sweep). It's polish on an
+already-complete feature, not a gap — but if wanted, build it as the **Anim-FX
+group**, not a flip-book bolt-on.
 
 ## Out of scope
 
