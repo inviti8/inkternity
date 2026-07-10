@@ -2,18 +2,24 @@
 
 ## Status
 
-**SCOPED — decision-gated. Feasible; cleanest as a dedicated Anim-FX group
-(zynx, 2026-07-09).** The cheap path I'd first hoped for — feed the motion path's
-velocity to the emitter as an *inherited spawn velocity* — **does not exist in the
-runtime we actually ship** (see §crux). The viable mechanism is
-**sim-position-along-path**, and the cleanest way to package it is a **dedicated
-Anim-FX group** (zynx's proposal — see that section) rather than tacking it onto
-flip-book groups, which removes the double-count and mixed-mechanism frictions and
-reuses the shipped `MotionPath` editor. Two inherent constraints remain
-(non-relative effects only; long paths = large animated region). Read §Verdict
-before greenlighting. Follow-on to the shipped flip-book/motion-path feature
-([PHASE10.md] + [MOTION-PATH.md]). No save-format bump beyond the new group's
-mode flag.
+**SHIPPED (2026-07-09) — as a dedicated Anim-FX group.** A 4th Folder Mode:
+every particle FX inside the folder travels the folder's `MotionPath` with real
+secondary motion (the emitter moves in the sim while non-relative particles keep
+their spawn coords → trail); multiple FX preserve their painted relative
+arrangement (all get the same world delta). Reuses the shipped `MotionPath` +
+`MotionPathTool` editor; a Preview toggle plays it in drawing mode. The
+sim-position-along-path mechanism was chosen because the runtime we ship has **no
+velocity-inheritance API** (§crux). Save format **INFPNT000030-31 / 0.29.0-0.30.0**
+(the `animFxGroup` flag + a per-effect `boundsScale`). Delivered as FX-M1 (mode
+scaffolding) + FX-M2 (the driver); a post-ship fix corrected the FX clip bounds
+(the container's cached `worldAABB` wasn't refreshing as the Anim-FX collider
+grew, so the effect clipped out of a frozen box) and exposed a **Bounds size**
+slider on the particle brush. Two inherent constraints stand, as scoped:
+**only non-relative effects trail** (relative-particle `.eff`s slide rigidly) and
+**a long-path trail is a large animated region** (best for short/medium paths).
+
+The scoping below is retained as the rationale trail (why a dedicated group, why
+sim-position-along-path, the constraints).
 
 ## Goal
 
