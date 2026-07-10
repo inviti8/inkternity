@@ -78,6 +78,7 @@ class CanvasComponentContainer {
     private:
         friend class BrushStrokeCanvasComponent;
         friend class ImageCanvasComponent;
+        friend class ParticleCanvasComponent;   // PHASE10.1 — refresh worldAABB as the Anim-FX collider grows
 
         static void write_constructor_func(const NetworkingObjects::NetObjTemporaryPtr<CanvasComponentContainer>& o, cereal::PortableBinaryOutputArchive& a);
 

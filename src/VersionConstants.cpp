@@ -36,6 +36,7 @@ VersionNumber header_to_version_number(const std::string& header) {
         m["INFPNT000028"] = VersionNumber(0, 27, 0); // PHASE10 Feature B: flip-book layer group — folder DisplayData gains flipbookFps/PlayStyle/TriggerMode/Invert
         m["INFPNT000029"] = VersionNumber(0, 28, 0); // MOTION-PATH.md: flip-book folder gains an optional MotionPath (bezier animation path)
         m["INFPNT000030"] = VersionNumber(0, 29, 0); // PHASE10.1: Anim-FX group — folder DisplayData gains animFxGroup (particle FX travels a motion path)
+        m["INFPNT000031"] = VersionNumber(0, 30, 0); // PHASE10.1: PARTICLE gains boundsScale (artist clip/spread multiplier, particle brush)
     }
     auto it = m.find(header);
     if(it == m.end())

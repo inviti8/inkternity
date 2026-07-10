@@ -25,6 +25,7 @@ class ParticleBrushTool : public DrawingProgramToolBase {
         void warn_if_hidden_layer();   // notify when the editing layer hides particles (e.g. SKETCH in reader mode)
         float brushSize = 3.0f;        // -> placement localScale
         float rate = 3.0f;             // placements per second while held/dragging
+        float boundsScale = 1.0f;      // -> placement boundsScale (clip/spread margin multiplier)
         bool playOnTouch = false;      // placements wait for a touch to play
         bool painting = false;
         float accum = 0.0f;            // time accumulator for rate-based stamping

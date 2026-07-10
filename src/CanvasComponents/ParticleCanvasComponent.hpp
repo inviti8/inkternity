@@ -58,6 +58,7 @@ class ParticleCanvasComponent : public CanvasComponent {
             float localScale = 3.0f;                        // effect world-unit -> canvas local-unit
             float radius = 600.0f;                          // local half-extent (derived from scale in create_collider)
             uint8_t playMode = PARTICLE_PLAY_AUTO;          // ParticlePlayMode
+            float boundsScale = 1.0f;                       // artist multiplier on the clip/spread margin (particle brush)
         } d;
 
     private:
@@ -71,6 +72,9 @@ class ParticleCanvasComponent : public CanvasComponent {
         // radius the way create_collider does). Used to grow bounds so an Anim-FX
         // trail isn't cropped by the draw-cache clip region.
         void rebuild_collider(float radius);
+        // The effect's particle-spread half-extent (local units): a scale-derived
+        // heuristic times the artist's boundsScale. Anim-FX adds the travel on top.
+        float spread_margin() const;
         // Builds the PIMPL runtime: resolves the library + particle manager
         // (needs drawP). draw() passes nullptr and relies on update()/init having
         // built it first (focus_update runs update before draw each frame).

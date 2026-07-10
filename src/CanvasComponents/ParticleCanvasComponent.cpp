@@ -89,14 +89,16 @@ void ParticleCanvasComponent::drive_anim_fx(const WorldVec& worldDelta) {
     const float inv = (d.localScale != 0.0f) ? (1.0f / d.localScale) : 0.0f;
     rt->eff->SetX(localDelta.x() * inv);
     rt->eff->SetY(localDelta.y() * inv);
-    // Grow bounds (monotonic) so the trail isn't cropped by the cache clip. The
-    // margin here is the trailing-particle SPREAD around the moving emitter — kept
-    // generous because an Anim-FX trail streams well behind the current point, and
-    // this only enlarges Anim-FX-driven components (normal FX are unaffected).
-    const float base = std::max(1500.0f, d.localScale * 900.0f);
-    const float need = localDelta.norm() + base;
-    if (need > d.radius * 1.05f)
+    // Grow bounds (monotonic) to cover the travel + the particle spread, so the
+    // trail isn't cropped. CRUCIAL: the container caches worldAABB (which drives
+    // the clip + cull) and only refreshes it on commit — so after growing the
+    // collider we must recompute it, or the effective box stays frozen at the
+    // painted origin while the effect travels out of it.
+    const float need = localDelta.norm() + spread_margin();
+    if (need > d.radius * 1.05f) {
         rebuild_collider(need);
+        if (compContainer) compContainer->calculate_world_bounds();
+    }
 }
 
 void ParticleCanvasComponent::update(DrawingProgram& drawP) {
@@ -191,13 +193,14 @@ void ParticleCanvasComponent::initialize_draw_data(DrawingProgram& drawP) {
 
 void ParticleCanvasComponent::create_collider() {
     // Bounds drive the draw-cache clip region; particles that spill past them get
-    // cropped to a square. Size the half-extent to the placement scale so the
-    // effect fits (effect world spread x localScale, with margin). Stored so
-    // selection/BVH stay consistent. NB: a fixed heuristic, not the effect's true
-    // spread — a modest global bump (was localScale*250) so fast/long-lived
-    // effects clip less; the clip area scales with the square, so this is kept
-    // moderate for perf with many stamped FX (Anim-FX grows generously on top).
-    rebuild_collider(std::max(500.0f, d.localScale * 450.0f));
+    // cropped to a square. Size the half-extent to the placement scale + the
+    // artist's boundsScale (particle brush). Modest by default — Anim-FX grows it
+    // dynamically to follow the effect, so the default no longer needs to be huge.
+    rebuild_collider(spread_margin());
+}
+
+float ParticleCanvasComponent::spread_margin() const {
+    return std::max(400.0f, d.localScale * 250.0f) * (d.boundsScale > 0.0f ? d.boundsScale : 1.0f);
 }
 
 void ParticleCanvasComponent::rebuild_collider(float radius) {
@@ -232,14 +235,14 @@ void ParticleCanvasComponent::set_data_from(const CanvasComponent& other) {
 }
 
 void ParticleCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode);
+    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode, d.boundsScale);
 }
 void ParticleCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
-    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode);
+    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode, d.boundsScale);
     rt.reset();
 }
 void ParticleCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode);
+    a(d.libraryResourceId, d.effectName, d.seed, d.localScale, d.radius, d.playMode, d.boundsScale);
 }
 void ParticleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     if (version < VersionNumber(0, 14, 0)) {
@@ -257,6 +260,10 @@ void ParticleCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, V
             a(d.playMode);
         else
             d.playMode = PARTICLE_PLAY_AUTO;
+        if (version >= VersionNumber(0, 30, 0))   // boundsScale added in INFPNT000031
+            a(d.boundsScale);
+        else
+            d.boundsScale = 1.0f;
     }
     rt.reset();
 }
