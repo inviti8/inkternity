@@ -23,6 +23,14 @@ class DrawingProgramLayerManagerGUI {
         // selection (which owns the set the index would reference).
         void merge_layer_down(GUIStuff::TreeListingObjIndexList objIndex);
         void editing_layer_check();
+        // Stylus-friendly row actions (no drag / double-click needed).
+        // load_edit_state_from populates the property-panel edit fields for a
+        // layer; select_layer_by_index makes it the selected + editing target and
+        // loads its state; move_layer_step reorders it one slot in its parent (NOT
+        // undo-tracked — a lightweight erase+reinsert, per zynx).
+        void load_edit_state_from(NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> layer);
+        void select_layer_by_index(const GUIStuff::TreeListingObjIndexList& objIndex);
+        void move_layer_step(const GUIStuff::TreeListingObjIndexList& objIndex, bool up);
 
         NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> get_layer_parent_from_obj_index(const GUIStuff::TreeListingObjIndexList& objIndex);
         NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> get_layer_from_obj_index(const GUIStuff::TreeListingObjIndexList& objIndex);

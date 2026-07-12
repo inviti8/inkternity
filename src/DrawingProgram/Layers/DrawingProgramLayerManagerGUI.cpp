@@ -157,17 +157,33 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             rowName += "  (flip-book)";
                         text_label(gui, rowName);
                     }
-                    if(!layer->is_folder()) {
-                        gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
-                            svg_icon_button(gui, "edit button", "data/icons/pencil.svg", {
-                                .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
-                                .size = TreeListing::ENTRY_HEIGHT,
-                                .onClick = [&, layer] {
-                                    layerMan.editingLayer = layer;
-                                }
-                            });
+                    // Stylus-friendly one-tap select: makes the row the property-
+                    // panel target (and, for a real layer, the draw target) without
+                    // a row click / double-click. Works for folders too.
+                    gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
+                        svg_icon_button(gui, "select button", "data/icons/cursor.svg", {
+                            .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .size = TreeListing::ENTRY_HEIGHT,
+                            .onClick = [&, objIndex] {
+                                select_layer_by_index(objIndex);
+                            }
                         });
-                    }
+                    });
+                    // Move the layer up / down one slot in the stack (no drag).
+                    gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
+                        svg_icon_button(gui, "move up button", "data/icons/uparrow.svg", {
+                            .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .size = TreeListing::ENTRY_HEIGHT,
+                            .onClick = [&, objIndex] { move_layer_step(objIndex, true); }
+                        });
+                    });
+                    gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
+                        svg_icon_button(gui, "move down button", "data/icons/downarrow.svg", {
+                            .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .size = TreeListing::ENTRY_HEIGHT,
+                            .onClick = [&, objIndex] { move_layer_step(objIndex, false); }
+                        });
+                    });
                     gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                         svg_icon_button(gui, "visible button", layer->get_visible() ? "data/icons/eyeopen.svg" : "data/icons/eyeclose.svg", {
                             .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
@@ -1081,4 +1097,62 @@ void DrawingProgramLayerManagerGUI::editing_layer_check() {
         editingLayer.reset();
         editingLayerOldMetainfo = std::nullopt;
     }
+}
+
+void DrawingProgramLayerManagerGUI::load_edit_state_from(NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> tempPtr) {
+    if(!tempPtr) return;
+    nameToEdit = tempPtr->get_name();
+    alphaValToEdit = tempPtr->get_alpha();
+    depthValToEdit = tempPtr->get_parallax_depth();
+    auto it = std::find(get_blend_mode_useful_list().begin(), get_blend_mode_useful_list().end(), tempPtr->get_blend_mode());
+    blendModeValToEdit = (it == get_blend_mode_useful_list().end()) ? 0 : (it - get_blend_mode_useful_list().begin());
+    folderModeToEdit = tempPtr->is_folder() ? folder_mode_index(*tempPtr) : 0;
+    flipbookFpsToEdit = tempPtr->get_flipbook_fps() > 0.0f ? tempPtr->get_flipbook_fps() : 12.0f;
+    flipbookStyleToEdit = static_cast<size_t>(tempPtr->get_flipbook_play_style());
+    flipbookTriggerToEdit = static_cast<size_t>(tempPtr->get_flipbook_trigger_mode());
+}
+
+void DrawingProgramLayerManagerGUI::select_layer_by_index(const GUIStuff::TreeListingObjIndexList& objIndex) {
+    // One-tap select (stylus-friendly): highlight the row, make it the property-
+    // panel target, load its edit fields, and — for a real layer — the draw target.
+    selectedLayerIndices.clear();
+    selectedLayerIndices.insert(objIndex);
+    editing_layer_check();   // sets the GUI editingLayer + metainfo baseline from the single selection
+    auto layer = get_layer_from_obj_index(objIndex);
+    load_edit_state_from(layer);
+    if(layer && !layer->is_folder())
+        layerMan.editingLayer = layer;   // folders aren't a draw target
+    layerMan.drawP.world.main.g.gui.set_to_layout();
+}
+
+void DrawingProgramLayerManagerGUI::move_layer_step(const GUIStuff::TreeListingObjIndexList& objIndex, bool up) {
+    using namespace NetworkingObjects;
+    if(objIndex.empty()) return;
+    auto& world = layerMan.drawP.world;
+    const uint32_t i = objIndex.back();
+    auto parent = get_layer_parent_from_obj_index(objIndex);
+    auto& list = parent->get_folder().folderList;
+    const uint32_t n = list->size();
+    if(up ? (i == 0) : (i + 1 >= n)) return;   // already at its edge
+    const uint32_t target = up ? (i - 1) : (i + 1);   // final index in the (post-erase) list
+    const NetObjID layerId = get_layer_from_obj_index(objIndex).get_net_id();
+
+    // Lightweight, NOT undo-tracked (per zynx): erase the item and reinsert one
+    // slot over. reassign_ids mirrors the drag-reorder path (the net protocol
+    // treats a move as delete+create).
+    world.netObjMan.send_multi_update_messsage([&]() {
+        std::vector<NetObjOwnerPtr<DrawingProgramLayerListItem>> captured;
+        auto it = list->get(layerId);
+        list->erase_list(list, {it}, &captured);
+        if(captured.empty()) return;
+        captured[0].reassign_ids();
+        std::vector<std::pair<NetObjOrderedListIterator<DrawingProgramLayerListItem>, NetObjOwnerPtr<DrawingProgramLayerListItem>>> toInsert;
+        toInsert.emplace_back(list->at(target), std::move(captured[0]));
+        list->insert_sorted_list_and_send_create(list, toInsert);
+    }, NetObjManager::SendUpdateType::SEND_TO_ALL, nullptr);
+
+    // Re-select the moved layer at its new index (its net id changed on reassign).
+    GUIStuff::TreeListingObjIndexList newIndex = objIndex;
+    newIndex.back() = target;
+    select_layer_by_index(newIndex);
 }
