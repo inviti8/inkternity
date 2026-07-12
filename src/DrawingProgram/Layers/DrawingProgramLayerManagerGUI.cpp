@@ -184,6 +184,14 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             .onClick = [&, objIndex] { move_layer_step(objIndex, false); }
                         });
                     });
+                    // Duplicate this layer/folder (deep copy, sibling below).
+                    gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
+                        svg_icon_button(gui, "duplicate button", "data/icons/duplicate.svg", {
+                            .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .size = TreeListing::ENTRY_HEIGHT,
+                            .onClick = [&, objIndex] { duplicate_layer(objIndex); }
+                        });
+                    });
                     gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                         svg_icon_button(gui, "visible button", layer->get_visible() ? "data/icons/eyeopen.svg" : "data/icons/eyeclose.svg", {
                             .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
@@ -819,8 +827,12 @@ std::pair<NetworkingObjects::NetObjID, NetworkingObjects::NetObjOrderedListItera
     return toRet.value();
 }
 
-NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem> DrawingProgramLayerManagerGUI::create_layer(DrawingProgramLayerListItem* newItem) {
-    auto& world = layerMan.drawP.world;
+namespace {
+    // Undo action for inserting a list item (used by both create_layer and
+    // duplicate_layer). Lifted to file scope so the duplicate path can reuse it.
+    // NOTE: redo rebuilds from undo-data, which is lossy for FOLDER-mode fields
+    // (parallax / flip-book / anim-fx / motion-path) — a pre-existing limitation
+    // of the undo data, shared by every create/delete, not specific to duplicate.
     class AddLayerWorldUndoAction : public WorldUndoAction {
         public:
             AddLayerWorldUndoAction(std::unique_ptr<DrawingProgramLayerListItemUndoData> initLayerData, uint32_t newPos, WorldUndoManager::UndoObjectID initParentUndoID, WorldUndoManager::UndoObjectID initUndoID):
@@ -871,13 +883,50 @@ NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem> Drawin
             WorldUndoManager::UndoObjectID parentUndoID;
             WorldUndoManager::UndoObjectID undoID;
     };
+}
 
+NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem> DrawingProgramLayerManagerGUI::create_layer(DrawingProgramLayerListItem* newItem) {
+    auto& world = layerMan.drawP.world;
     auto insertedLayerPair = create_in_proper_position(newItem);
     auto& it = insertedLayerPair.second;
     world.undo.push(std::make_unique<AddLayerWorldUndoAction>(std::make_unique<DrawingProgramLayerListItemUndoData>(it->obj->get_undo_data(world.undo)), it->pos, world.undo.get_undoid_from_netid(insertedLayerPair.first), world.undo.get_undoid_from_netid(it->obj.get_net_id())));
     world.main.g.gui.set_to_layout();
     refresh_gui_data();
     return it;
+}
+
+void DrawingProgramLayerManagerGUI::duplicate_layer(const GUIStuff::TreeListingObjIndexList& objIndex) {
+    using namespace NetworkingObjects;
+    if(objIndex.empty()) return;
+    refresh_gui_data();
+    auto& world = layerMan.drawP.world;
+    auto source = get_layer_from_obj_index(objIndex);
+    if(!source) return;
+    auto parent = get_layer_parent_from_obj_index(objIndex);
+    auto& list = parent->get_folder().folderList;
+    const uint32_t i = objIndex.back();
+
+    // Deep-copy with fresh ids, then insert as a SIBLING right after the source
+    // (at(i+1) == end() when the source is last → appended). Insert fires the
+    // parent's insert callback, which wires callbacks + commits/caches the whole
+    // copied subtree (DrawingProgramLayer::set_component_list_callbacks replays
+    // the insert callback over existing components).
+    DrawingProgramLayerListItem* copy = source->deep_copy(world.netObjMan);
+    auto insertedIt = list->insert_and_send_create(list, list->at(i + 1), copy);
+
+    world.undo.push(std::make_unique<AddLayerWorldUndoAction>(
+        std::make_unique<DrawingProgramLayerListItemUndoData>(insertedIt->obj->get_undo_data(world.undo)),
+        insertedIt->pos,
+        world.undo.get_undoid_from_netid(parent.get_net_id()),
+        world.undo.get_undoid_from_netid(insertedIt->obj.get_net_id())));
+
+    world.main.g.gui.set_to_layout();
+    refresh_gui_data();
+
+    // Select the freshly-made copy (same parent, one slot below the source).
+    GUIStuff::TreeListingObjIndexList newIndex = objIndex;
+    newIndex.back() = i + 1;
+    select_layer_by_index(newIndex);
 }
 
 void DrawingProgramLayerManagerGUI::remove_layer(const GUIStuff::TreeListingObjIndexList& objIndex) {

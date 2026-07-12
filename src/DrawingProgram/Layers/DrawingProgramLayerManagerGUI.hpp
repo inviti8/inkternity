@@ -31,6 +31,10 @@ class DrawingProgramLayerManagerGUI {
         void load_edit_state_from(NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> layer);
         void select_layer_by_index(const GUIStuff::TreeListingObjIndexList& objIndex);
         void move_layer_step(const GUIStuff::TreeListingObjIndexList& objIndex, bool up);
+        // Deep-copy a layer/folder (fresh ids, all fields incl. folder mode +
+        // motion path + components) and insert it as a sibling right after the
+        // source. Undoable. See DrawingProgramLayerListItem::deep_copy.
+        void duplicate_layer(const GUIStuff::TreeListingObjIndexList& objIndex);
 
         NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> get_layer_parent_from_obj_index(const GUIStuff::TreeListingObjIndexList& objIndex);
         NetworkingObjects::NetObjTemporaryPtr<DrawingProgramLayerListItem> get_layer_from_obj_index(const GUIStuff::TreeListingObjIndexList& objIndex);

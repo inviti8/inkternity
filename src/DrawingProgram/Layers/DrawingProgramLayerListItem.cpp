@@ -96,6 +96,44 @@ DrawingProgramLayerListItemUndoData DrawingProgramLayerListItem::get_undo_data(W
     return toRet;
 }
 
+DrawingProgramLayerListItem* DrawingProgramLayerListItem::deep_copy(NetObjManager& netObjMan) const {
+    // Mirrors the (netObjMan, name, isFolder) + undoData constructors, but copies
+    // from a LIVE item and keeps EVERY field (the undoData path is lossy for
+    // folder-mode state). New objects get fresh ids via make_obj / get_data_copy.
+    // Children are attached with push_back_and_send_create — the same net pattern
+    // the undo-redo rebuild uses (send is a no-op offline; when hosting, the
+    // parent's own create message re-serializes the whole subtree on insert).
+    auto* c = new DrawingProgramLayerListItem();
+    c->kind = kind;
+    c->nameData = netObjMan.make_obj<NameData>();
+    c->nameData->name = nameData->name;
+    c->displayData = netObjMan.make_obj<DisplayData>();
+    *c->displayData = *displayData;   // alpha/visible/blend/parallax/flip-book/anim-fx
+    if(motionPath) {
+        c->motionPath = netObjMan.make_obj<MotionPath>();
+        *c->motionPath = *motionPath;
+    }
+    if(folderData) {
+        c->folderData = std::make_unique<DrawingProgramLayerFolder>();
+        c->folderData->folderList = netObjMan.make_obj<NetworkingObjects::NetObjOrderedList<DrawingProgramLayerListItem>>();
+        c->folderData->isFolderOpen = folderData->isFolderOpen;
+        for(auto& childInfo : *folderData->folderList) {
+            DrawingProgramLayerListItem* childCopy = childInfo.obj->deep_copy(netObjMan);
+            c->folderData->folderList->push_back_and_send_create(c->folderData->folderList, childCopy);
+        }
+    }
+    else {
+        c->layerData = std::make_unique<DrawingProgramLayer>();
+        c->layerData->components = netObjMan.make_obj<CanvasComponentContainer::NetList>();
+        for(auto& compInfo : *layerData->components) {
+            auto copyData = compInfo.obj->get_data_copy();
+            CanvasComponentContainer* compCopy = new CanvasComponentContainer(netObjMan, *copyData);
+            c->layerData->components->push_back_and_send_create(c->layerData->components, compCopy);
+        }
+    }
+    return c;
+}
+
 void DrawingProgramLayerListItem::reassign_netobj_ids_call() {
     if(folderData)
         folderData->folderList.reassign_ids();

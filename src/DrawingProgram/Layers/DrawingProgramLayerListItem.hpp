@@ -71,6 +71,14 @@ class DrawingProgramLayerListItem {
 
         LayerKind get_kind() const { return kind; }
         DrawingProgramLayerListItemUndoData get_undo_data(WorldUndoManager& u) const;
+        // Recursively deep-copy this item into a brand-new tree with FRESH net
+        // ids — a true duplicate, unlike the undo-data roundtrip (which reuses
+        // ids and drops the folder-level parallax / flip-book / anim-fx / motion-
+        // path state). Copies every display + folder-mode field and the motion
+        // path; clones components via get_data_copy. Transient runtime (flip-book
+        // playback, draw cache, list callbacks) is NOT copied — the insert path
+        // wires those up. The returned raw item is unowned; hand it to an insert.
+        DrawingProgramLayerListItem* deep_copy(NetworkingObjects::NetObjManager& netObjMan) const;
         bool is_folder() const;
         DrawingProgramLayerFolder& get_folder() const;
         DrawingProgramLayer& get_layer() const;
