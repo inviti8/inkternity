@@ -121,6 +121,7 @@ void TreeListing::layout(const Clay_ElementId& id, const Data& newDisplayData) {
                                             gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                                                 svg_icon_button(gui, "open dir button", objInfo.isOpen ? "data/icons/droparrow.svg" : "data/icons/droparrowclose.svg", {
                                                     .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                                                    .instantResponse = true,   // stylus-friendly: expand/collapse on contact
                                                     .size = ICON_SIZE,
                                                     .onClick = [&] {
                                                         d.setDirectoryOpen(objInfo.objIndex, !objInfo.isOpen);

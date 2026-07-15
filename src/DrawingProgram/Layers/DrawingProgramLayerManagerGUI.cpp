@@ -163,6 +163,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                         svg_icon_button(gui, "select button", "data/icons/cursor.svg", {
                             .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .instantResponse = true,   // fire on stylus contact, not release
                             .size = TreeListing::ENTRY_HEIGHT,
                             .onClick = [&, objIndex] {
                                 select_layer_by_index(objIndex);
@@ -173,6 +174,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                         svg_icon_button(gui, "move up button", "data/icons/uparrow.svg", {
                             .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .instantResponse = true,
                             .size = TreeListing::ENTRY_HEIGHT,
                             .onClick = [&, objIndex] { move_layer_step(objIndex, true); }
                         });
@@ -180,6 +182,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                         svg_icon_button(gui, "move down button", "data/icons/downarrow.svg", {
                             .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .instantResponse = true,
                             .size = TreeListing::ENTRY_HEIGHT,
                             .onClick = [&, objIndex] { move_layer_step(objIndex, false); }
                         });
@@ -188,6 +191,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                         svg_icon_button(gui, "duplicate button", "data/icons/duplicate.svg", {
                             .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .instantResponse = true,
                             .size = TreeListing::ENTRY_HEIGHT,
                             .onClick = [&, objIndex] { duplicate_layer(objIndex); }
                         });
@@ -195,6 +199,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                         svg_icon_button(gui, "visible button", layer->get_visible() ? "data/icons/eyeopen.svg" : "data/icons/eyeclose.svg", {
                             .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                            .instantResponse = true,
                             .size = TreeListing::ENTRY_HEIGHT,
                             .onClick = [&, layer] {
                                 layer->set_visible(layerMan, !layer->get_visible());
@@ -492,6 +497,43 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
         auto editingLayerLock = editingLayer.lock();
         if(editingLayerLock) {
             text_label_centered(gui, editingLayerLock->is_folder() ? "Edit Layer Folder" : "Edit Layer");
+            // Convenience mirror of the on-row action buttons, as their own row at
+            // the very top of this panel — the tiny per-row buttons are fiddly to
+            // land with a pen, and these full-size ones sit in the settled property
+            // panel. The panel only shows for a single selection, so that
+            // selection's index drives the actions.
+            if(selectedLayerIndices.size() == 1) {
+                const GUIStuff::TreeListingObjIndexList selObjIndex = *selectedLayerIndices.begin();
+                left_to_right_line_layout(gui, [&]() {
+                    svg_icon_button(gui, "settings move up", "data/icons/uparrow.svg", {
+                        .instantResponse = true,
+                        .size = SMALL_BUTTON_SIZE,
+                        .onClick = [&, selObjIndex] { move_layer_step(selObjIndex, true); }
+                    });
+                    svg_icon_button(gui, "settings move down", "data/icons/downarrow.svg", {
+                        .instantResponse = true,
+                        .size = SMALL_BUTTON_SIZE,
+                        .onClick = [&, selObjIndex] { move_layer_step(selObjIndex, false); }
+                    });
+                    svg_icon_button(gui, "settings duplicate", "data/icons/duplicate.svg", {
+                        .instantResponse = true,
+                        .size = SMALL_BUTTON_SIZE,
+                        .onClick = [&, selObjIndex] { duplicate_layer(selObjIndex); }
+                    });
+                    svg_icon_button(gui, "settings visible", editingLayerLock->get_visible() ? "data/icons/eyeopen.svg" : "data/icons/eyeclose.svg", {
+                        .instantResponse = true,
+                        .size = SMALL_BUTTON_SIZE,
+                        .onClick = [&, layer = editingLayerLock] { layer->set_visible(layerMan, !layer->get_visible()); }
+                    });
+                    // Match the row: named/system layers can't be deleted.
+                    if(editingLayerLock->get_kind() == LayerKind::DEFAULT) {
+                        svg_icon_button(gui, "settings delete", "data/icons/trash.svg", {
+                            .size = SMALL_BUTTON_SIZE,
+                            .onClick = [&, selObjIndex] { remove_layer(selObjIndex); }
+                        });
+                    }
+                });
+            }
             // PHASE2 C5: rename is locked for named layers (Sketch /
             // Color / Ink) — their names carry semantic meaning and
             // shouldn't drift. Render a static label instead of an

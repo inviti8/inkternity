@@ -220,6 +220,11 @@ void initialize_sdl(MainStruct& mS, int wWidth, int wHeight) {
 
     SDL_SetHint(SDL_HINT_APP_NAME, "Inkternity");
     SDL_SetHint(SDL_HINT_PEN_MOUSE_EVENTS, "0");
+    // The pen is handled natively (backend_pen_*). Without this, a stylus contact
+    // on touchscreen devices ALSO emits a synthetic finger/touch event, so every
+    // GUI press fires twice per tap — invisible for one-shot actions, but it makes
+    // a toggle (e.g. the layer visibility eye) cancel itself and appear dead.
+    SDL_SetHint(SDL_HINT_PEN_TOUCH_EVENTS, "0");
     SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
