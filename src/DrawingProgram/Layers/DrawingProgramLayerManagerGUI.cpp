@@ -256,6 +256,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             flipbookFpsToEdit = tempPtr->get_flipbook_fps() > 0.0f ? tempPtr->get_flipbook_fps() : 12.0f;
                             flipbookStyleToEdit = static_cast<size_t>(tempPtr->get_flipbook_play_style());
                             flipbookTriggerToEdit = static_cast<size_t>(tempPtr->get_flipbook_trigger_mode());
+                            autoTriggerMinScreenPxToEdit = tempPtr->get_auto_trigger_min_screen_px();
                         }
                         else {
                             nameToEdit.clear();
@@ -510,6 +511,22 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
         auto editingLayerLock = editingLayer.lock();
         if(editingLayerLock) {
             text_label_centered(gui, editingLayerLock->is_folder() ? "Edit Layer Folder" : "Edit Layer");
+            // Foldable settings section: a caret header that toggles `open`, and
+            // renders `body` only when open. Keeps the tall folder-mode control
+            // groups from crowding the layer list out of the fixed-height panel.
+            auto collapsing_section = [&](const char* id, std::string_view title, bool& open, const std::function<void()>& body) {
+                text_button_with_icon(gui, id,
+                    open ? "data/icons/droparrow.svg" : "data/icons/droparrowclose.svg", title, {
+                        .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                        .wide = true,
+                        .centered = false,
+                        .onClick = [&open, this] {
+                            open = !open;
+                            layerMan.drawP.world.main.g.gui.set_to_layout();
+                        }
+                    });
+                if(open) body();
+            };
             // Convenience mirror of the on-row action buttons, as their own row at
             // the very top of this panel — the tiny per-row buttons are fiddly to
             // land with a pen, and these full-size ones sit in the settled property
@@ -631,6 +648,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     });
                 });
                 if(editingLayerLock->is_parallax_group()) {
+                  collapsing_section("section parallax", "Parallax Scene", sectionParallaxOpen, [&] {
                     text_button(gui, "parallax set anchor", "Set Anchor and Scale to Current View", {
                         .wide = true,
                         .onClick = [&] {
@@ -661,11 +679,13 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             }
                         }
                     });
+                  });
                 }
                 // PHASE10 Feature B — flip-book controls (Folder Mode == Flip-Book).
                 // Child layers are animation frames (top row = frame 1); playback
                 // runs only in reader/viewer mode or via Preview. See PHASE10.md.
                 else if(editingLayerLock->is_flipbook_group()) {
+                  collapsing_section("section flipbook", "Flip-Book", sectionFlipbookOpen, [&] {
                     slider_scalar_field(gui, "flipbook fps", "Frames / sec", &flipbookFpsToEdit, 1.0f, 60.0f, {
                         .decimalPrecision = 0,
                         .onEdit = [&] {
@@ -691,6 +711,19 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             }
                         });
                     });
+                    // Scale-aware "on view" (AUTO only): hold playback until the
+                    // group's content is at least this many screen px across, so a
+                    // group nested deep in a zoom stays dormant until it's actually
+                    // big enough to read. 0 = fire on any overlap (legacy).
+                    if(editingLayerLock->get_flipbook_trigger_mode() == FlipbookTriggerMode::AUTO) {
+                        slider_scalar_field(gui, "flipbook auto min px", "Activate at on-screen size (px, 0 = always)", &autoTriggerMinScreenPxToEdit, 0.0f, 1000.0f, {
+                            .decimalPrecision = 0,
+                            .onEdit = [&] {
+                                auto lk = editingLayer.lock();
+                                if(lk) lk->set_auto_trigger_min_screen_px(layerMan, autoTriggerMinScreenPxToEdit);
+                            }
+                        });
+                    }
                     checkbox_field(gui, "flipbook invert", "Invert direction (bottom to top)",
                         [&]() -> bool {
                             auto lk = editingLayer.lock();
@@ -770,13 +803,25 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             }
                         }
                     });
+                  });
                 }
                 else if(editingLayerLock->is_anim_fx_group()) {
+                  collapsing_section("section animfx", "Anim-FX", sectionAnimFxOpen, [&] {
                     // PHASE10.1 — Anim-FX group: the particle FX inside travels the
                     // folder's motion path (with real trailing). Place a particle
                     // effect on a layer in this folder, then draw the path here.
-                    text_label_centered(gui, "Anim-FX Group");
+                    // (Section header already names it "Anim-FX".)
                     text_label_light(gui, "Put a particle effect on a layer in this\nfolder; it travels the motion path below.");
+                    // Scale-aware "on view": hold the FX until the group's content
+                    // is at least this many screen px across (0 = play on any
+                    // overlap). Lets a nested effect stay dormant until zoomed in.
+                    slider_scalar_field(gui, "animfx auto min px", "Activate at on-screen size (px, 0 = always)", &autoTriggerMinScreenPxToEdit, 0.0f, 1000.0f, {
+                        .decimalPrecision = 0,
+                        .onEdit = [&] {
+                            auto lk = editingLayer.lock();
+                            if(lk) lk->set_auto_trigger_min_screen_px(layerMan, autoTriggerMinScreenPxToEdit);
+                        }
+                    });
                     if(editingLayerLock->has_motion_path()) {
                         text_button(gui, "animfx edit path", "Edit Motion Path", { .wide = true, .onClick = [&] {
                             if(editingLayer.lock())
@@ -822,6 +867,7 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                             }
                         });
                     }
+                  });
                 }
             }
             else {
@@ -1269,6 +1315,7 @@ void DrawingProgramLayerManagerGUI::load_edit_state_from(NetworkingObjects::NetO
     flipbookFpsToEdit = tempPtr->get_flipbook_fps() > 0.0f ? tempPtr->get_flipbook_fps() : 12.0f;
     flipbookStyleToEdit = static_cast<size_t>(tempPtr->get_flipbook_play_style());
     flipbookTriggerToEdit = static_cast<size_t>(tempPtr->get_flipbook_trigger_mode());
+    autoTriggerMinScreenPxToEdit = tempPtr->get_auto_trigger_min_screen_px();
 }
 
 void DrawingProgramLayerManagerGUI::select_layer_by_index(const GUIStuff::TreeListingObjIndexList& objIndex) {

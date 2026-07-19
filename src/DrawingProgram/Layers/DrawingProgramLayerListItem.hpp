@@ -51,6 +51,10 @@ struct DrawingProgramLayerListItemMetaInfo {
     // travels the folder's MotionPath (with real trailing). Mutually exclusive
     // with parallax/flip-book (enforced by the Folder Mode dropdown).
     bool animFxGroup = false;
+    // Scale-aware "on view" (FOLDER property): min on-screen size (longest
+    // content edge, screen px) before an AUTO flip-book/anim-fx group fires.
+    // 0 = disabled (any overlap triggers). See DisplayData::autoTriggerMinScreenPx.
+    float autoTriggerMinScreenPx = 0.0f;
     bool operator==(const DrawingProgramLayerListItemMetaInfo&) const = default;
 };
 
@@ -147,6 +151,11 @@ class DrawingProgramLayerListItem {
         // MotionPath. See PHASE10.1.md.
         void set_anim_fx_group(DrawingProgramLayerManager& layerMan, bool on) const;
         bool is_anim_fx_group() const;
+        // Scale-aware "on view": minimum on-screen size (longest content edge,
+        // screen px) before an AUTO flip-book / anim-fx group fires. 0 disables
+        // (any viewport overlap triggers). See DisplayData::autoTriggerMinScreenPx.
+        void set_auto_trigger_min_screen_px(DrawingProgramLayerManager& layerMan, float px) const;
+        float get_auto_trigger_min_screen_px() const;
         // Recursive cache-bypass test: is there a visible flip-book group (with
         // >1 frame) anywhere in this subtree? Mirrors has_active_parallax_descendant
         // — a live flip-book can't share the static composite cache.
@@ -216,9 +225,18 @@ class DrawingProgramLayerListItem {
             // PHASE10.1 — Anim-FX group (folder). File-load gated in load_file
             // (< 0.29.0 has no such field). See PHASE10.1.md.
             bool animFxGroup = false;
+            // Scale-aware "on view" (FOLDER property): minimum on-screen size —
+            // the longest edge of the group's content, in screen pixels — before
+            // an AUTO flip-book / anim-fx group actually fires. 0 = disabled (any
+            // viewport overlap triggers, the pre-0.31 behavior). Lets a group
+            // nested deep in a zoom (a butterfly inside a star inside a painting)
+            // stay dormant until it's zoomed in far enough to be meaningfully
+            // visible. File-load gated in load_file (< 0.31.0 has no such field).
+            float autoTriggerMinScreenPx = 0.0f;
             template <typename Archive> void serialize(Archive& a) {
                 a(alpha, visible, blendMode, parallaxDepth, parallaxAnchorX, parallaxAnchorY, parallaxRefScale,
-                  flipbookFps, flipbookPlayStyle, flipbookTriggerMode, flipbookInvert, animFxGroup);
+                  flipbookFps, flipbookPlayStyle, flipbookTriggerMode, flipbookInvert, animFxGroup,
+                  autoTriggerMinScreenPx);
             }
         };
         NetworkingObjects::NetObjOwnerPtr<NameData> nameData;

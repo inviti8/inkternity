@@ -110,7 +110,18 @@ void ParticleCanvasComponent::update(DrawingProgram& drawP) {
     // (main, parallax-derived, or reader). Using should_draw(main) here instead
     // mistimes the trigger for parallax layers, whose render camera differs.
     // draw() runs after update(), so this reflects the previous frame (1-frame lag).
-    const bool visible = rt->drawnSinceUpdate;
+    // Scale-aware "on view": an AUTO effect whose Anim-FX group closed its gate
+    // (content too small to read at the current zoom) is treated as not-visible —
+    // it won't start, a running one is stopped, and folding the gate into the
+    // visibility signal makes it re-trigger cleanly (rising edge) when reopened.
+    // ON_TOUCH ignores the gate. Groupless particles keep the gate open.
+    const bool autoGated = (d.playMode == PARTICLE_PLAY_AUTO) && !autoPlayGateOpen;
+    if (autoGated && rt->started) {
+        rt->pm->ClearAll();     // stop so it replays fresh when the gate reopens
+        rt->started = false;
+        rt->emptyFrames = 0;
+    }
+    const bool visible = rt->drawnSinceUpdate && !autoGated;
     rt->drawnSinceUpdate = false;
     const bool becameVisible = visible && !rt->lastVisible;
     rt->lastVisible = visible;
@@ -172,6 +183,7 @@ ParticleCanvasComponent::ParticleCanvasComponent() = default;
 ParticleCanvasComponent::~ParticleCanvasComponent() = default;
 
 void ParticleCanvasComponent::trigger_touch() { pendingTouch = true; }
+void ParticleCanvasComponent::set_auto_play_gate(bool open) { autoPlayGateOpen = open; }
 
 void ParticleCanvasComponent::get_used_resources(std::unordered_set<NetworkingObjects::NetObjID>& resourceSet) const {
     resourceSet.emplace(d.libraryResourceId);   // keep the embedded .eff from being pruned

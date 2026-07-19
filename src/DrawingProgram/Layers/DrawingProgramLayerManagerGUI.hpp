@@ -60,6 +60,17 @@ class DrawingProgramLayerManagerGUI {
         float flipbookFpsToEdit = 12.0f;
         size_t flipbookStyleToEdit = 0;    // FlipbookPlayStyle
         size_t flipbookTriggerToEdit = 0;  // FlipbookTriggerMode
+        // Scale-aware "on view": min on-screen size (px) before an AUTO
+        // flip-book / anim-fx group fires. 0 = always (any overlap).
+        float autoTriggerMinScreenPxToEdit = 0.0f;
+        // Collapsible folder-mode settings sections. Flip-Book (and to a lesser
+        // extent Anim-FX / Parallax) add enough widgets to crowd out the layer
+        // list in the fixed-height panel, so each is foldable. Default collapsed
+        // so selecting a group leaves the list reachable; state persists for the
+        // session (shared across groups of the same mode).
+        bool sectionFlipbookOpen = false;
+        bool sectionAnimFxOpen = false;
+        bool sectionParallaxOpen = false;
 
         std::set<GUIStuff::TreeListingObjIndexList> selectedLayerIndices;
         NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> editingLayer;

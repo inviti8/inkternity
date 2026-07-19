@@ -43,6 +43,13 @@ class ParticleCanvasComponent : public CanvasComponent {
         // Request a play (ON_TOUCH effects, or replay any). Picked up next update.
         void trigger_touch();
 
+        // Scale-aware "on view": the enclosing Anim-FX group sets this each frame
+        // from its apparent on-screen size. When closed (group too small to read),
+        // an AUTO effect won't start, and a running one is stopped so it replays
+        // cleanly when the gate reopens. ON_TOUCH is unaffected. Groupless
+        // particles are never gated (stays open → legacy behavior).
+        void set_auto_play_gate(bool open);
+
         // PHASE10.1 — Anim-FX group drive: translate this effect by a shared
         // WORLD-space delta (the group's travel along its motion path), converted
         // into this component's own sim space. Because the effect emitter moves
@@ -84,5 +91,9 @@ class ParticleCanvasComponent : public CanvasComponent {
         struct Runtime;
         mutable std::unique_ptr<Runtime> rt;
         bool pendingTouch = false;  // a trigger_touch() awaiting the next update
+        // Scale-aware "on view" gate, driven by the enclosing Anim-FX group.
+        // Transient (not serialized); defaults open so a groupless particle keeps
+        // its legacy always-when-visible AUTO behavior. See set_auto_play_gate.
+        bool autoPlayGateOpen = true;
         SCollision::BVHContainer<float> collisionTree;
 };

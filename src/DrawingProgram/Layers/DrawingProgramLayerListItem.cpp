@@ -230,8 +230,18 @@ void DrawingProgramLayerListItem::load_file(cereal::PortableBinaryInputArchive& 
     a(*nameData);
 
     displayData = layerMan.drawP.world.netObjMan.make_obj<DisplayData>();
-    if(version >= VersionNumber(0, 29, 0))
-        a(*displayData);  // Current layout: parallax + flip-book + animFxGroup
+    if(version >= VersionNumber(0, 31, 0))
+        a(*displayData);  // Current layout: + autoTriggerMinScreenPx (scale-aware on-view)
+    else if(version >= VersionNumber(0, 29, 0)) {
+        // INFPNT000030-31 (0.29-0.30): parallax + flip-book + animFxGroup, but
+        // no autoTriggerMinScreenPx. Read the twelve explicitly so the stream
+        // stays aligned; autoTriggerMinScreenPx keeps its default (0 = disabled).
+        a(displayData->alpha, displayData->visible, displayData->blendMode,
+          displayData->parallaxDepth, displayData->parallaxAnchorX, displayData->parallaxAnchorY,
+          displayData->parallaxRefScale,
+          displayData->flipbookFps, displayData->flipbookPlayStyle, displayData->flipbookTriggerMode,
+          displayData->flipbookInvert, displayData->animFxGroup);
+    }
     else if(version >= VersionNumber(0, 27, 0)) {
         // INFPNT000028-29 (0.27-0.28): parallax + flip-book fields, but no
         // animFxGroup. Read the eleven explicitly so the stream stays aligned;
@@ -631,6 +641,20 @@ bool DrawingProgramLayerListItem::is_anim_fx_group() const {
     return displayData && displayData->animFxGroup;
 }
 
+void DrawingProgramLayerListItem::set_auto_trigger_min_screen_px(DrawingProgramLayerManager& layerMan, float px) const {
+    if(!displayData) return;
+    const float clamped = px < 0.0f ? 0.0f : px;
+    if(displayData->autoTriggerMinScreenPx == clamped) return;
+    displayData->autoTriggerMinScreenPx = clamped;
+    // Trigger-timing only — doesn't change how the group composites, so no
+    // cache rebuild. Just sync the value to peers.
+    layerMan.drawP.world.delayedUpdateObjectManager.send_update_to_all<DisplayData>(displayData, false);
+}
+
+float DrawingProgramLayerListItem::get_auto_trigger_min_screen_px() const {
+    return displayData ? displayData->autoTriggerMinScreenPx : 0.0f;
+}
+
 bool DrawingProgramLayerListItem::has_active_flipbook_descendant() const {
     // A hidden subtree doesn't draw, so it never needs the cache bypass. A
     // flip-book with 0 or 1 frames can't animate either.
@@ -644,19 +668,27 @@ bool DrawingProgramLayerListItem::has_active_flipbook_descendant() const {
     return false;
 }
 
-// True if any component under this item has cached world bounds intersecting
-// the generous view collider — i.e. the group's content is on screen. Uses the
-// cached worldAABB (no recompute), so it's O(components) with no allocation
-// beyond the flattened list.
-static bool flipbook_content_on_screen(const DrawingProgramLayerListItem& item, const DrawData& drawData) {
+// Longest on-screen edge (screen px) of the union of this group's component
+// world bounds, under the given camera. Returns 0 when no component overlaps
+// the view (so `> 0` is the plain on-screen test) — which lets one helper serve
+// both the legacy "any overlap" trigger and the scale-aware min-size gate. Uses
+// cached worldAABBs (no recompute); O(components), one small vector alloc.
+static float group_content_apparent_px(const DrawingProgramLayerListItem& item, const DrawData& drawData) {
     std::vector<CanvasComponentContainer::ObjInfo*> comps;
     item.get_flattened_component_list(comps);
+    std::optional<SCollision::AABB<WorldScalar>> uni;
+    bool anyOnScreen = false;
     for(auto* c : comps) {
         const auto& wb = c->obj->get_world_bounds();
-        if(wb.has_value() && SCollision::collide(wb.value(), drawData.cam.viewingAreaGenerousCollider))
-            return true;
+        if(!wb.has_value()) continue;
+        if(SCollision::collide(wb.value(), drawData.cam.viewingAreaGenerousCollider))
+            anyOnScreen = true;
+        if(!uni) uni = wb.value();
+        else uni->include_aabb_in_bounds(wb.value());
     }
-    return false;
+    if(!uni || !anyOnScreen) return 0.0f;
+    const WorldScalar longestEdge = uni->width() > uni->height() ? uni->width() : uni->height();
+    return drawData.cam.c.scalar_to_space(longestEdge);
 }
 
 void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool viewerActive, const DrawData& drawData, const DrawingProgramLayerListItem* editingLayer) {
@@ -696,7 +728,16 @@ void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool
             if(mp) mp->advance(deltaTime);
         }
         else if(get_flipbook_trigger_mode() == FlipbookTriggerMode::AUTO) {
-            const bool onScreen = flipbook_content_on_screen(*this, drawData);
+            // Scale-aware "on view": a group technically in-frame but too small to
+            // read (deep-zoom nesting) shouldn't fire. minPx == 0 keeps the legacy
+            // "any overlap" behavior; otherwise require the content's apparent
+            // longest edge >= minPx, with a 0.8x release margin so hovering at the
+            // exact boundary zoom doesn't flicker on/off.
+            const float minPx = get_auto_trigger_min_screen_px();
+            const float apparentPx = group_content_apparent_px(*this, drawData);
+            const bool onScreen = (minPx <= 0.0f)
+                ? (apparentPx > 0.0f)
+                : (apparentPx >= (rt.onScreenLast ? minPx * 0.8f : minPx));
             if(onScreen && !rt.onScreenLast) {
                 folderData->flipbook_begin(invert);   // rising edge (re)starts
                 if(mp) mp->reset();
@@ -714,13 +755,26 @@ void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool
         }
     }
     // PHASE10.1 — Anim-FX group: drive every particle effect inside it by the
-    // shared world-space path delta (relative arrangement preserved; each trails).
-    if(is_anim_fx_group() && has_motion_path()) {
+    // shared world-space path delta (relative arrangement preserved; each trails),
+    // and gate their AUTO playback by apparent on-screen size (scale-aware view).
+    if(is_anim_fx_group()) {
         MotionPath* mp = get_motion_path();
         auto& rt = folderData->flipbookRuntime;   // reuse the transient preview flag
+        // Scale-aware "on view" gate — independent of viewer mode (FX play live in
+        // drawing mode too). minPx == 0 keeps the legacy always-on behavior; else
+        // require apparent longest edge >= minPx, with a 0.8x release margin.
+        const float minPx = get_auto_trigger_min_screen_px();
+        bool gateOpen = true;
+        if(minPx > 0.0f) {
+            const float apparentPx = group_content_apparent_px(*this, drawData);
+            gateOpen = apparentPx >= (rt.onScreenLast ? minPx * 0.8f : minPx);
+        }
+        rt.onScreenLast = gateOpen;
+        // Motion drive only in a play context, with a real path, and while the
+        // gate is open (below threshold the FX is stopped, so parking is moot).
         const bool playContext = viewerActive || rt.previewPlaying;
         WorldVec worldDelta{0, 0};
-        if(playContext && mp->points.size() >= 2) {
+        if(mp && playContext && gateOpen && mp->points.size() >= 2) {
             mp->advance(deltaTime);   // the path's OWN play style over its seconds
             const MotionPath::Sample smp = mp->sample(mp->pathProgress);
             const Vector2f pathLocalDelta = smp.pos - mp->points[0];
@@ -733,8 +787,11 @@ void DrawingProgramLayerListItem::update_flipbook_playback(float deltaTime, bool
         get_flattened_component_list(comps);
         for(auto* c : comps) {
             CanvasComponent& comp = c->obj->get_comp();
-            if(comp.get_type() == CanvasComponentType::PARTICLE)
-                static_cast<ParticleCanvasComponent&>(comp).drive_anim_fx(worldDelta);
+            if(comp.get_type() == CanvasComponentType::PARTICLE) {
+                auto& pc = static_cast<ParticleCanvasComponent&>(comp);
+                pc.set_auto_play_gate(gateOpen);   // suppress/stop AUTO play when too small
+                if(mp) pc.drive_anim_fx(worldDelta);
+            }
         }
     }
     for(auto& c : *folderData->folderList)
@@ -807,6 +864,7 @@ void DrawingProgramLayerListItem::set_metainfo(DrawingProgramLayerManager& layer
     set_flipbook_trigger_mode(layerMan, metaInfo.flipbookTriggerMode);
     set_flipbook_invert(layerMan, metaInfo.flipbookInvert);
     set_anim_fx_group(layerMan, metaInfo.animFxGroup);
+    set_auto_trigger_min_screen_px(layerMan, metaInfo.autoTriggerMinScreenPx);
     set_name(layerMan.drawP.world.delayedUpdateObjectManager, metaInfo.name);
 }
 
@@ -823,7 +881,8 @@ DrawingProgramLayerListItemMetaInfo DrawingProgramLayerListItem::get_metainfo() 
         .flipbookPlayStyle = displayData->flipbookPlayStyle,
         .flipbookTriggerMode = displayData->flipbookTriggerMode,
         .flipbookInvert = displayData->flipbookInvert,
-        .animFxGroup = displayData->animFxGroup
+        .animFxGroup = displayData->animFxGroup,
+        .autoTriggerMinScreenPx = displayData->autoTriggerMinScreenPx
     };
 }
 
