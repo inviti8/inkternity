@@ -250,8 +250,15 @@ void MotionPathTool::build_toolbox() {
             // Per-segment duration: seconds to travel here from the previous node.
             // The start node has no incoming segment, so it has no Seconds field.
             if(i >= 1 && i < mp->nodeSeconds.size())
-                slider_scalar_field(gui, "mp node seconds", "Seconds (from prev)", &mp->nodeSeconds[i], 0.1f, 10.0f, { .decimalPrecision = 1, .onEdit = [this] { begin_edit(); commit(); } });
-            slider_scalar_field(gui, "mp node scale", "Scale", &mp->nodeScale[i], 0.1f, 10.0f, { .decimalPrecision = 2, .onEdit = [this] { begin_edit(); commit(); } });
+                // Min 0.01 (precision 2 so it's actually settable at that step):
+                // allows near-instant segments — e.g. a snap/pop, or pairing with
+                // a scale-0 node to blink an object out.
+                slider_scalar_field(gui, "mp node seconds", "Seconds (from prev)", &mp->nodeSeconds[i], 0.01f, 10.0f, { .decimalPrecision = 2, .onEdit = [this] { begin_edit(); commit(); } });
+            // Min 0 (not 0.1): a node scale of 0 tweens the object down to nothing,
+            // for animating it out of visibility. The flip-book draw applies this
+            // via canvas->scale(); Skia collapses a 0 scale to zero area (draws
+            // nothing) without erroring.
+            slider_scalar_field(gui, "mp node scale", "Scale", &mp->nodeScale[i], 0.0f, 10.0f, { .decimalPrecision = 2, .onEdit = [this] { begin_edit(); commit(); } });
             if(i < mp->nodeRotation.size())
                 slider_scalar_field(gui, "mp node rotation", "Rotate along path (-1..1)", &mp->nodeRotation[i], -1.0f, 1.0f, { .decimalPrecision = 2, .onEdit = [this] { begin_edit(); commit(); } });
             left_to_right_line_layout(gui, [&] {
