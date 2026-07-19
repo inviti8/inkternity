@@ -210,6 +210,15 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                     // (Sketch / Color / Ink). They're document-level
                     // anchors managed by the layer manager itself.
                     if(layer->get_kind() == LayerKind::DEFAULT) {
+                        // Stylus-safety: delete is the only destructive per-row
+                        // action, so separate it from the other buttons with a
+                        // gap AND inset it from the panel's right edge — that
+                        // edge is exactly where a scroll-drag tends to land, and
+                        // a flush trash button gets tapped by accident. Delete is
+                        // also mirrored full-size in the settings panel below.
+                        CLAY_AUTO_ID({
+                            .layout = {.sizing = {.width = CLAY_SIZING_FIXED(14.0f), .height = CLAY_SIZING_GROW(0)}}
+                        }) {}
                         gui.set_z_index_keep_clipping_region(gui.get_z_index() + 1, [&] {
                             svg_icon_button(gui, "delete button", "data/icons/trash.svg", {
                                 .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
@@ -219,6 +228,10 @@ void DrawingProgramLayerManagerGUI::setup_list_gui() {
                                 }
                             });
                         });
+                        // Edge inset — keeps the trash off the scroll edge.
+                        CLAY_AUTO_ID({
+                            .layout = {.sizing = {.width = CLAY_SIZING_FIXED(12.0f), .height = CLAY_SIZING_GROW(0)}}
+                        }) {}
                     }
                 },
                 .onDoubleClick = [&](const TreeListingObjIndexList& objIndex) {
@@ -971,6 +984,58 @@ void DrawingProgramLayerManagerGUI::duplicate_layer(const GUIStuff::TreeListingO
     select_layer_by_index(newIndex);
 }
 
+void DrawingProgramLayerManagerGUI::export_selected_group(const std::filesystem::path& path) {
+    auto& world = layerMan.drawP.world;
+    // Do NOT refresh_gui_data() here — it clears the selection. Read the
+    // persistent last-selection instead: opening the File menu closed the
+    // Layers panel, which already wiped selectedLayerIndices / editingLayer.
+    auto item = lastSingleSelectedItem.lock();
+    if(!item) {
+        Logger::get().log("USERINFO", "Select a layer or group in the Layers panel first, then Export.");
+        return;
+    }
+    try {
+        world.export_layer_group(path, *item);
+    }
+    catch(const std::exception& e) {
+        Logger::get().log("USERINFO", std::string("Layer group export failed: ") + e.what());
+    }
+}
+
+void DrawingProgramLayerManagerGUI::import_group_from_file(const std::filesystem::path& path) {
+    using namespace NetworkingObjects;
+    refresh_gui_data();
+    auto& world = layerMan.drawP.world;
+
+    DrawingProgramLayerListItem* item = nullptr;
+    try {
+        item = world.read_layer_group_file(path);
+    }
+    catch(const std::exception& e) {
+        Logger::get().log("USERINFO", std::string("Layer group import failed: ") + e.what());
+        return;
+    }
+    if(!item) return;
+
+    // Insert at the TOP of the root stack (mirrors create_in_proper_position's
+    // root fallback). insert_and_send_create fires the folder insert callback,
+    // which wires callbacks + caches/commits the whole imported subtree.
+    auto& rootList = layerMan.layerTreeRoot->get_folder().folderList;
+    auto insertedIt = rootList->insert_and_send_create(rootList, rootList->begin(), item);
+
+    world.undo.push(std::make_unique<AddLayerWorldUndoAction>(
+        std::make_unique<DrawingProgramLayerListItemUndoData>(insertedIt->obj->get_undo_data(world.undo)),
+        insertedIt->pos,
+        world.undo.get_undoid_from_netid(layerMan.layerTreeRoot.get_net_id()),
+        world.undo.get_undoid_from_netid(insertedIt->obj.get_net_id())));
+
+    world.main.g.gui.set_to_layout();
+    refresh_gui_data();
+    // Freshly imported group is the top-level item at index 0.
+    select_layer_by_index(GUIStuff::TreeListingObjIndexList{0});
+    Logger::get().log("USERINFO", "Layer group imported");
+}
+
 void DrawingProgramLayerManagerGUI::remove_layer(const GUIStuff::TreeListingObjIndexList& objIndex) {
     refresh_gui_data();
 
@@ -1183,6 +1248,9 @@ void DrawingProgramLayerManagerGUI::editing_layer_check() {
     if(selectedLayerIndices.size() == 1) {
         editingLayer = get_layer_from_obj_index(*selectedLayerIndices.begin());
         editingLayerOldMetainfo = editingLayer.lock()->get_metainfo();
+        // Remember it for File-menu actions that outlive the panel (Export). NOT
+        // cleared in the else branch — refresh_gui_data() must not wipe it.
+        lastSingleSelectedItem = editingLayer;
     }
     else {
         editingLayer.reset();

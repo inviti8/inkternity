@@ -33,6 +33,13 @@ class ResourceManager {
         const std::vector<NetworkingObjects::NetObjOwnerPtr<ResourceData>>& resource_list();
         float get_resource_retrieval_progress(const NetworkingObjects::NetObjID& id);
         std::unordered_map<NetworkingObjects::NetObjID, ResourceData> copy_resource_set_to_map(const std::unordered_set<NetworkingObjects::NetObjID>& resourceSet) const;
+        // Layer-group import: register resources bundled with an imported group
+        // subtree under their ORIGINAL ids (component data references resources
+        // by raw NetObjID, so the id must be preserved for the reference to
+        // resolve). IDs already present in this canvas are skipped — the
+        // existing resource is shared, which also makes re-importing the same
+        // group twice safe. Mirrors load_file's emplace, minus the collision.
+        void import_resource_map(const std::unordered_map<NetworkingObjects::NetObjID, ResourceData>& resources);
         void clear_display_cache();
 
         void load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version);

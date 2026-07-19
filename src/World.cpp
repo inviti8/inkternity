@@ -1157,6 +1157,118 @@ void World::load_from_file(const std::filesystem::path& filePathToLoadFrom, std:
     set_name(filePath.stem().string());
 }
 
+namespace {
+    // .inkgroup container-body format. Bump if the body layout below changes
+    // (this is independent of the canvas save-format version, which is stored
+    // right after it and drives DrawingProgramLayerListItem::load_file gating).
+    constexpr uint32_t GROUP_CONTAINER_FORMAT = 1;
+}
+
+void World::export_layer_group(const std::filesystem::path& pathRaw, const DrawingProgramLayerListItem& item) {
+    std::filesystem::path path = pathRaw;
+    if(path.extension().string() != DOT_GROUP_FILE_EXTENSION)
+        path += DOT_GROUP_FILE_EXTENSION;
+
+    // The layer blob references image/particle resources by NetObjID only; the
+    // bytes live in ResourceManager and are NOT in item.save_file. Bundle the
+    // ones this subtree uses so the group is self-contained across files.
+    std::unordered_set<NetworkingObjects::NetObjID> usedResources;
+    item.get_used_resources(usedResources);
+    std::unordered_map<NetworkingObjects::NetObjID, ResourceData> resourceMap =
+        rMan.copy_resource_set_to_map(usedResources);
+
+    const std::string_view header(GROUP_FILE_HEADER.c_str(), VersionConstants::SAVEFILE_HEADER_LEN);
+
+    // Spill the uncompressed body to a temp file, then stream-compress it and
+    // rename over the target — same atomic-write path as save_to_file, so a
+    // heavy multi-frame group survives instead of dying on an in-memory buffer.
+    auto tmpPath = path;
+    tmpPath += ".tmp";
+    auto uncompressedTmp = path;
+    uncompressedTmp += ".uncompressed.tmp";
+    ScopedFileRemove spillGuard{uncompressedTmp};
+    {
+        std::ofstream uout(uncompressedTmp, std::ios::binary | std::ios::trunc);
+        if(!uout)
+            throw std::runtime_error("Could not open temp file for writing: " + uncompressedTmp.string());
+        {
+            cereal::PortableBinaryOutputArchive a(uout);
+            a(GROUP_CONTAINER_FORMAT);
+            // Canvas save-format version at export time — read back to gate
+            // DrawingProgramLayerListItem::load_file exactly like a canvas load.
+            a(VersionConstants::CURRENT_VERSION_NUMBER.major,
+              VersionConstants::CURRENT_VERSION_NUMBER.minor,
+              VersionConstants::CURRENT_VERSION_NUMBER.patch);
+            item.save_file(a);
+            a(resourceMap);
+        }
+        uout.flush();
+        if(!uout)
+            throw std::runtime_error("Failed writing layer group to " + uncompressedTmp.string());
+        uout.close();
+        if(uout.fail())
+            throw std::runtime_error("Failed to finalize " + uncompressedTmp.string());
+    }
+    const uint64_t uncompressedSize = std::filesystem::file_size(uncompressedTmp);
+    write_compressed_file_to_tmp(tmpPath, header, uncompressedTmp, uncompressedSize);
+    std::error_code rec;
+    std::filesystem::rename(tmpPath, path, rec);
+    if(rec) {
+        std::filesystem::copy_file(tmpPath, path,
+            std::filesystem::copy_options::overwrite_existing, rec);
+        if(rec)
+            throw std::runtime_error(
+                "Could not finalize layer group at " + path.string() + ": " + rec.message() +
+                " (bytes remain at " + tmpPath.string() + ")");
+        std::filesystem::remove(tmpPath, rec);
+    }
+    Logger::get().log("USERINFO", "Layer group exported");
+}
+
+DrawingProgramLayerListItem* World::read_layer_group_file(const std::filesystem::path& path) {
+    std::string fileBytes = read_file_to_string(path);
+    if(fileBytes.size() < VersionConstants::SAVEFILE_HEADER_LEN)
+        throw std::runtime_error("[read_layer_group_file] Not a layer group file (too small)");
+
+    const std::string_view fileHeader(fileBytes.data(), VersionConstants::SAVEFILE_HEADER_LEN);
+    if(fileHeader != std::string_view(GROUP_FILE_HEADER.c_str(), VersionConstants::SAVEFILE_HEADER_LEN))
+        throw std::runtime_error(
+            "This is not a layer group (.inkgroup) file. Use Open to load a full canvas.");
+
+    const char* payload = fileBytes.data() + VersionConstants::SAVEFILE_HEADER_LEN;
+    const size_t payloadSize = fileBytes.size() - VersionConstants::SAVEFILE_HEADER_LEN;
+    const unsigned long long fcs = ZSTD_getFrameContentSize(payload, payloadSize);
+    if(fcs == ZSTD_CONTENTSIZE_ERROR || fcs == ZSTD_CONTENTSIZE_UNKNOWN)
+        throw std::runtime_error("[read_layer_group_file] Corrupt layer group (bad compression frame)");
+    std::vector<char> uncompressed(fcs, '\0');
+    const size_t trueSize = ZSTD_decompress(uncompressed.data(), fcs, payload, payloadSize);
+    if(ZSTD_isError(trueSize))
+        throw std::runtime_error(std::string("[read_layer_group_file] Decompress failed: ") + ZSTD_getErrorName(trueSize));
+
+    ByteMemStream f(uncompressed.data(), trueSize);
+    cereal::PortableBinaryInputArchive a(f);
+
+    uint32_t containerFormat = 0;
+    a(containerFormat);
+    if(containerFormat > GROUP_CONTAINER_FORMAT)
+        throw std::runtime_error(
+            "This layer group was made by a newer version of Inkternity. Update to import it.");
+
+    VersionNumber version{0, 0, 0};
+    a(version.major, version.minor, version.patch);
+
+    // Build the subtree. load_file writes no net ids, so make_obj hands out
+    // fresh random ids throughout — no collision with the destination canvas.
+    auto item = std::make_unique<DrawingProgramLayerListItem>();
+    item->load_file(a, version, drawProg.layerMan);
+
+    std::unordered_map<NetworkingObjects::NetObjID, ResourceData> resourceMap;
+    a(resourceMap);
+    rMan.import_resource_map(resourceMap);
+
+    return item.release();
+}
+
 void World::save_file(cereal::PortableBinaryOutputArchive& a) const {
     drawData.cam.save_file(a, *this);
     canvasTheme.save_file(a);

@@ -1,5 +1,6 @@
 #pragma once
 #include <unordered_set>
+#include <filesystem>
 #include <Helpers/NetworkingObjects/NetObjOrderedList.hpp>
 #include "../../GUIStuff/Elements/TreeListing.hpp"
 #include "DrawingProgramLayerListItem.hpp"
@@ -13,6 +14,15 @@ class DrawingProgramLayerManagerGUI {
         DrawingProgramLayerManagerGUI(DrawingProgramLayerManager& layerManager);
         void refresh_gui_data();
         void setup_list_gui();
+        // Export/Import Layer Group (File menu). Export writes the single
+        // selected layer/folder subtree + its resources to `path` (.inkgroup);
+        // a no-op with a user message if the selection isn't exactly one item.
+        // Import loads such a file, inserts the group at the TOP of the stack
+        // with fresh net ids, selects it, and pushes an undo. Both surface
+        // failures to the user log rather than throwing. See
+        // World::export_layer_group / read_layer_group_file.
+        void export_selected_group(const std::filesystem::path& path);
+        void import_group_from_file(const std::filesystem::path& path);
     private:
         std::optional<std::pair<NetworkingObjects::NetObjID, NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem>>> try_to_create_in_proper_position(DrawingProgramLayerListItem* newItem);
         std::pair<NetworkingObjects::NetObjID, NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem>> create_in_proper_position(DrawingProgramLayerListItem* newItem);
@@ -53,6 +63,13 @@ class DrawingProgramLayerManagerGUI {
 
         std::set<GUIStuff::TreeListingObjIndexList> selectedLayerIndices;
         NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> editingLayer;
+        // Last single-selected layer/group — the target for File-menu actions
+        // (Export Layer Group). selectedLayerIndices and editingLayer are BOTH
+        // wiped by refresh_gui_data(), which fires when the Layers panel closes
+        // — and the panel closes as the File menu opens, so neither is readable
+        // by the time Export runs. This one is only ever set (on a single
+        // selection), never cleared, so the target survives the menu switch.
+        NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> lastSingleSelectedItem;
 
         std::optional<DrawingProgramLayerListItemMetaInfo> editingLayerOldMetainfo;
 

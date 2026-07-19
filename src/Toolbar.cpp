@@ -732,6 +732,27 @@ void Toolbar::top_toolbar() {
                             if(!main.world->clientStillConnecting) {
                                 menu_popup_text_button("save file", "Save", [&] { save_func(); });
                                 menu_popup_text_button("save as file", "Save As", [&] { save_as_func(); });
+                                #ifndef __EMSCRIPTEN__
+                                // Export/Import a single layer group (folder or
+                                // layer) to a .inkgroup sidecar — lift a group
+                                // out of one canvas and drop it into another
+                                // (e.g. recover a group deleted from a later
+                                // working file). Export needs one selected item.
+                                menu_popup_text_button("export layer group", "Export Layer Group…", [&] {
+                                    open_file_selector("Export Layer Group", {{"Inkternity Layer Group", World::GROUP_FILE_EXTENSION}}, [w = make_weak_ptr(main.world)](const std::filesystem::path& p, const auto& e) {
+                                        auto world = w.lock();
+                                        if(world)
+                                            world->drawProg.layerMan.listGUI.export_selected_group(p);
+                                    }, "", true);
+                                });
+                                menu_popup_text_button("import layer group", "Import Layer Group…", [&] {
+                                    open_file_selector("Import Layer Group", {{"Inkternity Layer Group", World::GROUP_FILE_EXTENSION}}, [w = make_weak_ptr(main.world)](const std::filesystem::path& p, const auto& e) {
+                                        auto world = w.lock();
+                                        if(world)
+                                            world->drawProg.layerMan.listGUI.import_group_from_file(p);
+                                    }, "", false);
+                                });
+                                #endif
                                 menu_popup_text_button("screenshot", "Screenshot", [&] { main.world->drawProg.switch_to_tool(DrawingProgramToolType::SCREENSHOT); });
                                 menu_popup_text_button("add image or file to canvas", "Add Image/File to Canvas", [&] {
                                     #ifdef __EMSCRIPTEN__

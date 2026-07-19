@@ -175,6 +175,19 @@ void ResourceManager::load_file(cereal::PortableBinaryInputArchive& a, VersionNu
         resourceList.emplace_back(world.netObjMan.make_obj_direct_with_specific_id<ResourceData>(netID, rData));
 }
 
+void ResourceManager::import_resource_map(const std::unordered_map<NetworkingObjects::NetObjID, ResourceData>& resources) {
+    for(auto& [netID, rData] : resources) {
+        // Skip ids this canvas already has: make_obj_direct_with_specific_id
+        // throws on collision, and an existing resource with the same id is
+        // (by construction — ids are 128-bit random) the same bytes. This is
+        // what makes importing the same group twice, or a group whose image is
+        // already used here, safe.
+        if(world.netObjMan.get_obj_temporary_ref_from_id<ResourceData>(netID))
+            continue;
+        resourceList.emplace_back(world.netObjMan.make_obj_direct_with_specific_id<ResourceData>(netID, rData));
+    }
+}
+
 void ResourceManager::save_file(cereal::PortableBinaryOutputArchive& a) const {
     std::unordered_set<NetworkingObjects::NetObjID> usedResources;
     world.drawProg.get_used_resources(usedResources);

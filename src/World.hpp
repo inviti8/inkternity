@@ -51,6 +51,16 @@ class World {
         static constexpr std::string FILE_EXTENSION = "inkternity";
         // Pre-rebrand extension; readable for backward compat, never written.
         static constexpr std::string LEGACY_DOT_FILE_EXTENSION = ".infpnt";
+
+        // Layer-group sidecar file (Export/Import Layer Group): a single layer
+        // or folder subtree serialized on its own, plus the resources it uses,
+        // so a group can be lifted out of one canvas and dropped into another
+        // (e.g. recovering a group deleted from a later working file). Distinct
+        // 12-byte magic from the canvas header so Import rejects a full canvas
+        // instead of misparsing it. See export_layer_group / read_layer_group_file.
+        static constexpr std::string GROUP_FILE_EXTENSION = "inkgroup";
+        static constexpr std::string DOT_GROUP_FILE_EXTENSION = ".inkgroup";
+        static constexpr std::string GROUP_FILE_HEADER = "INFGRP000001"; // exactly SAVEFILE_HEADER_LEN bytes
         static constexpr size_t CHAT_SIZE = 10;
 
         World(MainProgram& initMain, const CustomEvents::OpenInfiniPaintFileEvent& worldInfo);
@@ -115,6 +125,18 @@ class World {
         void autosave_to_directory(const std::filesystem::path& directoryToSaveAt);
         void save_to_file(const std::filesystem::path& filePathToSaveAt, bool disableThumbnailSaving = false);
         void load_from_file(const std::filesystem::path& filePathToLoadFrom, std::string_view buffer);
+
+        // Export/Import Layer Group. Export writes `item`'s whole subtree +
+        // the resources it references to `path` (a .inkgroup file), reusing the
+        // canvas save's spill-to-disk + streaming-zstd path so heavy multi-frame
+        // groups don't die on an in-memory buffer. read_layer_group_file parses
+        // one back and returns a freshly-built item (fresh net ids — the file
+        // stores none), re-registering its bundled resources; the caller inserts
+        // it into the layer tree. Throws std::runtime_error on a bad/mismatched
+        // file (wrong magic, e.g. a full canvas). The raw item is unowned — hand
+        // it to an insert, or delete it.
+        void export_layer_group(const std::filesystem::path& path, const DrawingProgramLayerListItem& item);
+        DrawingProgramLayerListItem* read_layer_group_file(const std::filesystem::path& path);
 
         // Periodic in-progress autosave. Called from World::update each
         // frame; cheap when there's nothing to do. Writes a snapshot to
