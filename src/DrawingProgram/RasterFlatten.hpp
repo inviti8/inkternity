@@ -32,6 +32,7 @@
 // case it's downsampled with an in-app notice.
 
 class DrawingProgram;
+class DrawingProgramLayerListItem;
 
 namespace RasterFlatten {
 
@@ -48,5 +49,30 @@ extern int MAXIMUM_FLATTEN_SIZE_PX;
 // no libmypaint (the merged result is a libmypaint surface so it stays
 // raster-erasable).
 void flatten_layer(DrawingProgram& drawP);
+
+// Blend-aware Merge Down (PHASE4 §11 refinement). The plain vector merge in
+// DrawingProgramLayerManagerGUI moves components and so can't honor a
+// non-default blend/alpha on the upper layer (a moved component would
+// composite inside the lower layer's buffer with Source-Over, not against the
+// real backdrop). This bakes it instead: `lower`'s components are drawn as the
+// backdrop, then `upper`'s components are composited on top with the UPPER
+// layer's alpha + blend mode — the exact per-layer compositing the live
+// renderer applies (DrawingProgramLayerListItem::draw's saveLayer). The result
+// is one raster component placed into `lower`; every baked component on BOTH
+// layers is erased. The caller (merge_layer_down) must have already verified:
+// both are depth-0 non-folder layers, `lower` has default alpha+blend (it is
+// the backdrop, and its own blend would composite against content beneath it
+// that a two-layer merge can't fold in), and `upper` holds no waypoint markers.
+//
+// Same rasterization costs as flatten_layer: the merged layer loses per-stroke
+// vector editing and is resolution-locked at bake (WYSIWYG floor, capped by
+// MAXIMUM_FLATTEN_SIZE_PX). Exact only where `lower` is the effective backdrop
+// (nothing visible below it, or it's opaque) — the standard Merge-Down
+// contract. Returns false, having changed nothing and logged a USERINFO
+// notice, on any refusal (mid-download/mid-edit content, nothing to bake,
+// surface failure) or in a build without libmypaint.
+bool merge_down_baked(DrawingProgram& drawP,
+                      DrawingProgramLayerListItem& upper,
+                      DrawingProgramLayerListItem& lower);
 
 }  // namespace RasterFlatten

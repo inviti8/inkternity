@@ -25,7 +25,11 @@ class FxLibraryStore;
 class LegacyFxLibrary;
 class PhoneDrawingProgramScreen;
 class DrawingProgram;
-namespace RasterFlatten { void flatten_layer(DrawingProgram& drawP); }
+class DrawingProgramLayerListItem;
+namespace RasterFlatten {
+    void flatten_layer(DrawingProgram& drawP);
+    bool merge_down_baked(DrawingProgram& drawP, DrawingProgramLayerListItem& upper, DrawingProgramLayerListItem& lower);
+}
 namespace RasterResolution { void halve_layer(DrawingProgram& drawP); }
 
 class DrawingProgram {
@@ -215,6 +219,9 @@ class DrawingProgram {
         // PHASE4 §10: flatten needs selection (skip mid-manipulation
         // comps) + droppedDownloadingFiles (skip still-loading images).
         friend void RasterFlatten::flatten_layer(DrawingProgram& drawP);
+        // Blend-aware Merge Down: same access needs as flatten (bakes both
+        // layers, checks droppedDownloadingFiles for still-loading images).
+        friend bool RasterFlatten::merge_down_baked(DrawingProgram& drawP, DrawingProgramLayerListItem& upper, DrawingProgramLayerListItem& lower);
         // LAYER-RESOLUTION.md: reduce needs selection (skip mid-manipulation
         // comps) — same as flatten.
         friend void RasterResolution::halve_layer(DrawingProgram& drawP);

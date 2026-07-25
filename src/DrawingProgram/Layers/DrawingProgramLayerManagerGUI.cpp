@@ -2,6 +2,7 @@
 #include "DrawingProgramLayerListItem.hpp"
 #include "DrawingProgramLayerManager.hpp"
 #include "../DrawingProgram.hpp"
+#include "../RasterFlatten.hpp"
 #include "../Tools/MotionPathTool.hpp"
 #include "MotionPath.hpp"
 #include <memory>
@@ -1189,13 +1190,18 @@ void DrawingProgramLayerManagerGUI::merge_layer_down(GUIStuff::TreeListingObjInd
         return;
     }
 
-    // Layer alpha/blend composite per-LAYER; moving components from
-    // under (or into) a non-default one would change how the art looks.
+    // Layer alpha/blend composite per-LAYER (a saveLayer with the layer's paint,
+    // blended against the full backdrop below). Moving vector components ignores
+    // that, so it's only lossless when both layers composite normally.
     auto has_default_compositing = [](const DrawingProgramLayerListItem& l) {
         return l.get_alpha() == 1.0f && l.get_blend_mode() == SerializedBlendMode::BLEND_SRC_OVER;
     };
-    if(!has_default_compositing(*srcPtr) || !has_default_compositing(dest)) {
-        Logger::get().log("USERINFO", "Merge Down: both layers need default alpha + blend mode (a merge under non-default compositing would change the art's appearance). Reset them, or use Flatten Layer.");
+    // The LOWER layer is the backdrop of any merge — its own blend composites
+    // against everything beneath it, which a two-layer merge can't fold in, so
+    // it must be neutral either way. (The upper layer's blend IS preserved, via
+    // the baked path below.)
+    if(!has_default_compositing(dest)) {
+        Logger::get().log("USERINFO", "Merge Down: the lower layer needs default alpha + blend mode (its blend composites against everything beneath it, which a merge can't capture). Reset it, or merge the other way.");
         return;
     }
     // Different parallax depths = different derived cameras = content
@@ -1204,6 +1210,12 @@ void DrawingProgramLayerManagerGUI::merge_layer_down(GUIStuff::TreeListingObjInd
         Logger::get().log("USERINFO", "Merge Down: both layers need parallax depth 0.");
         return;
     }
+    // Upper layer carries a non-default blend/alpha: a vector move would drop it,
+    // so bake the two layers together (upper composited over lower with its own
+    // blend) into one raster — the only way to keep the look exactly. This
+    // rasterizes (see RasterFlatten::merge_down_baked); the plain vector move
+    // below stays the path when the upper layer is also neutral.
+    const bool upperNeedsBake = !has_default_compositing(*srcPtr);
 
     // Waypoints can't be cloned-then-erased: the erase callback sweeps
     // the waypoint out of wpGraph by id, orphaning the clone.
@@ -1215,40 +1227,49 @@ void DrawingProgramLayerManagerGUI::merge_layer_down(GUIStuff::TreeListingObjInd
         }
     }
 
-    // Clone source components into dest ABOVE its existing content
-    // (components draw begin→end, so end() = top-z; same-anchor pairs
-    // insert in order, preserving the source's relative stacking).
-    // Clone + erase (rather than moving the live containers) reuses the
-    // proven flatten/vectorize undo machinery: place-undo + erase-undo
-    // + the layer-delete undo from remove_layer = fully reversible.
-    const size_t mergedCount = srcComponents->size();
-    if(mergedCount > 0) {
-        auto& destComponents = dest.get_layer().components;
-        std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
-        toPlace.reserve(mergedCount);
-        for(auto it = srcComponents->begin(); it != srcComponents->end(); ++it)
-            toPlace.emplace_back(destComponents->end(), new CanvasComponentContainer(world.netObjMan, *it->obj->get_data_copy()));
-        const auto placed = layerMan.add_many_components_to_specific_layer(*destIt->obj, toPlace);
-        for(auto& pit : placed)
-            pit->obj->commit_update(layerMan.drawP);
+    if(upperNeedsBake) {
+        // Blend-aware path: bake upper (with its blend) over lower into one
+        // raster placed in dest, erasing both layers' baked components. Bails
+        // (having changed nothing, with its own notice) if it can't bake — leave
+        // the upper layer in place so nothing is lost.
+        if(!RasterFlatten::merge_down_baked(layerMan.drawP, *srcPtr, dest))
+            return;
+    }
+    else {
+        // Neutral upper layer: keep it vector. Clone source components into dest
+        // ABOVE its existing content (components draw begin→end, so end() =
+        // top-z; same-anchor pairs insert in order, preserving the source's
+        // relative stacking). Clone + erase (rather than moving the live
+        // containers) reuses the proven flatten/vectorize undo machinery:
+        // place-undo + erase-undo + the layer-delete undo from remove_layer =
+        // fully reversible.
+        const size_t mergedCount = srcComponents->size();
+        if(mergedCount > 0) {
+            auto& destComponents = dest.get_layer().components;
+            std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
+            toPlace.reserve(mergedCount);
+            for(auto it = srcComponents->begin(); it != srcComponents->end(); ++it)
+                toPlace.emplace_back(destComponents->end(), new CanvasComponentContainer(world.netObjMan, *it->obj->get_data_copy()));
+            const auto placed = layerMan.add_many_components_to_specific_layer(*destIt->obj, toPlace);
+            for(auto& pit : placed)
+                pit->obj->commit_update(layerMan.drawP);
 
-        std::vector<CanvasComponentContainer::ObjInfo*> toErase;
-        toErase.reserve(mergedCount);
-        for(auto it = srcComponents->begin(); it != srcComponents->end(); ++it)
-            toErase.push_back(&(*it));
-        layerMan.erase_component_container(toErase);
+            std::vector<CanvasComponentContainer::ObjInfo*> toErase;
+            toErase.reserve(mergedCount);
+            for(auto it = srcComponents->begin(); it != srcComponents->end(); ++it)
+                toErase.push_back(&(*it));
+            layerMan.erase_component_container(toErase);
+        }
+        Logger::get().log("USERINFO",
+            "Merged " + std::to_string(mergedCount) + " component(s) down into '" + dest.get_name() + "'.");
     }
 
     // If the merged-away layer was the edit target, hand editing to dest
     // so the artist's next stroke lands where the content went.
-    const std::string destName = dest.get_name();
     if(layerMan.editingLayer.lock().get() == srcPtr.get())
         layerMan.editingLayer = world.netObjMan.get_obj_temporary_ref_from_id<DrawingProgramLayerListItem>(destIt->obj.get_net_id());
 
     remove_layer(objIndex);
-
-    Logger::get().log("USERINFO",
-        "Merged " + std::to_string(mergedCount) + " component(s) down into '" + destName + "'.");
 }
 
 void DrawingProgramLayerManagerGUI::editing_layer_check() {
