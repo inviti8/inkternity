@@ -827,6 +827,12 @@ void Toolbar::top_toolbar() {
                                 menu_popup_text_button("flatten layer", "Flatten Layer", [&] {
                                     RasterFlatten::flatten_layer(main.world->drawProg);
                                 });
+                                menu_popup_text_button("consolidate vectors", "Consolidate Vector Strokes", [&] {
+                                    RasterFlatten::consolidate_vectors(main.world->drawProg);
+                                });
+                                menu_popup_text_button("optimize vectors", "Optimize Vector Object", [&] {
+                                    RasterFlatten::optimize_vectors(main.world->drawProg);
+                                });
                                 menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
                                     RasterResolution::halve_layer(main.world->drawProg);
                                 });
@@ -2496,6 +2502,10 @@ void Toolbar::general_settings_inner_gui() {
                         // 8192² is ~256 MB readback + up to ~512 MB
                         // transient 16-bit tiles; 16384² quadruples that.
                         input_scalar_field<int>(gui, "maximum flatten size", "Maximum flatten size (px per axis)", &RasterFlatten::MAXIMUM_FLATTEN_SIZE_PX, 2048, 16384);
+                        // Consolidate Vectors → Optimize: RDP simplify strength as a
+                        // fraction of each stroke's brush width. 0 = lossless (keep
+                        // every point); higher drops more points for lighter geometry.
+                        slider_scalar_field(gui, "vector optimize strength", "Vector optimize strength (0 = lossless)", &RasterFlatten::CONSOLIDATE_SIMPLIFY_STRENGTH, 0.0f, 2.0f, {.decimalPrecision = 2});
                         input_scalar_field(gui, "Max GUI Scale", "Max GUI Scale", &main.conf.guiScale, 0.5f, 5.0f, {
                             .decimalPrecision = 1,
                             .onEdit = [&] { main.g.window_update(); }

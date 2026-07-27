@@ -42,6 +42,12 @@ namespace RasterFlatten {
 // is ~256 MB of readback bitmap + up to ~512 MB of transient 16-bit tiles.
 extern int MAXIMUM_FLATTEN_SIZE_PX;
 
+// Consolidate Vectors simplification strength: RDP epsilon as a fraction of each
+// stroke's brush width. 0 disables simplification (exact points); larger values
+// drop more points (lighter geometry, slightly looser curves). Live-tunable in
+// Settings → Debug (like MAXIMUM_FLATTEN_SIZE_PX).
+extern float CONSOLIDATE_SIMPLIFY_STRENGTH;
+
 // Bake every visual component on the layer being edited into a single merged
 // raster component, replacing the originals (the WHOLE layer, regardless of
 // what's on screen). Undoable (place + erase). No-op with an in-app notice if
@@ -74,5 +80,21 @@ void flatten_layer(DrawingProgram& drawP);
 bool merge_down_baked(DrawingProgram& drawP,
                       DrawingProgramLayerListItem& upper,
                       DrawingProgramLayerListItem& lower);
+
+// Consolidate Vectors: bake every vector brush stroke on the editing layer into
+// a single VECTORGROUP component, preserving exact appearance (z-order +
+// per-stroke color/alpha) while collapsing the component count that makes
+// panning a heavy vector canvas sluggish. Unlike flatten_layer this stays a
+// TRUE vector (infinite zoom, tiny memory) and is available in every build (no
+// libmypaint / rasterization). Ignores rasters, images, text, and shapes.
+// Undoable (place + erase). No-op with an in-app notice if fewer than two
+// eligible vector strokes exist on the layer.
+void consolidate_vectors(DrawingProgram& drawP);
+
+// Optimize Vectors: point-reduce (RDP, strength = CONSOLIDATE_SIMPLIFY_STRENGTH)
+// every consolidated VECTORGROUP on the editing layer — the separate, tunable,
+// re-runnable pass that Consolidate deliberately leaves out so merging stays
+// lossless. Undoable. No-op with a notice if strength is 0 or nothing to do.
+void optimize_vectors(DrawingProgram& drawP);
 
 }  // namespace RasterFlatten

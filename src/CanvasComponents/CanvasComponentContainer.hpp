@@ -79,6 +79,7 @@ class CanvasComponentContainer {
         friend class BrushStrokeCanvasComponent;
         friend class ImageCanvasComponent;
         friend class ParticleCanvasComponent;   // PHASE10.1 — refresh worldAABB as the Anim-FX collider grows
+        friend class VectorGroupCanvasComponent;   // Consolidate Vectors — per-group LOD via get_mipmap_level
 
         static void write_constructor_func(const NetworkingObjects::NetObjTemporaryPtr<CanvasComponentContainer>& o, cereal::PortableBinaryOutputArchive& a);
 

@@ -8,6 +8,7 @@
 #include "WaypointCanvasComponent.hpp"
 #include "ParticleCanvasComponent.hpp"
 #include "ArmatureCanvasComponent.hpp"
+#include "VectorGroupCanvasComponent.hpp"
 
 void CanvasComponent::update(DrawingProgram& drawP) {
 }
@@ -38,6 +39,8 @@ CanvasComponent* CanvasComponent::allocate_comp(CanvasComponentType type) {
             return new ParticleCanvasComponent;
         case CanvasComponentType::ARMATURE:
             return new ArmatureCanvasComponent;
+        case CanvasComponentType::VECTORGROUP:
+            return new VectorGroupCanvasComponent;
     }
     return nullptr;
 }

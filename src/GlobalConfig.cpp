@@ -70,6 +70,7 @@ nlohmann::json GlobalConfig::get_config_json(const InputManager& input) const {
     debugJson["maximumFrameTimeToForceCacheRebuild"] = DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH;
     debugJson["millisecondMinimumTimeToCheckForCacheRebuild"] = DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH;
     debugJson["maximumFlattenSizePx"] = RasterFlatten::MAXIMUM_FLATTEN_SIZE_PX;
+    debugJson["consolidateSimplifyStrength"] = RasterFlatten::CONSOLIDATE_SIMPLIFY_STRENGTH;
     toRet["debug"] = debugJson;
 
     return toRet;
@@ -144,6 +145,7 @@ void GlobalConfig::set_config_json(InputManager& input, const nlohmann::json& j,
     try{j.at("debug").at("maximumFrameTimeToForceCacheRebuild").get_to(DrawingProgramCache::MILLISECOND_FRAME_TIME_TO_FORCE_CACHE_REFRESH);} catch(...) {}
     try{j.at("debug").at("millisecondMinimumTimeToCheckForCacheRebuild").get_to(DrawingProgramCache::MILLISECOND_MINIMUM_TIME_TO_CHECK_FORCE_REFRESH);} catch(...) {}
     try{j.at("debug").at("maximumFlattenSizePx").get_to(RasterFlatten::MAXIMUM_FLATTEN_SIZE_PX);} catch(...) {}
+    try{j.at("debug").at("consolidateSimplifyStrength").get_to(RasterFlatten::CONSOLIDATE_SIMPLIFY_STRENGTH);} catch(...) {}
 }
 
 void GlobalConfig::save_palettes() {

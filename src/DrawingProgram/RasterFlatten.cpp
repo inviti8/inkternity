@@ -9,6 +9,8 @@
 #include "../CanvasComponents/ImageCanvasComponent.hpp"
 #include "../CanvasComponents/MyPaintLayerCanvasComponent.hpp"
 #include "../CanvasComponents/TextBoxCanvasComponent.hpp"
+#include "../CanvasComponents/BrushStrokeCanvasComponent.hpp"
+#include "../CanvasComponents/VectorGroupCanvasComponent.hpp"
 #include "../ResourceManager.hpp"
 #include "Layers/DrawingProgramLayerManager.hpp"
 #include "Layers/DrawingProgramLayerListItem.hpp"
@@ -38,6 +40,185 @@ namespace RasterFlatten {
 // defined outside the HVYM_HAS_LIBMYPAINT guard because GlobalConfig and
 // the settings GUI reference it in every build.
 int MAXIMUM_FLATTEN_SIZE_PX = 8192;
+
+float CONSOLIDATE_SIMPLIFY_STRENGTH = 0.3f;
+
+// Consolidate Vectors — a pure-vector sister to flatten_layer (NOT gated on
+// libmypaint: no rasterization, no libmypaint surface). Bakes every vector
+// brush stroke on the editing layer into ONE VECTORGROUP component: the strokes
+// keep their exact geometry, z-order, and per-stroke color/alpha, but the layer
+// collapses from N components (N BVH entries + N predraws + N colliders every
+// pan frame) to one — killing the O(N) pan cost while staying infinitely
+// zoomable and memory-cheap. Rasters/images/text/shapes are ignored. Undoable
+// via the same place-before-erase machinery flatten uses; no-op with a notice
+// if fewer than two eligible strokes exist.
+void consolidate_vectors(DrawingProgram& drawP) {
+    auto& world = drawP.world;
+
+    auto editLayer = drawP.layerMan.get_editing_layer().lock();
+    if (!editLayer || editLayer->is_folder()) {
+        Logger::get().log("USERINFO", "Consolidate Vectors: no active layer.");
+        return;
+    }
+    if (drawP.layerMan.editing_layer_is_parallaxed()) {
+        Logger::get().log("USERINFO",
+            "This layer has parallax depth — set its depth to 0 to consolidate it.");
+        return;
+    }
+    auto& components = editLayer->get_layer().components;
+    if (!components) return;
+
+    // Collect vector brush strokes only (ignore rasters, images, text, shapes,
+    // waypoints, particles, armatures), preserving z-ascending order, and skip
+    // any stroke that's currently selected (mid-manipulation).
+    std::vector<CanvasComponentContainer::ObjInfoIterator> sources;
+    std::optional<SCollision::AABB<WorldScalar>> mergedAABB;
+    std::optional<WorldScalar> finestInverseScale;
+    for (auto it = components->begin(); it != components->end(); ++it) {
+        auto& container = *it->obj;
+        if (container.get_comp().get_type() != CanvasComponentType::BRUSHSTROKE) continue;
+        if (drawP.selection.is_selected(&(*it))) continue;
+        const auto wb = container.get_world_bounds();
+        if (!wb.has_value()) continue;
+        sources.push_back(it);
+        if (!mergedAABB) mergedAABB = wb.value();
+        else mergedAABB->include_aabb_in_bounds(wb.value());
+        const WorldScalar inv = container.coords.inverseScale;
+        if (!finestInverseScale || inv < finestInverseScale.value())
+            finestInverseScale = inv;
+    }
+
+    if (sources.size() < 2) {
+        Logger::get().log("USERINFO",
+            "Consolidate Vectors: need at least 2 vector strokes on the layer (found " +
+            std::to_string(sources.size()) + ").");
+        return;
+    }
+
+    // Group coord space: anchored at the merged bounds' min, at the sharpest
+    // source's scale, unrotated. Each stroke is stored RELATIVE to this so its
+    // native tessellation stays exact and the whole group transform-follows when
+    // the container is later moved/scaled.
+    const CoordSpaceHelper groupCoords(mergedAABB->min, finestInverseScale.value(), 0.0);
+
+    auto* merged = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::VECTORGROUP);
+    merged->coords = groupCoords;
+    auto& group = static_cast<VectorGroupCanvasComponent&>(merged->get_comp());
+    group.d.subStrokes.reserve(sources.size());
+    for (auto& it : sources) {
+        auto& container = *it->obj;
+        auto& stroke = static_cast<BrushStrokeCanvasComponent&>(container.get_comp());
+        VectorGroupCanvasComponent::SubStroke sub;
+        sub.coords = groupCoords.other_coord_space_to_this_space(container.coords);
+        sub.points = stroke.d.points;   // lossless — share the immutable stroke data; Optimize reduces later
+        sub.color = stroke.d.color;
+        sub.hasRoundCaps = stroke.d.hasRoundCaps;
+        group.d.subStrokes.push_back(std::move(sub));
+    }
+
+    // Anchor the group at the top of the consolidated block (highest z among the
+    // sources), so it lands where the most-recent stroke was.
+    CanvasComponentContainer::ObjInfoIterator anchor = sources.front();
+    for (auto& it : sources)
+        if (it->pos > anchor->pos) anchor = it;
+
+    std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
+    toPlace.emplace_back(anchor, merged);
+    const auto placed = drawP.layerMan.add_many_components_to_specific_layer(*editLayer, toPlace);
+    for (auto& pit : placed)
+        pit->obj->commit_update(drawP);
+
+    std::vector<CanvasComponentContainer::ObjInfo*> toErase;
+    toErase.reserve(sources.size());
+    for (auto& it : sources) toErase.push_back(&(*it));
+    drawP.layerMan.erase_component_container(toErase);
+
+    Logger::get().log("USERINFO",
+        "Consolidated " + std::to_string(sources.size()) + " vector strokes into one component.");
+}
+
+// Optimize Vectors — the separate, tunable pass. Point-reduces (RDP) every
+// consolidated vector object on the editing layer using CONSOLIDATE_SIMPLIFY_STRENGTH
+// (Settings → "Vector optimize strength"), cutting triangle count/memory for
+// production. Undoable and re-runnable (undo, change the strength, run again to
+// re-tune). No-op with a notice if the strength is 0 or there's nothing to
+// optimize. Kept separate from Consolidate so merging stays lossless.
+void optimize_vectors(DrawingProgram& drawP) {
+    auto& world = drawP.world;
+
+    auto editLayer = drawP.layerMan.get_editing_layer().lock();
+    if (!editLayer || editLayer->is_folder()) {
+        Logger::get().log("USERINFO", "Optimize Vectors: no active layer.");
+        return;
+    }
+    auto& components = editLayer->get_layer().components;
+    if (!components) return;
+
+    if (CONSOLIDATE_SIMPLIFY_STRENGTH <= 0.0f) {
+        Logger::get().log("USERINFO",
+            "Optimize Vectors: strength is 0 (lossless). Raise 'Vector optimize strength' in Settings first.");
+        return;
+    }
+
+    // Collect the consolidated vector objects (skip any mid-manipulation).
+    std::vector<CanvasComponentContainer::ObjInfoIterator> groups;
+    for (auto it = components->begin(); it != components->end(); ++it) {
+        if (it->obj->get_comp().get_type() != CanvasComponentType::VECTORGROUP) continue;
+        if (drawP.selection.is_selected(&(*it))) continue;
+        groups.push_back(it);
+    }
+    if (groups.empty()) {
+        Logger::get().log("USERINFO",
+            "Optimize Vectors: no consolidated vector object on this layer — run Consolidate Vectors first.");
+        return;
+    }
+
+    // Build a reduced copy of each group and swap it in via the same
+    // place-before-erase undo machinery Consolidate/Flatten use.
+    std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
+    std::vector<CanvasComponentContainer::ObjInfo*> toErase;
+    size_t pointsBefore = 0, pointsAfter = 0;
+
+    for (auto& it : groups) {
+        auto& container = *it->obj;
+        auto& oldGroup = static_cast<VectorGroupCanvasComponent&>(container.get_comp());
+
+        auto* optimized = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::VECTORGROUP);
+        optimized->coords = container.coords;
+        auto& newGroup = static_cast<VectorGroupCanvasComponent&>(optimized->get_comp());
+        newGroup.d.subStrokes.reserve(oldGroup.d.subStrokes.size());
+
+        for (auto& sub : oldGroup.d.subStrokes) {
+            VectorGroupCanvasComponent::SubStroke ns;
+            ns.coords = sub.coords;
+            ns.color = sub.color;
+            ns.hasRoundCaps = sub.hasRoundCaps;
+            // Epsilon scaled to this stroke's own brush width (zoom-consistent).
+            float avgW = 0.0f;
+            if (!sub.points->empty()) {
+                for (const auto& p : *sub.points) avgW += p.width;
+                avgW /= static_cast<float>(sub.points->size());
+            }
+            pointsBefore += sub.points->size();
+            auto reduced = BrushTess::simplify_points(*sub.points, CONSOLIDATE_SIMPLIFY_STRENGTH * avgW);
+            pointsAfter += reduced.size();
+            ns.points = std::make_shared<std::vector<BrushStrokeCanvasComponentPoint>>(std::move(reduced));
+            newGroup.d.subStrokes.push_back(std::move(ns));
+        }
+
+        toPlace.emplace_back(it, optimized);
+        toErase.push_back(&(*it));
+    }
+
+    const auto placed = drawP.layerMan.add_many_components_to_specific_layer(*editLayer, toPlace);
+    for (auto& pit : placed)
+        pit->obj->commit_update(drawP);
+    drawP.layerMan.erase_component_container(toErase);
+
+    Logger::get().log("USERINFO",
+        "Optimized " + std::to_string(groups.size()) + " vector object(s): " +
+        std::to_string(pointsBefore) + " -> " + std::to_string(pointsAfter) + " points.");
+}
 
 #ifdef HVYM_HAS_LIBMYPAINT
 

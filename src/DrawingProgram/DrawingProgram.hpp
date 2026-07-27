@@ -29,6 +29,8 @@ class DrawingProgramLayerListItem;
 namespace RasterFlatten {
     void flatten_layer(DrawingProgram& drawP);
     bool merge_down_baked(DrawingProgram& drawP, DrawingProgramLayerListItem& upper, DrawingProgramLayerListItem& lower);
+    void consolidate_vectors(DrawingProgram& drawP);
+    void optimize_vectors(DrawingProgram& drawP);
 }
 namespace RasterResolution { void halve_layer(DrawingProgram& drawP); }
 
@@ -222,6 +224,11 @@ class DrawingProgram {
         // Blend-aware Merge Down: same access needs as flatten (bakes both
         // layers, checks droppedDownloadingFiles for still-loading images).
         friend bool RasterFlatten::merge_down_baked(DrawingProgram& drawP, DrawingProgramLayerListItem& upper, DrawingProgramLayerListItem& lower);
+        // Consolidate Vectors: needs selection (skip mid-manipulation strokes) —
+        // same access as flatten.
+        friend void RasterFlatten::consolidate_vectors(DrawingProgram& drawP);
+        // Optimize Vectors: skips selected (mid-manipulation) vector objects.
+        friend void RasterFlatten::optimize_vectors(DrawingProgram& drawP);
         // LAYER-RESOLUTION.md: reduce needs selection (skip mid-manipulation
         // comps) — same as flatten.
         friend void RasterResolution::halve_layer(DrawingProgram& drawP);
