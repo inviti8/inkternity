@@ -88,7 +88,7 @@ class Waypoint {
         void clear_skin()                 { skin.reset(); }
 
         // PHASE2 M4: per-waypoint speed multiplier for the reader-mode
-        // camera transition INTO this waypoint. Range 0.1 .. 100.0. The
+        // camera transition INTO this waypoint. Range 0.01 .. 100.0. The
         // applied transition duration is globalDuration / multiplier,
         // so 100.0 plays the transition a hundred times as fast and
         // 0.5 plays it half-speed. Default 1.0 leaves the global
@@ -98,7 +98,7 @@ class Waypoint {
         // jumpTransitionTime defaults (at 0.5s default + multiplier
         // 100, the smooth-pan compresses to ~5ms — well under one
         // displayed frame at 60Hz, indistinguishable from a cut).
-        static constexpr float TRANSITION_SPEED_MIN = 0.1f;
+        static constexpr float TRANSITION_SPEED_MIN = 0.01f;
         static constexpr float TRANSITION_SPEED_MAX = 100.0f;
         static constexpr float TRANSITION_SPEED_DEFAULT = 1.0f;
         float get_transition_speed_multiplier() const { return transitionSpeedMultiplier; }
