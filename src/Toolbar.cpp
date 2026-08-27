@@ -10,6 +10,7 @@
 #include "DrawingProgram/RasterFlatten.hpp"
 #include "DrawingProgram/RasterResolution.hpp"
 #include "Armature/ArmatureModalScreen.hpp"  // PHASE9: armature editor + add/load actions
+#include "AI/ReangleFlow.hpp"                 // AI reangle: capture selection → 3D proxy
 #include "Diagnostics/RenderStats.hpp"
 #include "FileHelpers.hpp"
 #include "GUIStuff/Elements/MemoryImageDisplay.hpp"
@@ -835,6 +836,9 @@ void Toolbar::top_toolbar() {
                                 });
                                 menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
                                     RasterResolution::halve_layer(main.world->drawProg);
+                                });
+                                menu_popup_text_button("ai reangle", "AI Reangle (3D)", [&] {
+                                    AI::ReangleFlow::begin_capture(main.world->drawProg);
                                 });
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {

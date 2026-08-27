@@ -1155,3 +1155,33 @@ void ArmatureModalScreen::load_model_into_canvas(DrawingProgram& drawP,
         ? "Loaded a static reference model — double-click to adjust the view."
         : "Loaded a posable model — double-click to pose.");
 }
+
+bool ArmatureModalScreen::load_reangle_mesh_into_canvas(DrawingProgram& drawP,
+                                                        std::string_view glb) {
+    // Guard the loader against a non-model body (the client already validates,
+    // but this is the last line before cgltf).
+    if (glb.size() < 12 || std::memcmp(glb.data(), "glTF", 4) != 0) {
+        Logger::get().log("USERINFO", "Reangle: the service did not return a valid model.");
+        return false;
+    }
+    auto& world = drawP.world;
+    // Embed the received bytes in the shared ResourceManager (like Load Model,
+    // but from memory) so the on-canvas component persists and re-edits reload it.
+    ResourceData resource;
+    resource.name = "reangle.glb";
+    resource.data = std::make_shared<std::string>(glb);
+    const auto& res = world.rMan.add_resource(resource);
+
+    Armature::ArmatureModel model;
+    std::string err;
+    if (!model.load_from_memory(glb.data(), glb.size(), err)) {
+        Logger::get().log("USERINFO", "Reangle load: " + err);
+        return false;
+    }
+    if (!model.upload_gl(err)) {
+        Logger::get().log("USERINFO", "Reangle load (GL): " + err);
+        return false;
+    }
+    place_model_component(drawP, model, res.get_net_id());
+    return true;
+}

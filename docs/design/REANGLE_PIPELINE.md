@@ -190,6 +190,12 @@ not vendored here.
 
 ## 7. Inkternity integration — reuse the armature 3D viewer (next build)
 
+> **The network half is now live and documented separately.** The service that
+> produces the mesh runs at `https://img.hvym.link`; its client contract —
+> request shape, status codes, the ≥300 s timeout a cold start needs, threading,
+> and libcurl specifics — is in **[REANGLE_API.md](REANGLE_API.md)**. This
+> section covers everything *after* the `.glb` arrives.
+
 **Design decision:** don't ship a server-side reangle *slider* that round-trips an image
 per angle. Instead **deliver the mesh once** and let the artist **manipulate it in
 Inkternity's existing armature 3D viewer**, then **bake the chosen camera view to the
@@ -312,17 +318,30 @@ A stateless GPU service, one call per drawing:
 
 ## 10. Immediate next steps
 
-1. **Validate the MIT light path:** run **TripoSR** on char2 — it outputs a **mesh
-   directly** (MIT, ~seconds), which is exactly what the §7.5 glb server needs (not just
-   depth). If quality holds, it replaces the Wonder3D+NeuS stack as the shippable,
-   license-clean backbone. (~20 min on a GPU box.)
-2. **Add the textured render path** to `ArmatureModel` / `ArmatureBake` (§7.3) — UV(2) in
-   the static vertex layout + a texture-sampling program (unlit option). The one
-   substantial in-app change.
-3. **Build the `/reangle-mesh` server** (§7.5) — Stage 0→1 + **front-projected original-art
-   UV bake** → embedded-texture `.glb`, cached by input hash, warm models.
-4. **Wire the Inkternity client** (§7.6) — rasterize selection → POST → `load_from_memory`
-   as a static model → interactive camera → bake to a reference layer. (Minimal outbound
-   HTTP client is net-new.)
-5. **Add disocclusion inpainting** (server-side, into the UV atlas) to push the angle
-   window wider; **higher-res** original in the atlas for crisper bakes.
+1. ✅ **Validate the MIT light path (DONE).** **TripoSR** benchmarked GREEN — mesh
+   directly, MIT, ~2 s warm, ~340× faster than Wonder3D+NeuS, proper object relief. It is
+   the shipped backbone (hvym-img-tools `docs/BENCHMARK.md`); Wonder3D/NeuS is demo-only.
+2. ✅ **Textured render path (DONE).** `ArmatureModel` static meshes now carry a UV VBO
+   (attrib loc 4; the skinned rig's 14-float layout is untouched) + decode the glb's
+   embedded texture (Skia, in `upload_gl`) + render through a separate **unlit** sampling
+   program in `draw()` — positions are world-baked so no skinning. `ArmatureBake` unchanged.
+3. ✅ **`/reangle-mesh` server (DONE).** Live at `https://img.hvym.link/tools/reangle`
+   (`POST` a drawing → textured `.glb`, cached by input hash). Contract in
+   [REANGLE_API.md](REANGLE_API.md).
+4. ✅ **Inkternity client (DONE).** `src/AI/ReangleClient.{hpp,cpp}` (async curl) +
+   `src/AI/ReangleFlow.{hpp,cpp}` — "AI Reangle (3D)" menu → `SquareCanvasCaptureTool`
+   frames the character → POST → `load_reangle_mesh_into_canvas` places the textured `.glb`
+   as a static model → double-click to orbit + bake. Builds clean; **runtime test against
+   the live endpoint is the remaining validation** (set `HVYM_TOOLS_KEY`).
+5. ✅ **Warm-lease endpoints (DONE, service side).** The proxy now exposes
+   `POST`/`GET`/`DELETE /warm` — a client-held **lease** (20 s renew, 60 s TTL, refcounted,
+   auto-release) that keeps a GPU worker awake so the artist pays the cold start once per
+   session instead of on every idle gap. Contract in [REANGLE_API.md](REANGLE_API.md) §11.
+   **Remaining CLIENT work** (see [REANGLE_CLIENT_HANDOFF.md](REANGLE_CLIENT_HANDOFF.md)):
+   a `WarmLease` (mirroring `ReangleClient`'s worker-thread pattern) + a header-bar
+   "enable inference" toggle, plus optional auto-warm when the reangle panel opens.
+6. **Runtime-verify the client** against the live endpoint (one drawing end-to-end: `.glb`
+   loads, linework is on the mesh not a gray mannequin, second request is `X-Cache: HIT`).
+7. **Add disocclusion inpainting** (server-side, into the UV atlas) to push the angle
+   window wider; **higher-res** original in the atlas for crisper bakes. Client-side: a
+   proper in-flight spinner (MVP uses `USERINFO` toasts) and optional angle-window UX.

@@ -2,6 +2,7 @@
 #include "Helpers/SCollision.hpp"
 #include "Helpers/StringHelpers.hpp"
 #include "Helpers/FileDownloader.hpp"
+#include "AI/ReangleClient.hpp"
 #include "Screens/FileSelectScreen.hpp"
 #include "Screens/DesktopDrawingProgramScreen.hpp"
 #include "Screens/PhoneDrawingProgramScreen.hpp"
@@ -698,6 +699,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     init_logs(mS);
 
     FileDownloader::init();
+    AI::ReangleClient::init();
 
 #ifdef NDEBUG
     try {
@@ -1206,7 +1208,8 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result) {
     delete (&mS);
 
     SDL_Quit();
-    
+
+    AI::ReangleClient::cleanup();
     FileDownloader::cleanup();
 #endif
 }

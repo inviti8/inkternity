@@ -19,6 +19,7 @@
 #include "../World.hpp"
 #include "../MainProgram.hpp"
 #include "../Armature/ArmatureModalScreen.hpp"  // PHASE9 M7: load 3D model onto canvas
+#include "../AI/ReangleFlow.hpp"                 // AI reangle: poll in-flight request each frame
 #include "../Diagnostics/RenderStats.hpp"
 #include <chrono>
 #include <algorithm>
@@ -656,6 +657,7 @@ void DrawingProgram::update() {
     drawTool->tool_update();
 
     update_downloading_dropped_files();
+    AI::ReangleFlow::tick(*this);   // poll any in-flight AI reangle → place on success
     check_updateable_components();
 
     if(drawCache.check_rebuild_needed_from_framerate()) {

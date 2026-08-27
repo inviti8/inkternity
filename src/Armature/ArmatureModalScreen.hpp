@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 namespace Armature { class ArmatureModel; }
@@ -43,6 +44,12 @@ public:
     // and drop it on the canvas (poseable if it matches our rig, else a flattened
     // static reference mesh). The "Load Model" action.
     static void load_model_into_canvas(DrawingProgram& drawP, const std::filesystem::path& path);
+    // Reangle (REANGLE_PIPELINE.md §7.6): place a service-produced textured .glb
+    // (the artist's original art front-projected) from memory as a static model
+    // on the canvas — double-click to orbit the camera and bake the chosen view.
+    // Mirrors load_model_into_canvas but takes bytes, not a file. Returns false
+    // (having logged the specific reason) if the bytes aren't a loadable model.
+    static bool load_reangle_mesh_into_canvas(DrawingProgram& drawP, std::string_view glb);
 
     void update() override;
     void draw(SkCanvas* canvas) override;

@@ -21,6 +21,14 @@
     !defined(USE_BACKEND_OPENGLES_3_0) && !defined(USE_BACKEND_OPENGL_2_1)
 #define ARMATURE_MODEL_GL 1
 #include <glad/gl3_3.h>
+// Decoding the reangle glb's embedded base-color texture (PNG, occasionally
+// JPEG) — only needed on GL builds, at upload_gl time.
+#include <include/codec/SkCodec.h>
+#include <include/codec/SkPngDecoder.h>
+#include <include/codec/SkJpegDecoder.h>
+#include <include/core/SkData.h>
+#include <include/core/SkImageInfo.h>
+#include <array>
 #endif
 
 namespace Armature {
@@ -108,8 +116,11 @@ ArmatureModel::~ArmatureModel() {
     for (auto& p : mPrimitives) {
         if (p.ebo) glDeleteBuffers(1, &p.ebo);
         if (p.vbo) glDeleteBuffers(1, &p.vbo);
+        if (p.uvVbo) glDeleteBuffers(1, &p.uvVbo);
         if (p.vao) glDeleteVertexArrays(1, &p.vao);
     }
+    if (mTexture) glDeleteTextures(1, &mTexture);
+    if (mTexProgram) glDeleteProgram(mTexProgram);
     if (mProgram) glDeleteProgram(mProgram);
 #endif
 }
@@ -420,15 +431,18 @@ bool ArmatureModel::load_static(cgltf_data* gltf, std::string& err) {
         for (size_t pi = 0; pi < mesh->primitives_count; ++pi) {
             cgltf_primitive& prim = mesh->primitives[pi];
             if (prim.type != cgltf_primitive_type_triangles) continue;
-            cgltf_accessor *pos = nullptr, *nrm = nullptr;
+            cgltf_accessor *pos = nullptr, *nrm = nullptr, *uv = nullptr;
             for (size_t a = 0; a < prim.attributes_count; ++a) {
                 if (prim.attributes[a].type == cgltf_attribute_type_position) pos = prim.attributes[a].data;
                 else if (prim.attributes[a].type == cgltf_attribute_type_normal) nrm = prim.attributes[a].data;
+                else if (prim.attributes[a].type == cgltf_attribute_type_texcoord &&
+                         prim.attributes[a].index == 0) uv = prim.attributes[a].data;
             }
             if (!pos) continue;
             const size_t vcount = pos->count;
             Primitive out;
             out.verts.resize(vcount * FLOATS_PER_VERT);
+            if (uv) out.uv.resize(vcount * 2, 0.0f);
             for (size_t v = 0; v < vcount; ++v) {
                 float* d = &out.verts[v * FLOATS_PER_VERT];
                 cgltf_float p3[3] = {0, 0, 0};
@@ -442,6 +456,27 @@ bool ArmatureModel::load_static(cgltf_data* gltf, std::string& err) {
                 d[3] = wn.x(); d[4] = wn.y(); d[5] = wn.z();
                 d[6] = d[7] = d[8] = d[9] = 0.0f;                       // joint 0
                 d[10] = 1.0f; d[11] = d[12] = d[13] = 0.0f;            // weight 1 on joint 0
+                if (uv) {
+                    cgltf_float t2[2] = {0, 0};
+                    cgltf_accessor_read_float(uv, v, t2, 2);
+                    out.uv[v * 2 + 0] = t2[0];
+                    out.uv[v * 2 + 1] = t2[1];
+                }
+            }
+            // Capture the base-color texture's ENCODED bytes (PNG/JPEG embedded in
+            // the glb) the first time we see one — decoded + uploaded in upload_gl.
+            // A reangle mesh has exactly one atlas texture (the front-projected art).
+            if (mTextureEncoded.empty() && prim.material &&
+                prim.material->has_pbr_metallic_roughness) {
+                const cgltf_image* img =
+                    prim.material->pbr_metallic_roughness.base_color_texture.texture
+                        ? prim.material->pbr_metallic_roughness.base_color_texture.texture->image
+                        : nullptr;
+                if (img && img->buffer_view && img->buffer_view->size > 0) {
+                    const uint8_t* bytes = cgltf_buffer_view_data(img->buffer_view);
+                    if (bytes)
+                        mTextureEncoded.assign(bytes, bytes + img->buffer_view->size);
+                }
             }
             if (prim.indices) {
                 out.indices.resize(prim.indices->count);
@@ -770,16 +805,138 @@ bool ArmatureModel::upload_gl(std::string& err) {
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, (void*)(10 * sizeof(float)));
         glEnableVertexAttribArray(3);
+        // TEXCOORD_0 for textured static meshes → its own VBO at location 4, in
+        // this same VAO. The skinned program ignores location 4; the textured
+        // program reads only locations 0 and 4.
+        if (!p.uv.empty()) {
+            glGenBuffers(1, &p.uvVbo);
+            glBindBuffer(GL_ARRAY_BUFFER, p.uvVbo);
+            glBufferData(GL_ARRAY_BUFFER, p.uv.size() * sizeof(float), p.uv.data(), GL_STATIC_DRAW);
+            glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(4);
+        }
     }
     glBindVertexArray(0);
+
+    // Textured static-mesh path (reangle): decode + upload the embedded atlas and
+    // build the unlit sampling program. Best-effort — on any failure we leave
+    // mHasTexture false and fall back to the flat/lit path (a gray blob is a
+    // clearer failure than a crash, and load still succeeds).
+    if (mIsStatic && !mTextureEncoded.empty())
+        upload_texture();
 
     mUploaded = true;
     return true;
 }
 
+// Decode the captured base-color image and upload it as an RGBA8 GL texture, then
+// compile the unlit texture-sampling program. Leaves mHasTexture false on failure.
+void ArmatureModel::upload_texture() {
+    bool anyUV = false;
+    for (const auto& p : mPrimitives) if (p.uvVbo) { anyUV = true; break; }
+    if (!anyUV) return;   // no UVs → nothing to sample with
+
+    // --- decode (Skia, CPU) → tightly-packed unpremultiplied RGBA8 ----------
+    static const std::array<const SkCodecs::Decoder, 2> kDecoders = {
+        SkPngDecoder::Decoder(), SkJpegDecoder::Decoder(),
+    };
+    auto data = SkData::MakeWithoutCopy(mTextureEncoded.data(), mTextureEncoded.size());
+    auto codec = SkCodec::MakeFromData(data, kDecoders);
+    if (!codec) {
+        Logger::get().log("INFO", "ArmatureModel: could not decode embedded texture.");
+        return;
+    }
+    const int tw = codec->dimensions().width();
+    const int th = codec->dimensions().height();
+    if (tw <= 0 || th <= 0) return;
+    const SkImageInfo info = SkImageInfo::Make(tw, th, kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
+    std::vector<uint8_t> pixels(static_cast<size_t>(tw) * th * 4, 0);
+    if (codec->getPixels(info, pixels.data(), static_cast<size_t>(tw) * 4) != SkCodec::kSuccess) {
+        Logger::get().log("INFO", "ArmatureModel: texture getPixels failed.");
+        return;
+    }
+
+    // --- upload -------------------------------------------------------------
+    glGenTextures(1, &mTexture);
+    glBindTexture(GL_TEXTURE_2D, mTexture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // --- unlit sampling program (pos already world-baked → no skinning) ------
+    const char* vsSrc =
+        "#version 330 core\n"
+        "layout(location=0) in vec3 aPos;\n"
+        "layout(location=4) in vec2 aUV;\n"
+        "uniform mat4 uViewProj;\n"
+        "out vec2 vUV;\n"
+        "void main() {\n"
+        "    vUV = aUV;\n"
+        "    gl_Position = uViewProj * vec4(aPos, 1.0);\n"
+        "}\n";
+    const char* fsSrc =
+        "#version 330 core\n"
+        "in vec2 vUV;\n"
+        "out vec4 FragColor;\n"
+        "uniform sampler2D uTex;\n"
+        "void main() {\n"
+        "    vec4 c = texture(uTex, vUV);\n"
+        "    if (c.a < 0.01) discard;          // keep the matte's transparency\n"
+        "    FragColor = c;\n"
+        "}\n";
+    std::string serr;
+    GLuint vs = compile_shader(GL_VERTEX_SHADER, vsSrc, serr);
+    if (!vs) { Logger::get().log("INFO", "ArmatureModel: tex VS: " + serr); return; }
+    GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fsSrc, serr);
+    if (!fs) { glDeleteShader(vs); Logger::get().log("INFO", "ArmatureModel: tex FS: " + serr); return; }
+    mTexProgram = glCreateProgram();
+    glAttachShader(mTexProgram, vs);
+    glAttachShader(mTexProgram, fs);
+    glLinkProgram(mTexProgram);
+    GLint linked = GL_FALSE;
+    glGetProgramiv(mTexProgram, GL_LINK_STATUS, &linked);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    if (!linked) {
+        glDeleteProgram(mTexProgram);
+        mTexProgram = 0;
+        Logger::get().log("INFO", "ArmatureModel: textured program link failed.");
+        return;
+    }
+    mTexLocViewProj = glGetUniformLocation(mTexProgram, "uViewProj");
+    mTexLocSampler  = glGetUniformLocation(mTexProgram, "uTex");
+    mHasTexture = true;
+    Logger::get().log("INFO", "ArmatureModel: textured (" + std::to_string(tw) + "x" +
+                      std::to_string(th) + ") style-preserving render enabled.");
+}
+
 void ArmatureModel::draw(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& lightDir,
                          float ambient, float diffuse, float sky) const {
     if (!mUploaded) return;
+
+    // Textured (reangle) path: unlit sampling of the artist's front-projected art.
+    // Positions were baked to world space in load_static, so no skinning here.
+    if (mHasTexture && mTexProgram) {
+        glUseProgram(mTexProgram);
+        glUniformMatrix4fv(mTexLocViewProj, 1, GL_FALSE, viewProj.data());
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mTexture);
+        glUniform1i(mTexLocSampler, 0);
+        for (const auto& p : mPrimitives) {
+            if (!p.uvVbo) continue;   // skip any primitive without UVs
+            glBindVertexArray(p.vao);
+            glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
+        }
+        glBindVertexArray(0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return;
+    }
+
     glUseProgram(mProgram);
     glUniformMatrix4fv(mLocViewProj, 1, GL_FALSE, viewProj.data());
     glUniform3fv(mLocLightDir, 1, lightDir.data());

@@ -48,8 +48,17 @@ public:
     // render state (FBO bound, depth test on, cull off, viewport set).
     // `viewProj` is column-major; `lightDir` is the world-space direction the
     // light travels; ambient/diffuse/sky are the lighting gains.
+    //
+    // If this is a TEXTURED static model (a reangle mesh — has UVs + an embedded
+    // base-color texture, REANGLE_PIPELINE.md §7.3), it renders through a separate
+    // unlit texture-sampling program instead (the lighting args are ignored), so
+    // the bake shows the artist's own front-projected pixels, not a shaded blob.
     void draw(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& lightDir,
               float ambient, float diffuse, float sky) const;
+
+    // True once a static model carrying UVs + an embedded texture has GL-uploaded
+    // — i.e. draw() will use the textured (style-preserving) path.
+    bool is_textured() const { return mHasTexture; }
 
     // AABB of the figure as rendered (rest pose, CPU-skinned). Valid after load.
     const Eigen::Vector3f& bounds_min() const { return mBoundsMin; }
@@ -105,12 +114,16 @@ private:
     struct Primitive {
         std::vector<float> verts;
         std::vector<uint32_t> indices;
+        // TEXCOORD_0 (2/vertex), only populated for textured static meshes
+        // (reangle). Kept in its own buffer so the skinned rig's 14-float
+        // interleaved layout is untouched.
+        std::vector<float> uv;
         Eigen::Vector4f baseColor{0.8f, 0.8f, 0.8f, 1.0f};
         int materialIndex = 0;        // into mMaterialNames / mMatColor
         // Morph target deltas (M5.1c): per target, 3 floats/vertex (pos + normal).
         std::vector<std::vector<float>> posDelta;
         std::vector<std::vector<float>> nrmDelta;
-        unsigned vao = 0, vbo = 0, ebo = 0;
+        unsigned vao = 0, vbo = 0, ebo = 0, uvVbo = 0;
         int indexCount = 0;
     };
 
@@ -153,6 +166,10 @@ private:
     std::vector<std::string> mTargetNames;
     std::vector<float> mTargetWeights;
     void apply_morphs();   // rebuild VBOs from base + weighted deltas (GL)
+    // Decode + upload the embedded base-color texture and build the unlit
+    // sampling program (GL builds only; best-effort — see .cpp). Called from
+    // upload_gl for textured static (reangle) meshes.
+    void upload_texture();
 
     // Flatten a non-armature glTF into one static reference mesh (M7).
     bool load_static(cgltf_data* gltf, std::string& err);
@@ -165,6 +182,15 @@ private:
     unsigned mProgram = 0;
     int mLocViewProj = -1, mLocLightDir = -1, mLocColor = -1, mLocSkin = -1;
     int mLocAmbient = -1, mLocDiffuse = -1, mLocSky = -1;
+
+    // Textured static-mesh path (reangle, §7.3): the base-color image bytes as
+    // embedded in the glb (raw PNG/JPEG — decoded at upload_gl time, kept out of
+    // the CPU loader), the uploaded GL texture, and the unlit sampling program.
+    std::vector<uint8_t> mTextureEncoded;
+    unsigned mTexture = 0;
+    unsigned mTexProgram = 0;
+    int mTexLocViewProj = -1, mTexLocSampler = -1;
+    bool mHasTexture = false;   // true once a texture + UVs uploaded successfully
 
     bool mLoaded = false;
     bool mUploaded = false;
