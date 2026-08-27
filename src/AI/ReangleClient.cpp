@@ -292,6 +292,12 @@ std::shared_ptr<ReangleClient::Request> ReangleClient::request(
     // NOT copy that here.)
     curl_easy_setopt(h->easy, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(h->easy, CURLOPT_SSL_VERIFYHOST, 2L);
+    // This build's libcurl uses the OpenSSL backend, which on Windows ships with
+    // NO default CA store — so verifying a perfectly valid cert fails with
+    // CURLE_PEER_FAILED_VERIFICATION ("SSL peer certificate ... was not OK").
+    // NATIVE_CA makes it read the OS trust store (Windows cert store), keeping
+    // verification ON. No-op where the backend already uses the system store.
+    curl_easy_setopt(h->easy, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
 
     // --- binary-safe collection + header capture ---------------------------
     curl_easy_setopt(h->easy, CURLOPT_WRITEFUNCTION, write_to_vector);

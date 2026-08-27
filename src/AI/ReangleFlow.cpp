@@ -11,6 +11,7 @@
 #include <Helpers/Logger.hpp>
 
 #include <include/core/SkImage.h>
+#include <include/core/SkImageInfo.h>
 #include <include/core/SkPixmap.h>
 #include <include/core/SkStream.h>
 #include <include/encode/SkPngEncoder.h>
@@ -34,6 +35,26 @@ std::shared_ptr<ReangleClient::Request> gPending;
 std::string env_or(const char* name, const std::string& fallback) {
     const char* v = std::getenv(name);
     return (v && *v) ? std::string(v) : fallback;
+}
+
+// Does the capture contain any drawn pixels? The capture surface is cleared to
+// transparent, so a drag over empty canvas comes back fully transparent — no point
+// sending that to the service (and paying a cold start) for a degenerate result.
+// Fail-open: if we can't read the pixels or the layout is unexpected, allow the send.
+bool image_has_content(const sk_sp<SkImage>& image) {
+    if (!image) return false;
+    sk_sp<SkImage> raster = image->makeRasterImage(nullptr);
+    SkPixmap pix;
+    if (!raster || !raster->peekPixels(&pix)) return true;
+    if (pix.info().bytesPerPixel() != 4) return true;   // unknown layout → don't block
+    const int w = pix.width(), h = pix.height();
+    for (int y = 0; y < h; ++y) {
+        const auto* row = static_cast<const uint8_t*>(pix.addr(0, y));
+        if (!row) continue;
+        for (int x = 0; x < w; ++x)
+            if (row[x * 4 + 3] > 8) return true;         // any ~non-transparent pixel (RGBA/BGRA: alpha @ byte 3)
+    }
+    return false;
 }
 
 // Encode a captured square (premultiplied RGBA, transparent background) to PNG —
@@ -66,6 +87,11 @@ void ReangleFlow::begin_capture(DrawingProgram& drawP) {
     // The DrawingProgram outlives the tool (owned by World), so capturing it by
     // reference for the capture callback is safe.
     auto onCapture = [&drawP](sk_sp<SkImage> image) {
+        if (!image_has_content(image)) {
+            Logger::get().log("USERINFO",
+                "Reangle: that area is empty — frame a drawn character and try again.");
+            return;
+        }
         auto png = encode_png(image);
         if (!png) {
             Logger::get().log("USERINFO", "Reangle: could not read the captured region.");
