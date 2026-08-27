@@ -1164,7 +1164,7 @@ CanvasComponentContainer::ObjInfo* place_model_component(
 bool place_service_mesh(DrawingProgram& drawP, std::string_view glb,
                         const WorldVec& regionTopLeft, const WorldScalar& regionSideWorld,
                         double regionRotation, bool ortho, float frameMargin,
-                        const char* resourceName, const char* what) {
+                        const char* resourceName, const char* what, bool ownLayer) {
     const std::string label = what;
     // Guard the loader against a non-model body (the client already validates,
     // but this is the last line before cgltf).
@@ -1173,6 +1173,12 @@ bool place_service_mesh(DrawingProgram& drawP, std::string_view glb,
         return false;
     }
     auto& world = drawP.world;
+    // A draw-over reference gets its OWN layer directly above the artist's drawing
+    // (MESH_REFERENCE.md §5): the artist draws the detailed version on top of it,
+    // then hides/removes the reference. Reangle instead registers onto the source
+    // pixels on the active layer, so it does not create a layer.
+    if (ownLayer)
+        drawP.layerMan.listGUI.create_layer_above_editing("3D Reference");
     // Embed the received bytes in the shared ResourceManager (like Load Model, but
     // from memory) so the on-canvas component persists and re-edits reload it.
     ResourceData resource;
@@ -1249,9 +1255,10 @@ bool ArmatureModalScreen::load_reangle_mesh_into_canvas(DrawingProgram& drawP,
                                                         const WorldScalar& regionSideWorld,
                                                         double regionRotation) {
     // Reangle overlays a textured proxy onto a flat drawing: orthographic + a tight
-    // frame so the baked figure registers onto the source pixels.
+    // frame so the baked figure registers onto the source pixels, on the active layer.
     return place_service_mesh(drawP, glb, regionTopLeft, regionSideWorld, regionRotation,
-                              /*ortho=*/true, /*frameMargin=*/1.05f, "reangle.glb", "Reangle");
+                              /*ortho=*/true, /*frameMargin=*/1.05f, "reangle.glb", "Reangle",
+                              /*ownLayer=*/false);
 }
 
 bool ArmatureModalScreen::load_reference_mesh_into_canvas(DrawingProgram& drawP,
@@ -1260,7 +1267,9 @@ bool ArmatureModalScreen::load_reference_mesh_into_canvas(DrawingProgram& drawP,
                                                           const WorldScalar& regionSideWorld,
                                                           double regionRotation) {
     // A draw-over reference is a real 3D object the artist orbits: default
-    // perspective + the looser framing margin, placed where the sketch was drawn.
+    // perspective + the looser framing margin, placed where the sketch was drawn,
+    // on its own new layer above the drawing.
     return place_service_mesh(drawP, glb, regionTopLeft, regionSideWorld, regionRotation,
-                              /*ortho=*/false, /*frameMargin=*/1.3f, "reference.glb", "3D reference");
+                              /*ortho=*/false, /*frameMargin=*/1.3f, "reference.glb", "3D reference",
+                              /*ownLayer=*/true);
 }

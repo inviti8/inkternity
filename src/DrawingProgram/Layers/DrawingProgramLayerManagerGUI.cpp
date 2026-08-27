@@ -997,6 +997,31 @@ NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem> Drawin
     return it;
 }
 
+NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> DrawingProgramLayerManagerGUI::create_layer_above_editing(const std::string& name) {
+    using namespace NetworkingObjects;
+    auto& world = layerMan.drawP.world;
+    auto* newItem = new DrawingProgramLayerListItem(world.netObjMan, name, false);
+
+    auto& rootList = layerMan.layerTreeRoot->get_folder().folderList;
+    const NetObjID parentNetId = layerMan.layerTreeRoot.get_net_id();
+    // Insert directly in front of (above) the current edit target when it sits at
+    // root; otherwise (nested target, or none) drop it at the top of the root stack
+    // (begin() == top). get() returns end() for an id not in this list.
+    NetObjOrderedListIterator<DrawingProgramLayerListItem> pos = rootList->begin();
+    if(auto e = rootList->get(layerMan.editingLayer.get_net_id()); e != rootList->end())
+        pos = e;
+
+    auto it = rootList->insert_and_send_create(rootList, pos, newItem);
+    world.undo.push(std::make_unique<AddLayerWorldUndoAction>(std::make_unique<DrawingProgramLayerListItemUndoData>(it->obj->get_undo_data(world.undo)), it->pos, world.undo.get_undoid_from_netid(parentNetId), world.undo.get_undoid_from_netid(it->obj.get_net_id())));
+    world.main.g.gui.set_to_layout();
+    // refresh_gui_data() clears the selection and editing_layer_check() then resets
+    // editingLayer — so set the draw target to the new reference layer AFTERWARD,
+    // exactly as the "+" new-layer button does.
+    refresh_gui_data();
+    layerMan.editingLayer = it->obj;
+    return layerMan.editingLayer;
+}
+
 void DrawingProgramLayerManagerGUI::duplicate_layer(const GUIStuff::TreeListingObjIndexList& objIndex) {
     using namespace NetworkingObjects;
     if(objIndex.empty()) return;

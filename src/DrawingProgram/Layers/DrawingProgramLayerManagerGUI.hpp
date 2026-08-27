@@ -23,6 +23,14 @@ class DrawingProgramLayerManagerGUI {
         // World::export_layer_group / read_layer_group_file.
         void export_selected_group(const std::filesystem::path& path);
         void import_group_from_file(const std::filesystem::path& path);
+        // Create a new (non-folder) layer directly above the current edit target —
+        // in front of it in its parent list, i.e. higher in the visual stack — with
+        // full undo + net-create, make it the new edit target, and return it. Used
+        // to drop an AI reference mesh on its own layer above the artist's drawing
+        // (MESH_REFERENCE.md §5). Handles a root-level edit target; if the target is
+        // nested in a folder (or there is none) the layer lands at the top of the
+        // root stack, which is still above the drawing.
+        NetworkingObjects::NetObjWeakPtr<DrawingProgramLayerListItem> create_layer_above_editing(const std::string& name);
     private:
         std::optional<std::pair<NetworkingObjects::NetObjID, NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem>>> try_to_create_in_proper_position(DrawingProgramLayerListItem* newItem);
         std::pair<NetworkingObjects::NetObjID, NetworkingObjects::NetObjOrderedListIterator<DrawingProgramLayerListItem>> create_in_proper_position(DrawingProgramLayerListItem* newItem);
