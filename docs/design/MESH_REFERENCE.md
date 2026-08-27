@@ -7,9 +7,12 @@ across frames and scenes. This is the companion to [REANGLE_PIPELINE.md](REANGLE
 where reangle *moves the artist's pixels* to a new angle, mesh returns *geometry only*
 and the artist supplies the linework.
 
-**Status (2026-08-27):** endpoint is **DESIGN, greenlit, not yet implemented**
-server-side (see hvym-img-tools `docs/tools/mesh.md`). This doc specifies the
-client so it can be scaffolded in parallel; runtime wiring waits on the endpoint.
+**Status (2026-08-27):** endpoint is **LIVE** (`km99b7mrj2f85r`, TRELLIS, all-MIT;
+verified end to end through the proxy — hvym-img-tools `docs/tools/mesh.md`). Client
+**Phase 1 (ToolClient refactor) and Phase 2 (MeshFlow MVP) are built and pushed**
+(branch `reangle-pipeline`, commits `f377287`, `6b2b418`); not yet runtime-tested
+against the live endpoint. Phases 3–5 (per-endpoint warming, library, multi-view)
+are still design.
 
 **Service spec (authoritative for the wire):** `../../../hvym-img-tools/docs/tools/mesh.md`
 and `docs/CLIENT.md`. The Inkternity-facing reangle contract
@@ -244,28 +247,41 @@ reangle. Consequences for our `WarmLease`:
 
 ## 8. Blockers / dependencies
 
-1. **Endpoint not implemented server-side** — design only. Client scaffolding can
-   proceed; no live test until it ships. `X-Tool-Version` tells which pipeline built
-   a given mesh once it does.
-2. **Proxy tool→endpoint routing** — needed before the client can reach `/tools/mesh`
-   at all (today the proxy has a single `RUNPOD_ENDPOINT_ID`). Server-side; flagged in
-   the service's own doc.
-3. **Per-endpoint warming** (§7) — the `/warm` contract may need a tool argument.
+1. ~~Endpoint not implemented server-side~~ — **DONE. LIVE** (`km99b7mrj2f85r`),
+   verified end to end through the proxy (mesh.md). `X-Tool-Version` identifies the
+   pipeline that built a given mesh.
+2. ~~Proxy tool→endpoint routing~~ — **DONE.** The proxy routes `/tools/mesh` to the
+   TRELLIS endpoint; the client reaches it with no code aware of RunPod ids.
+3. **Warm lease does not actually warm mesh** (mesh.md §6b) — a held lease reports
+   `warm`, but the keepalive short-circuits before any pipeline work, so CUDA/spconv
+   init is still paid on the first real request: **~57 s even when "warm"**, then 4 s
+   after. A server-side fix (run one tiny inference in `init()`) is pending an image
+   rebuild. Until then the client quotes ~a-minute for the first request after idle
+   (MeshFlow does). Ties into Phase 3 (§7): the `/warm` contract may still need a tool
+   argument once separate warming is wired.
 4. **No CORS** — WASM cannot call it, same as reangle; native only.
 5. **Bad-sketch failure mode** — unlike reangle there is no silhouette-IoU sanity
    check; a scribble may return a confident wrong mesh. The client should surface
-   `X-Tool-Version` + let the artist reroll (`seed`) or discard cheaply.
+   `X-Tool-Version` + let the artist reroll (`seed`) or discard cheaply. (`seed`/
+   `target_faces` are sent with defaults today; no reroll UI yet.)
 
 ---
 
 ## 9. Phased build plan
 
-1. **Refactor to `ToolClient`** (§3): extract the shared HTTP core from
-   `ReangleClient`; make reangle a thin wrapper; move `resolve_config`. No behaviour
-   change — reangle keeps working. *This is the enabling step and worth doing first.*
-2. **`MeshFlow` + menu + placement** (§4–§5): sketch → `/tools/mesh` → static model
-   in the orbit editor, on its own reference layer. MVP; gated on warm (§7).
-3. **Per-endpoint warming** (§7): teach `WarmLease` which tool/endpoint to warm.
+1. ✅ **Refactor to `ToolClient`** (§3) — DONE (`f377287`). Shared curl core in
+   `src/AI/ToolClient.{hpp,cpp}`; `ReangleClient` is a thin wrapper (its `Request` is
+   now an alias of `ToolClient::Request`); reangle behavior unchanged. `resolve_config`
+   was left on `ReangleFlow` (already the shared HVYM resolver used by the warm toggle)
+   rather than moved — a future cleanup, not a blocker.
+2. ✅ **`MeshFlow` + menu + placement** (§4–§5) — DONE (`6b2b418`). `src/AI/MeshFlow.*`,
+   the "AI 3D Reference (sketch)" menu item (warm-gated), and
+   `ArmatureModalScreen::load_reference_mesh_into_canvas` (untextured, perspective,
+   1.3× frame). Capture helpers extracted to `ServiceCapture.hpp`. **Placed on the
+   active layer** for now — the own-reference-layer question (§10) is still open, and is
+   the main follow-up for this phase. Not yet runtime-tested against the live endpoint.
+3. **Per-endpoint warming** (§7): teach `WarmLease` which tool/endpoint to warm — and
+   fix that a "warm" lease still costs ~57 s on the first mesh job (§8.3, server-side).
 4. **The library** (§6): persist by `X-Cache-Key`, thumbnails, asset browser, reuse
    across documents.
 5. **Multi-view** (future): TRELLIS `run_multi_image` — reangle → draw the next
@@ -274,15 +290,16 @@ reangle. Consequences for our `WarmLease`:
 
 ## 10. Open decisions
 
-- **Refactor scope:** `ToolClient` shared core with a thin `ReangleClient` wrapper
-  (recommended, smallest diff), or fold everything into `*Flow` classes and delete
-  `ReangleClient`?
-- **Library now or after MVP:** ship orbitable references first, or build the library
-  in the same pass (its persistence is the real value)?
+- ~~Refactor scope~~ — **DECIDED:** `ToolClient` shared core + thin `ReangleClient`
+  wrapper (the smallest-diff option). Done in `f377287`.
+- ~~Library now or after MVP~~ — **DECIDED:** MVP first (orbitable references), library
+  is the Phase-4 follow-on.
 - **Library storage:** re-fetch on demand by hash (cheap, needs network) vs store the
-  `.glb` locally (offline, larger canvases)?
-- **Warm scope:** one toggle warming the tool-in-use, or per-tool indicators?
+  `.glb` locally (offline, larger canvases)? *(open — Phase 4)*
+- **Warm scope:** one toggle warming the tool-in-use, or per-tool indicators? *(open —
+  Phase 3; today one warm lease gates both tools)*
 - **Reference layer:** auto-create a reference layer below the active layer, put it on
-  the active layer, or ask? (Ties into the reangle §7.6 own-layer question — worth
-  solving once for both.)
+  the active layer, or ask? *(open — MVP places on the active layer; ties into the
+  reangle §7.6 own-layer question, worth solving once for both)*
 - **Input:** capture-a-sketch only, or also "make reference from selected image"?
+  *(open — MVP is capture-only)*
