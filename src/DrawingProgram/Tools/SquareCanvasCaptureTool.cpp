@@ -21,11 +21,13 @@
 SquareCanvasCaptureTool::SquareCanvasCaptureTool(DrawingProgram& initDrawP,
                                                  int targetSize,
                                                  DrawingProgramToolType previousToolType,
-                                                 OnCaptureCallback onCapture)
+                                                 OnCaptureCallback onCapture,
+                                                 bool transparentBackground)
     : DrawingProgramToolBase(initDrawP),
       targetSize_(std::max(1, targetSize)),
       previousToolType_(previousToolType),
-      onCapture_(std::move(onCapture))
+      onCapture_(std::move(onCapture)),
+      transparentBackground_(transparentBackground)
 {}
 
 DrawingProgramToolType SquareCanvasCaptureTool::get_type() {
@@ -210,7 +212,7 @@ void SquareCanvasCaptureTool::capture_and_commit(const Vector2f& camMin, const V
     captureDD.cam.set_based_on_properties(drawP.world, topLeft, newInverseScale, cameraCoords.rotation);
     captureDD.cam.set_viewing_area(Vector2f(static_cast<float>(outW), static_cast<float>(outH)));
     captureDD.takingScreenshot = true;
-    captureDD.transparentBackground = true;
+    captureDD.transparentBackground = transparentBackground_;
     captureDD.refresh_draw_optimizing_values();
     drawP.world.main.draw_world(offCanvas, drawP.world.main.world, captureDD);
 

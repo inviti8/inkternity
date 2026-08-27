@@ -37,6 +37,7 @@
 #include <SDL3/SDL_render.h>
 #include <SDL3/SDL_cpuinfo.h>
 #include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <filesystem>
 #include <optional>

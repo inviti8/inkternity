@@ -46,10 +46,17 @@ class SquareCanvasCaptureTool : public DrawingProgramToolBase {
         //             targetSize x targetSize SkImage. Never invoked on
         //             cancel. May be null (capture without callback is a
         //             no-op, used only for tests).
+        // transparentBackground: true (default) captures only drawn pixels on a
+        //             transparent background (brush icons / avatars want this).
+        //             false composites all VISIBLE layers over the canvas
+        //             background — a WYSIWYG, opaque "drawing on paper" image
+        //             (what AI reangle needs; the service mattes an opaque figure,
+        //             not bare transparent strokes).
         SquareCanvasCaptureTool(DrawingProgram& initDrawP,
                                 int targetSize,
                                 DrawingProgramToolType previousToolType,
-                                OnCaptureCallback onCapture);
+                                OnCaptureCallback onCapture,
+                                bool transparentBackground = true);
 
         virtual DrawingProgramToolType get_type() override;
         virtual void gui_toolbox(Toolbar& t) override;
@@ -84,6 +91,7 @@ class SquareCanvasCaptureTool : public DrawingProgramToolBase {
         int targetSize_;
         DrawingProgramToolType previousToolType_;
         OnCaptureCallback onCapture_;
+        bool transparentBackground_ = true;
         bool dragging_       = false;
         bool restoreOnSwitch_= true;  // set false during commit so capture's own switch_tool doesn't recurse
         Vector2f dragStart_  {0.0f, 0.0f};

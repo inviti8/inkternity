@@ -36,10 +36,14 @@
 #include <include/core/SkSamplingOptions.h>
 #include <include/core/SkStream.h>
 #include <include/core/SkData.h>
+#include <include/core/SkPixmap.h>
 #include <include/encode/SkPngEncoder.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 
 // GL render path is desktop-GL-3.3 + Ganesh only (same guard family as the rest
 // of the armature code). Elsewhere render_3d() is a no-op and the view is blank.

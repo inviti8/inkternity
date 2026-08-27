@@ -37,24 +37,28 @@ std::string env_or(const char* name, const std::string& fallback) {
     return (v && *v) ? std::string(v) : fallback;
 }
 
-// Does the capture contain any drawn pixels? The capture surface is cleared to
-// transparent, so a drag over empty canvas comes back fully transparent — no point
-// sending that to the service (and paying a cold start) for a degenerate result.
-// Fail-open: if we can't read the pixels or the layout is unexpected, allow the send.
+// Does the capture contain a drawing, or just an empty region? The reangle capture
+// composites all visible layers over the canvas background (WYSIWYG, opaque), so an
+// empty frame is a near-uniform image (the bare background), not transparency —
+// detect it by a lack of tonal range. Fail-open on any read failure.
 bool image_has_content(const sk_sp<SkImage>& image) {
     if (!image) return false;
     sk_sp<SkImage> raster = image->makeRasterImage(nullptr);
     SkPixmap pix;
     if (!raster || !raster->peekPixels(&pix)) return true;
     if (pix.info().bytesPerPixel() != 4) return true;   // unknown layout → don't block
+    int lo = 255, hi = 0;
     const int w = pix.width(), h = pix.height();
-    for (int y = 0; y < h; ++y) {
+    for (int y = 0; y < h; y += 2) {
         const auto* row = static_cast<const uint8_t*>(pix.addr(0, y));
         if (!row) continue;
-        for (int x = 0; x < w; ++x)
-            if (row[x * 4 + 3] > 8) return true;         // any ~non-transparent pixel (RGBA/BGRA: alpha @ byte 3)
+        for (int x = 0; x < w; x += 2) {
+            const int L = (row[x * 4] + row[x * 4 + 1] + row[x * 4 + 2]) / 3;
+            if (L < lo) lo = L;
+            if (L > hi) hi = L;
+        }
     }
-    return false;
+    return (hi - lo) > 16;   // a meaningful tonal spread means there's a drawing
 }
 
 // Encode a captured square (premultiplied RGBA, transparent background) to PNG —
@@ -111,7 +115,8 @@ void ReangleFlow::begin_capture(DrawingProgram& drawP) {
     // 512² is the validated input size (REANGLE_API.md §8); the service mattes +
     // normalizes internally, so a larger capture would only cost upload time.
     auto tool = std::make_unique<SquareCanvasCaptureTool>(
-        drawP, /*targetSize=*/512, previousToolType, std::move(onCapture));
+        drawP, /*targetSize=*/512, previousToolType, std::move(onCapture),
+        /*transparentBackground=*/false);   // opaque WYSIWYG capture for the service
     drawP.switch_to_tool_ptr(std::move(tool));
     Logger::get().log("USERINFO", "Reangle: drag a square around the character to send it.");
 }

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -27,6 +28,7 @@
 #include <include/codec/SkPngDecoder.h>
 #include <include/codec/SkJpegDecoder.h>
 #include <include/core/SkData.h>
+#include <include/core/SkImage.h>
 #include <include/core/SkImageInfo.h>
 #include <array>
 #endif
@@ -859,10 +861,22 @@ void ArmatureModel::upload_texture() {
     const int tw = codec->dimensions().width();
     const int th = codec->dimensions().height();
     if (tw <= 0 || th <= 0) return;
-    const SkImageInfo info = SkImageInfo::Make(tw, th, kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
+    // Decode to the codec's NATIVE info (its own color type / alpha / color space),
+    // then read into the RGBA8/unpremul layout GL needs — keeping the source color
+    // space so no tone conversion happens. Forcing a null-color-space RGBA/unpremul
+    // info directly on getPixels made SkCodec crush the gray matte to 1-bit; this
+    // mirrors ImageResourceDisplay, which decodes via getInfo().
+    auto [img, res] = codec->getImage(codec->getInfo());
+    if (res != SkCodec::kSuccess || !img) {
+        Logger::get().log("INFO", "ArmatureModel: texture decode failed.");
+        return;
+    }
+    const SkImageInfo dst = codec->getInfo()
+                                .makeColorType(kRGBA_8888_SkColorType)
+                                .makeAlphaType(kUnpremul_SkAlphaType);
     std::vector<uint8_t> pixels(static_cast<size_t>(tw) * th * 4, 0);
-    if (codec->getPixels(info, pixels.data(), static_cast<size_t>(tw) * 4) != SkCodec::kSuccess) {
-        Logger::get().log("INFO", "ArmatureModel: texture getPixels failed.");
+    if (!img->readPixels(nullptr, dst, pixels.data(), static_cast<size_t>(tw) * 4, 0, 0)) {
+        Logger::get().log("INFO", "ArmatureModel: texture readPixels failed.");
         return;
     }
 
