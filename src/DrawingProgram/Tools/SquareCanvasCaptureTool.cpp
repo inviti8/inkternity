@@ -22,12 +22,14 @@ SquareCanvasCaptureTool::SquareCanvasCaptureTool(DrawingProgram& initDrawP,
                                                  int targetSize,
                                                  DrawingProgramToolType previousToolType,
                                                  OnCaptureCallback onCapture,
-                                                 bool transparentBackground)
+                                                 bool transparentBackground,
+                                                 bool centerOut)
     : DrawingProgramToolBase(initDrawP),
       targetSize_(std::max(1, targetSize)),
       previousToolType_(previousToolType),
       onCapture_(std::move(onCapture)),
-      transparentBackground_(transparentBackground)
+      transparentBackground_(transparentBackground),
+      centerOut_(centerOut)
 {}
 
 DrawingProgramToolType SquareCanvasCaptureTool::get_type() {
@@ -160,6 +162,12 @@ std::pair<Vector2f, Vector2f> SquareCanvasCaptureTool::compute_square_cam_rect(c
     float side = std::max(std::abs(dx), std::abs(dy));
     if (side <= 0.0f) return {anchor, anchor};
 
+    // Center-out: the anchor (mouse-down) is the CENTER; the square grows
+    // symmetrically to a half-extent of `side`. Full side = 2*side.
+    if (centerOut_)
+        return { Vector2f(anchor.x() - side, anchor.y() - side),
+                 Vector2f(anchor.x() + side, anchor.y() + side) };
+
     const float sgnX = (dx == 0.0f) ? 1.0f : (dx > 0.0f ? 1.0f : -1.0f);
     const float sgnY = (dy == 0.0f) ? 1.0f : (dy > 0.0f ? 1.0f : -1.0f);
 
@@ -220,9 +228,16 @@ void SquareCanvasCaptureTool::capture_and_commit(const Vector2f& camMin, const V
     sk_sp<SkImage> cpuImage = snapshot ? snapshot->makeRasterImage(nullptr) : nullptr;
     if (!cpuImage) cpuImage = snapshot;
 
+    // The captured square in world space (top-left + side length), so the caller
+    // can register something back onto the source pixels at the right scale/pos.
+    CaptureRegion region;
+    region.topLeft = topLeft;
+    region.sideWorld = (topRight - topLeft).norm();
+    region.rotation = cameraCoords.rotation;
+
     // Fire callback before restoring tool, so the caller's onCapture can
     // store the image in its own state (preset draft / AvatarStore).
-    if (onCapture_ && cpuImage) onCapture_(cpuImage);
+    if (onCapture_ && cpuImage) onCapture_(cpuImage, region);
 
     // Restore prior tool. restoreOnSwitch_ guard prevents switch_tool()
     // from re-entering cancel_and_restore on the way out.

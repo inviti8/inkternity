@@ -47,9 +47,15 @@ public:
     // Reangle (REANGLE_PIPELINE.md §7.6): place a service-produced textured .glb
     // (the artist's original art front-projected) from memory as a static model
     // on the canvas — double-click to orbit the camera and bake the chosen view.
-    // Mirrors load_model_into_canvas but takes bytes, not a file. Returns false
-    // (having logged the specific reason) if the bytes aren't a loadable model.
-    static bool load_reangle_mesh_into_canvas(DrawingProgram& drawP, std::string_view glb);
+    // Mirrors load_model_into_canvas but takes bytes, not a file. `regionTopLeft` /
+    // `regionSideWorld` / `regionRotation` are the world square the drawing was
+    // captured from, so the baked quad is placed over the source pixels at the
+    // right scale/position (regionSideWorld <= 0 falls back to a view-centred
+    // default). Returns false (having logged why) if the bytes aren't loadable.
+    static bool load_reangle_mesh_into_canvas(DrawingProgram& drawP, std::string_view glb,
+                                              const WorldVec& regionTopLeft,
+                                              const WorldScalar& regionSideWorld,
+                                              double regionRotation);
 
     void update() override;
     void draw(SkCanvas* canvas) override;

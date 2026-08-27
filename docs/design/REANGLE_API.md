@@ -35,8 +35,9 @@ Content-Type: multipart/form-data
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `image` | file | *required* | The character drawing. Any size, any background — the service mattes it. **Max 8 MB.** |
-| `mc_resolution` | int 64–512 | `256` | Marching-cubes grid. Main quality/cost lever; see §8. |
+| `mc_resolution` | int 64–**384** | `256` | Marching-cubes grid. Main quality/cost lever; see §8. |
 | `backbone` | str | `triposr` | Reconstruction backbone. Leave alone. |
+| `texture_size` | int 256–4096 | `2048` | Baked texture resolution. Leave at the default; see §8. |
 
 **Success — `200`, body is the raw `.glb`:**
 
@@ -269,6 +270,28 @@ mesh density — which matters more for the depth proxy's silhouette than for an
 artist directly sees. If the client ever exposes this, treat it as a quality setting, not
 a slider the artist tunes per drawing (each distinct value is a distinct cache key, so
 sweeping it defeats the cache).
+
+### Texture resolution
+
+`texture_size` defaults to **2048** (it was 512 in earlier builds). At 512 the
+artist's linework visibly softened once the mesh was magnified on canvas —
+individual strands and fine detail turned to mush against the original art.
+
+Leave it alone unless you have a reason. It is nearly free: linework compresses
+well, so the texture adds ~350–650 KB to a `.glb` whose mesh already accounts for
+most of its size.
+
+Two things not to expect from it:
+
+- **The silhouette edge does not sharpen past ~1024**, because the alpha mask
+  comes from a matting model with a 1024² input. Raising this recovers *interior*
+  linework, not a crisper outline.
+- **It does not change alignment.** UVs are normalised, so the projection lands
+  identically at any texture size.
+
+**`mc_resolution=512` is rejected in practice.** The API advertises up to 512 but
+the worker OOMs on a 24 GB GPU above 384, returning a `502`. Treat **384 as the
+real ceiling** until the service tightens its own bound.
 
 **Downscale before upload.** The service mattes and normalizes internally, so a huge
 canvas export buys nothing and costs upload time on the artist's connection. The

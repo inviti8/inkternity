@@ -31,6 +31,9 @@ namespace {
 // (begin_capture/start/tick all run there), so no locking needed here — the
 // atomics live inside ReangleClient::Request for the worker-thread handoff.
 std::shared_ptr<ReangleClient::Request> gPending;
+// The world region the pending reangle was captured from, so the result can be
+// placed back over the source pixels at the right scale/position.
+SquareCanvasCaptureTool::CaptureRegion gPendingRegion;
 
 std::string env_or(const char* name, const std::string& fallback) {
     const char* v = std::getenv(name);
@@ -99,7 +102,8 @@ void ReangleFlow::begin_capture(DrawingProgram& drawP) {
                                                  : DrawingProgramToolType::MYPAINTBRUSH;
     // The DrawingProgram outlives the tool (owned by World), so capturing it by
     // reference for the capture callback is safe.
-    auto onCapture = [&drawP](sk_sp<SkImage> image) {
+    auto onCapture = [&drawP](sk_sp<SkImage> image,
+                              const SquareCanvasCaptureTool::CaptureRegion& region) {
         if (!image_has_content(image)) {
             Logger::get().log("USERINFO",
                 "Reangle: that area is empty — frame a drawn character and try again.");
@@ -110,18 +114,22 @@ void ReangleFlow::begin_capture(DrawingProgram& drawP) {
             Logger::get().log("USERINFO", "Reangle: could not read the captured region.");
             return;
         }
-        start(drawP, std::move(*png));
+        start(drawP, std::move(*png), region);
     };
     // 512² is the validated input size (REANGLE_API.md §8); the service mattes +
     // normalizes internally, so a larger capture would only cost upload time.
+    // Opaque WYSIWYG capture for the service; center-out drag so the artist can put
+    // the cursor on a feature and have it be the known centre of the reangled quad.
     auto tool = std::make_unique<SquareCanvasCaptureTool>(
         drawP, /*targetSize=*/512, previousToolType, std::move(onCapture),
-        /*transparentBackground=*/false);   // opaque WYSIWYG capture for the service
+        /*transparentBackground=*/false, /*centerOut=*/true);
     drawP.switch_to_tool_ptr(std::move(tool));
-    Logger::get().log("USERINFO", "Reangle: drag a square around the character to send it.");
+    Logger::get().log("USERINFO",
+        "Reangle: put the cursor on the character's centre and drag out to frame it.");
 }
 
-void ReangleFlow::start(DrawingProgram& drawP, std::vector<uint8_t> png) {
+void ReangleFlow::start(DrawingProgram& drawP, std::vector<uint8_t> png,
+                        const SquareCanvasCaptureTool::CaptureRegion& region) {
     // Settings → Debug field wins; a blank field falls back to the env var, then
     // (for the endpoint) the built-in default. Lets a demo skip the env var.
     std::string key, endpoint;
@@ -131,6 +139,7 @@ void ReangleFlow::start(DrawingProgram& drawP, std::vector<uint8_t> png) {
             "Debug (or the HVYM_TOOLS_KEY environment variable).");
         return;
     }
+    gPendingRegion = region;
     gPending = ReangleClient::request(png, endpoint, key, 256);
     // request() can fail synchronously (bad config / empty image) — surface that
     // now rather than leaving a dead handle for tick() to report.
@@ -153,7 +162,8 @@ void ReangleFlow::tick(DrawingProgram& drawP) {
     if (status == ReangleClient::Request::Status::SUCCESS) {
         const bool placed = ArmatureModalScreen::load_reangle_mesh_into_canvas(
             drawP, std::string_view(reinterpret_cast<const char*>(done->glb.data()),
-                                    done->glb.size()));
+                                    done->glb.size()),
+            gPendingRegion.topLeft, gPendingRegion.sideWorld, gPendingRegion.rotation);
         if (placed)
             Logger::get().log("USERINFO", done->cacheHit
                 ? "Reangle ready (cached) — orbit the camera, then bake the view you want."

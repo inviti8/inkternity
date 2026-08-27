@@ -321,7 +321,7 @@ void BrushCustomizationDrawer::start_icon_capture() {
     // view, where they'd have to click Save as preset... again).
     toolbar_.set_brush_customization_menu_open(false);
 
-    auto onCapture = [this](sk_sp<SkImage> image) {
+    auto onCapture = [this](sk_sp<SkImage> image, const SquareCanvasCaptureTool::CaptureRegion&) {
         capturedIcon_ = std::move(image);
         // Re-open the drawer popup. saveModalOpen_ was preserved, so
         // render_body sees it true and routes straight back to the

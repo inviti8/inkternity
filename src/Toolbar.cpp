@@ -1362,7 +1362,7 @@ void Toolbar::start_avatar_capture() {
     avatarPopoverOpen = false;
     main.g.gui.set_to_layout();
 
-    auto onCapture = [this](sk_sp<SkImage> image) {
+    auto onCapture = [this](sk_sp<SkImage> image, const SquareCanvasCaptureTool::CaptureRegion&) {
         if (!image) return;
         if (AvatarStore::save(main.conf.configPath, image))
             refresh_avatar_from_disk();

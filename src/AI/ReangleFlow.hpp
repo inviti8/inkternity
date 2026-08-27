@@ -11,6 +11,8 @@
 // One reangle at a time — the service's access pattern is one call per drawing,
 // then all interaction (orbit, bake) is local (REANGLE_API.md §4).
 
+#include "../DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"   // CaptureRegion
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -40,8 +42,11 @@ public:
     static bool is_busy();
 
 private:
-    // Encoded PNG → POST. Reads the endpoint + key from the environment.
-    static void start(DrawingProgram& drawP, std::vector<uint8_t> png);
+    // Encoded PNG → POST. Reads the endpoint + key from the environment. `region`
+    // is the captured world square, remembered so the result can be placed back
+    // over the source pixels at the right scale/position.
+    static void start(DrawingProgram& drawP, std::vector<uint8_t> png,
+                      const SquareCanvasCaptureTool::CaptureRegion& region);
 };
 
 }  // namespace AI

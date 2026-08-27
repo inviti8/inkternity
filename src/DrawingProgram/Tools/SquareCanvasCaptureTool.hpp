@@ -1,5 +1,6 @@
 #pragma once
 #include "DrawingProgramToolBase.hpp"
+#include "../../SharedTypes.hpp"   // WorldVec / WorldScalar for the captured region
 #include <include/core/SkRefCnt.h>
 #include <functional>
 
@@ -35,7 +36,17 @@ class SquareCanvasCaptureTool : public DrawingProgramToolBase {
         // whole canvas at extreme zoom-out" case.
         static constexpr int MAX_SOURCE_SIDE_PX = 2048;
 
-        using OnCaptureCallback = std::function<void(sk_sp<SkImage> capturedImage)>;
+        // The captured square in WORLD space (so a caller can place something back
+        // over the exact source pixels, at the right scale/position, even after an
+        // async round-trip when the camera may have moved).
+        struct CaptureRegion {
+            WorldVec topLeft;         // world position of the square's top-left corner
+            WorldScalar sideWorld{1}; // world length of one side of the captured square
+            double rotation = 0.0;    // camera rotation at capture time
+        };
+
+        using OnCaptureCallback =
+            std::function<void(sk_sp<SkImage> capturedImage, const CaptureRegion& region)>;
 
         // targetSize: final output side length in px (e.g. 64 for brush
         //             icons, 256 for avatar masters).
@@ -52,11 +63,17 @@ class SquareCanvasCaptureTool : public DrawingProgramToolBase {
         //             background — a WYSIWYG, opaque "drawing on paper" image
         //             (what AI reangle needs; the service mattes an opaque figure,
         //             not bare transparent strokes).
+        // centerOut: false (default) drags the square from a corner (anchor →
+        //             cursor). true grows it symmetrically OUTWARD from the
+        //             mouse-down point, so that point is the square's CENTER —
+        //             lets the artist put the cursor on a feature (e.g. the hips)
+        //             and have it be the known center of the capture (AI reangle).
         SquareCanvasCaptureTool(DrawingProgram& initDrawP,
                                 int targetSize,
                                 DrawingProgramToolType previousToolType,
                                 OnCaptureCallback onCapture,
-                                bool transparentBackground = true);
+                                bool transparentBackground = true,
+                                bool centerOut = false);
 
         virtual DrawingProgramToolType get_type() override;
         virtual void gui_toolbox(Toolbar& t) override;
@@ -92,6 +109,7 @@ class SquareCanvasCaptureTool : public DrawingProgramToolBase {
         DrawingProgramToolType previousToolType_;
         OnCaptureCallback onCapture_;
         bool transparentBackground_ = true;
+        bool centerOut_ = false;
         bool dragging_       = false;
         bool restoreOnSwitch_= true;  // set false during commit so capture's own switch_tool doesn't recurse
         Vector2f dragStart_  {0.0f, 0.0f};

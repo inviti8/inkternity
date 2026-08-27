@@ -60,11 +60,14 @@ struct OrbitCamera {
     bool ortho = false;     // orthographic projection (no perspective distortion)
 
     // Frame an AABB: centre the target and back off to fit the largest extent.
-    void frame_bounds(const Eigen::Vector3f& mn, const Eigen::Vector3f& mx) {
+    // `margin` (>=1) is the fit padding: 1.3 leaves headroom for the editor;
+    // reangle uses ~1.05 so the baked figure fills the square and matches the
+    // source drawing's framing when placed back over it.
+    void frame_bounds(const Eigen::Vector3f& mn, const Eigen::Vector3f& mx, float margin = 1.3f) {
         target = 0.5f * (mn + mx);
         const Eigen::Vector3f ext = mx - mn;
         const float maxExt = std::max(std::max(ext.x(), ext.y()), ext.z());
-        distance = (maxExt * 0.5f) / std::tan(fovY * 0.5f) * 1.3f + 1e-3f;
+        distance = (maxExt * 0.5f) / std::tan(fovY * 0.5f) * margin + 1e-3f;
         yaw = 0.0f;
         pitch = 0.0f;
         mFitExtent = maxExt;

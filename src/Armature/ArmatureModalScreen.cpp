@@ -1083,7 +1083,9 @@ namespace {
 // actions ignore it and leave it for a double-click.
 CanvasComponentContainer::ObjInfo* place_model_component(
         DrawingProgram& drawP, Armature::ArmatureModel& model,
-        const NetworkingObjects::NetObjID& resourceId) {
+        const NetworkingObjects::NetObjID& resourceId,
+        const WorldVec& regionTopLeft = WorldVec{}, const WorldScalar& regionSideWorld = WorldScalar(0),
+        double regionRotation = 0.0) {
     auto& world = drawP.world;
     auto& main = world.main;
     auto editLayer = drawP.layerMan.get_editing_layer().lock();
@@ -1095,8 +1097,14 @@ CanvasComponentContainer::ObjInfo* place_model_component(
     model.set_height(1.0f);          // clear any leftover state from a prior edit
     model.reset_material_colors();   // (the default rig is a shared singleton)
     model.reset_morphs();
+    // Reangle: default to orthographic — the source is a flat 2D drawing, so an
+    // ortho view matches it (no perspective foreshortening) for the initial bake
+    // AND when the editor opens (persisted below via arm.d.ortho). Frame tight
+    // (small margin) so the baked figure fills the square like the captured one.
+    const bool reangle = regionSideWorld > WorldScalar(0);
     Armature::OrbitCamera cam;
-    cam.frame_bounds(model.bounds_min(), model.bounds_max());
+    cam.frame_bounds(model.bounds_min(), model.bounds_max(), reangle ? 1.05f : 1.3f);
+    if (reangle) cam.ortho = true;
     Armature::Lighting light;
 
     constexpr int DIM = 1024;
@@ -1114,16 +1122,26 @@ CanvasComponentContainer::ObjInfo* place_model_component(
     arm.d.camTx = cam.target.x(); arm.d.camTy = cam.target.y(); arm.d.camTz = cam.target.z();
     arm.d.lightAz = light.azimuth; arm.d.lightEl = light.elevation; arm.d.lightInt = light.intensity;
     arm.d.lightAmb = light.ambient; arm.d.lightSky = light.sky;
+    arm.d.ortho = cam.ortho;   // reangle opens orthographic; else the default (false)
     arm.set_raster(std::move(rgba), DIM);
 
-    // Place as a square at the view centre, ~half the min window dimension.
-    const CoordSpaceHelper& camC = world.drawData.cam.c;
-    const float screenPx = 0.5f * std::min(static_cast<float>(main.window.size.x()),
-                                           static_cast<float>(main.window.size.y()));
-    const WorldVec centerWorld = camC.from_space(main.window.size.cast<float>() * 0.5f);
-    const WorldVec half = camC.dir_from_space(Vector2f(screenPx * 0.5f, screenPx * 0.5f));
-    const WorldScalar invScale = camC.inverseScale.divide_double(static_cast<double>(DIM) / screenPx);
-    container->coords = CoordSpaceHelper(centerWorld - half, invScale, 0.0);
+    if (regionSideWorld > WorldScalar(0)) {
+        // Reangle: place over the exact captured world square, so the baked quad
+        // registers onto the source pixels. The DIM-pixel raster spans the side.
+        container->coords = CoordSpaceHelper(regionTopLeft,
+                                             regionSideWorld.divide_double(static_cast<double>(DIM)),
+                                             regionRotation);
+    } else {
+        // Add-Armature / Load-Model: a square at the view centre, ~half the min
+        // window dimension.
+        const CoordSpaceHelper& camC = world.drawData.cam.c;
+        const float screenPx = 0.5f * std::min(static_cast<float>(main.window.size.x()),
+                                               static_cast<float>(main.window.size.y()));
+        const WorldVec centerWorld = camC.from_space(main.window.size.cast<float>() * 0.5f);
+        const WorldVec half = camC.dir_from_space(Vector2f(screenPx * 0.5f, screenPx * 0.5f));
+        const WorldScalar invScale = camC.inverseScale.divide_double(static_cast<double>(DIM) / screenPx);
+        container->coords = CoordSpaceHelper(centerWorld - half, invScale, 0.0);
+    }
 
     std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
     toPlace.emplace_back(drawP.layerMan.get_edited_layer_end_iterator(), container);
@@ -1175,7 +1193,10 @@ void ArmatureModalScreen::load_model_into_canvas(DrawingProgram& drawP,
 }
 
 bool ArmatureModalScreen::load_reangle_mesh_into_canvas(DrawingProgram& drawP,
-                                                        std::string_view glb) {
+                                                        std::string_view glb,
+                                                        const WorldVec& regionTopLeft,
+                                                        const WorldScalar& regionSideWorld,
+                                                        double regionRotation) {
     // Guard the loader against a non-model body (the client already validates,
     // but this is the last line before cgltf).
     if (glb.size() < 12 || std::memcmp(glb.data(), "glTF", 4) != 0) {
@@ -1206,7 +1227,8 @@ bool ArmatureModalScreen::load_reangle_mesh_into_canvas(DrawingProgram& drawP,
     // of reangle is to adjust the camera and bake, so don't make the artist hunt
     // for the model and double-click it (which also only works from the Edit tool).
     CanvasComponentContainer::ObjInfo* placed =
-        place_model_component(drawP, model, res.get_net_id());
+        place_model_component(drawP, model, res.get_net_id(),
+                              regionTopLeft, regionSideWorld, regionRotation);
     if (!placed) return false;
     // Mark the component so the editor's reload from the embedded bytes applies the
     // same Z-up→Y-up correction the placed raster was baked with (runtime-only).
