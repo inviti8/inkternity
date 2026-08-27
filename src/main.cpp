@@ -3,6 +3,7 @@
 #include "Helpers/StringHelpers.hpp"
 #include "Helpers/FileDownloader.hpp"
 #include "AI/ReangleClient.hpp"
+#include "AI/WarmLease.hpp"
 #include "Screens/FileSelectScreen.hpp"
 #include "Screens/DesktopDrawingProgramScreen.hpp"
 #include "Screens/PhoneDrawingProgramScreen.hpp"
@@ -700,6 +701,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
     FileDownloader::init();
     AI::ReangleClient::init();
+    AI::WarmLease::init();
 
 #ifdef NDEBUG
     try {
@@ -1209,6 +1211,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result) {
 
     SDL_Quit();
 
+    AI::WarmLease::cleanup();
     AI::ReangleClient::cleanup();
     FileDownloader::cleanup();
 #endif

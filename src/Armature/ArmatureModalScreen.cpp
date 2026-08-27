@@ -1067,14 +1067,18 @@ namespace {
 // and Load-Model actions). `resourceId` is {} for the bundled default rig, else the
 // embedded glb's ResourceManager id; the model is rendered once at its rest pose
 // for the initial raster. Double-click reopens the editor seeded from the result.
-void place_model_component(DrawingProgram& drawP, Armature::ArmatureModel& model,
-                           const NetworkingObjects::NetObjID& resourceId) {
+// Returns the placed component (or nullptr on failure), so callers that want to
+// open the editor on it immediately (reangle) can, while the plain Add/Load
+// actions ignore it and leave it for a double-click.
+CanvasComponentContainer::ObjInfo* place_model_component(
+        DrawingProgram& drawP, Armature::ArmatureModel& model,
+        const NetworkingObjects::NetObjID& resourceId) {
     auto& world = drawP.world;
     auto& main = world.main;
     auto editLayer = drawP.layerMan.get_editing_layer().lock();
     if (!editLayer || editLayer->is_folder()) {
         Logger::get().log("USERINFO", "Armature: no active layer to add to.");
-        return;
+        return nullptr;
     }
     model.reset_pose();
     model.set_height(1.0f);          // clear any leftover state from a prior edit
@@ -1088,7 +1092,7 @@ void place_model_component(DrawingProgram& drawP, Armature::ArmatureModel& model
     std::vector<uint8_t> rgba;
     if (!ArmatureBake::render_armature_rgba(model, cam.view_proj(1.0f), light.travel_dir(),
                                             light.ambient, light.intensity, light.sky, DIM, rgba))
-        return;
+        return nullptr;
 #ifdef ARMATURE_MODAL_GL
     main.window.ctx->resetContext();
 #endif
@@ -1113,11 +1117,14 @@ void place_model_component(DrawingProgram& drawP, Armature::ArmatureModel& model
     std::vector<std::pair<CanvasComponentContainer::ObjInfoIterator, CanvasComponentContainer*>> toPlace;
     toPlace.emplace_back(drawP.layerMan.get_edited_layer_end_iterator(), container);
     const auto placed = drawP.layerMan.add_many_components_to_specific_layer(*editLayer, toPlace);
+    CanvasComponentContainer::ObjInfo* placedInfo = nullptr;
     for (auto& pit : placed) {
         pit->obj->commit_update(drawP);
         if (pit->obj->get_world_bounds().has_value())
             drawP.layerMan.add_undo_place_component(&(*pit));
+        if (!placedInfo) placedInfo = &(*pit);
     }
+    return placedInfo;
 }
 }  // namespace
 
@@ -1182,6 +1189,12 @@ bool ArmatureModalScreen::load_reangle_mesh_into_canvas(DrawingProgram& drawP,
         Logger::get().log("USERINFO", "Reangle load (GL): " + err);
         return false;
     }
-    place_model_component(drawP, model, res.get_net_id());
+    // Place it, then open the orbit editor on it straight away — the whole point
+    // of reangle is to adjust the camera and bake, so don't make the artist hunt
+    // for the model and double-click it (which also only works from the Edit tool).
+    CanvasComponentContainer::ObjInfo* placed =
+        place_model_component(drawP, model, res.get_net_id());
+    if (!placed) return false;
+    ArmatureModalScreen::open_for(drawP, placed);
     return true;
 }

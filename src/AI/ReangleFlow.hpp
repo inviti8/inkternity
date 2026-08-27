@@ -12,14 +12,22 @@
 // then all interaction (orbit, bake) is local (REANGLE_API.md §4).
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 class DrawingProgram;
+class GlobalConfig;
 
 namespace AI {
 
 class ReangleFlow {
 public:
+    // Resolve the HVYM Tools API key + endpoint: the Settings → Debug field wins,
+    // else the env var (HVYM_TOOLS_KEY / HVYM_TOOLS_ENDPOINT), else the built-in
+    // default endpoint. Returns true if a key is available. Shared by the reangle
+    // call and the warm-lease toggle so both read the same source.
+    static bool resolve_config(const GlobalConfig& conf, std::string& key, std::string& endpoint);
+
     // Menu action: activate the square-capture tool so the artist frames the
     // character; the captured region is sent to the reangle service on commit.
     static void begin_capture(DrawingProgram& drawP);

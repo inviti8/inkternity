@@ -11,6 +11,7 @@
 #include "DrawingProgram/RasterResolution.hpp"
 #include "Armature/ArmatureModalScreen.hpp"  // PHASE9: armature editor + add/load actions
 #include "AI/ReangleFlow.hpp"                 // AI reangle: capture selection → 3D proxy
+#include "AI/WarmLease.hpp"                    // AI inference warm-lease (header toggle)
 #include "Diagnostics/RenderStats.hpp"
 #include "FileHelpers.hpp"
 #include "GUIStuff/Elements/MemoryImageDisplay.hpp"
@@ -686,6 +687,39 @@ void Toolbar::top_toolbar() {
                     avatar_popover(avatarTile);
             }
 
+            // AI inference (warm-lease) — global toggle + status indicator. Holding
+            // a lease keeps a GPU worker awake so reangle pays the cold start once
+            // per session instead of on every idle gap (REANGLE_API.md §11). It is a
+            // lease, not a switch: it auto-releases if the app crashes/closes.
+            {
+                using WL = AI::WarmLease;
+                const WL::State aiState = WL::state();
+                const std::string aiLabel =
+                    aiState == WL::State::WARM    ? "AI: ready" :
+                    aiState == WL::State::WARMING ? "AI: warming\xE2\x80\xA6" :
+                    aiState == WL::State::FAILED  ? "AI: error" : "AI: off";
+                text_button(gui, "ai inference toggle", aiLabel, {
+                    .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                    .isSelected = (aiState == WL::State::WARM || aiState == WL::State::WARMING),
+                    .onClick = [&] {
+                        if (WL::is_enabled()) {
+                            WL::disable();
+                            Logger::get().log("USERINFO", "AI inference lease released.");
+                        } else {
+                            std::string key, endpoint;
+                            if (!AI::ReangleFlow::resolve_config(main.conf, key, endpoint))
+                                Logger::get().log("USERINFO",
+                                    "Set the HVYM Tools API key in Settings \xE2\x86\x92 Debug first.");
+                            else {
+                                WL::enable(endpoint, key);
+                                Logger::get().log("USERINFO",
+                                    "Warming AI inference\xE2\x80\xA6 reangle unlocks once it reads \"ready\".");
+                            }
+                        }
+                    }
+                });
+            }
+
             // Right-aligned live canvas-memory readout. The GROW spacer pushes it
             // to the far edge of the top bar; its color escalates (white ->
             // amber -> red) as uncompressed layer RAM climbs toward the system
@@ -837,9 +871,29 @@ void Toolbar::top_toolbar() {
                                 menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
                                     RasterResolution::halve_layer(main.world->drawProg);
                                 });
-                                menu_popup_text_button("ai reangle", "AI Reangle (3D)", [&] {
-                                    AI::ReangleFlow::begin_capture(main.world->drawProg);
-                                });
+                                {
+                                    // Gated: disabled until AI inference is warm (top-bar
+                                    // toggle) and while a reangle is already in flight — a
+                                    // cold call would otherwise silently take minutes.
+                                    const bool aiBusy = AI::ReangleFlow::is_busy();
+                                    const bool aiReady = AI::WarmLease::state() == AI::WarmLease::State::WARM;
+                                    const char* reangleLabel =
+                                        aiBusy  ? "AI Reangle (working\xE2\x80\xA6)" :
+                                        aiReady ? "AI Reangle (3D)"
+                                                : "AI Reangle (enable AI inference first)";
+                                    menu_popup_text_button("ai reangle", reangleLabel, [&] {
+                                        if (AI::ReangleFlow::is_busy()) {
+                                            Logger::get().log("USERINFO", "A reangle is already in progress.");
+                                            return;
+                                        }
+                                        if (AI::WarmLease::state() != AI::WarmLease::State::WARM) {
+                                            Logger::get().log("USERINFO",
+                                                "Turn on AI inference (top bar) and wait for \"ready\" before reangling.");
+                                            return;
+                                        }
+                                        AI::ReangleFlow::begin_capture(main.world->drawProg);
+                                    });
+                                }
                             }
                             menu_popup_text_button("start connecting", "Connect", [&] {
                                 serverToConnectTo.clear();

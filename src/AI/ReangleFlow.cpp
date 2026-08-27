@@ -75,6 +75,15 @@ std::optional<std::vector<uint8_t>> encode_png(const sk_sp<SkImage>& image) {
 
 }  // namespace
 
+bool ReangleFlow::resolve_config(const GlobalConfig& conf, std::string& key,
+                                 std::string& endpoint) {
+    key = !conf.hvymToolsKey.empty() ? conf.hvymToolsKey : env_or("HVYM_TOOLS_KEY", "");
+    endpoint = !conf.hvymToolsEndpoint.empty()
+                   ? conf.hvymToolsEndpoint
+                   : env_or("HVYM_TOOLS_ENDPOINT", "https://img.hvym.link");
+    return !key.empty();
+}
+
 bool ReangleFlow::is_busy() { return gPending != nullptr; }
 
 void ReangleFlow::begin_capture(DrawingProgram& drawP) {
@@ -110,13 +119,8 @@ void ReangleFlow::begin_capture(DrawingProgram& drawP) {
 void ReangleFlow::start(DrawingProgram& drawP, std::vector<uint8_t> png) {
     // Settings → Debug field wins; a blank field falls back to the env var, then
     // (for the endpoint) the built-in default. Lets a demo skip the env var.
-    const GlobalConfig& conf = drawP.world.main.conf;
-    const std::string key = !conf.hvymToolsKey.empty() ? conf.hvymToolsKey
-                                                        : env_or("HVYM_TOOLS_KEY", "");
-    const std::string endpoint = !conf.hvymToolsEndpoint.empty()
-                                     ? conf.hvymToolsEndpoint
-                                     : env_or("HVYM_TOOLS_ENDPOINT", "https://img.hvym.link");
-    if (key.empty()) {
+    std::string key, endpoint;
+    if (!ReangleFlow::resolve_config(drawP.world.main.conf, key, endpoint)) {
         Logger::get().log("USERINFO",
             "Reangle is not configured — set the HVYM Tools API key in Settings \xe2\x86\x92 "
             "Debug (or the HVYM_TOOLS_KEY environment variable).");
@@ -147,8 +151,8 @@ void ReangleFlow::tick(DrawingProgram& drawP) {
                                     done->glb.size()));
         if (placed)
             Logger::get().log("USERINFO", done->cacheHit
-                ? "Reangle ready (cached) — double-click the model to orbit and bake."
-                : "Reangle ready — double-click the model to orbit and bake.");
+                ? "Reangle ready (cached) — orbit the camera, then bake the view you want."
+                : "Reangle ready — orbit the camera, then bake the view you want.");
         // On failure the loader already logged the specific reason.
     } else {
         Logger::get().log("USERINFO",
