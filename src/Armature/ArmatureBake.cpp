@@ -55,6 +55,7 @@ bool render_armature_rgba(Armature::ArmatureModel& model, const Eigen::Matrix4f&
     glDisable(GL_BLEND);
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_CULL_FACE);  // model materials are double-sided
+    glDisable(GL_FRAMEBUFFER_SRGB);  // don't sRGB-encode our linear byte writes (see render_3d)
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

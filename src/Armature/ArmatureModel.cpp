@@ -125,7 +125,8 @@ ArmatureModel::~ArmatureModel() {
 #endif
 }
 
-bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string& err) {
+bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string& err,
+                                     bool zUpToYUp) {
     cgltf_options options{};
     cgltf_data* gltf = nullptr;
     if (cgltf_parse(&options, data, size, &gltf) != cgltf_result_success) {
@@ -161,7 +162,7 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
             meshNode = &gltf->nodes[i]; break;
         }
     if (!meshNode || !joints_match_canon(meshNode->skin))
-        return load_static(gltf, err);
+        return load_static(gltf, err, zUpToYUp);
     mIsStatic = false;
 
     cgltf_skin* skin = meshNode->skin;
@@ -396,9 +397,18 @@ bool ArmatureModel::load_from_memory(const void* data, size_t size, std::string&
 // world transform reproduces the rest shape too — no bone evaluation needed. The
 // geometry is bound to a single identity "joint" so the existing skinning shader,
 // draw, and bake paths render it unchanged. Simple flat shading; no textures (v1).
-bool ArmatureModel::load_static(cgltf_data* gltf, std::string& err) {
+bool ArmatureModel::load_static(cgltf_data* gltf, std::string& err, bool zUpToYUp) {
     mIsStatic = true;
     const Eigen::Matrix4f I = Eigen::Matrix4f::Identity();
+    // Up-axis correction (reangle): rotate −90° about X so a Z-up mesh stands up
+    // in this Y-up viewer. (x,y,z) → (x, z, −y). Orthonormal, so it applies to
+    // normals unchanged. Identity when zUpToYUp is false.
+    Eigen::Matrix3f upFix = Eigen::Matrix3f::Identity();
+    if (zUpToYUp) {
+        upFix << 1, 0, 0,
+                 0, 0, 1,
+                 0, -1, 0;
+    }
 
     // One identity joint: the shader skins by uSkin[0] = identity.
     mJointCount = 1;
@@ -447,11 +457,11 @@ bool ArmatureModel::load_static(cgltf_data* gltf, std::string& err) {
                 float* d = &out.verts[v * FLOATS_PER_VERT];
                 cgltf_float p3[3] = {0, 0, 0};
                 cgltf_accessor_read_float(pos, v, p3, 3);
-                const Eigen::Vector4f wp = W * Eigen::Vector4f(p3[0], p3[1], p3[2], 1.0f);
+                const Eigen::Vector3f wp = upFix * (W * Eigen::Vector4f(p3[0], p3[1], p3[2], 1.0f)).head<3>();
                 d[0] = wp.x(); d[1] = wp.y(); d[2] = wp.z();
                 cgltf_float n3[3] = {0, 0, 1};
                 if (nrm) cgltf_accessor_read_float(nrm, v, n3, 3);
-                Eigen::Vector3f wn = Nrm * Eigen::Vector3f(n3[0], n3[1], n3[2]);
+                Eigen::Vector3f wn = upFix * (Nrm * Eigen::Vector3f(n3[0], n3[1], n3[2]));
                 if (wn.squaredNorm() > 1e-20f) wn.normalize();
                 d[3] = wn.x(); d[4] = wn.y(); d[5] = wn.z();
                 d[6] = d[7] = d[8] = d[9] = 0.0f;                       // joint 0

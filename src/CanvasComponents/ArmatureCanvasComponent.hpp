@@ -84,6 +84,13 @@ public:
         bool operator==(const Data&) const = default;
     } d;
 
+    // Runtime-only hint (NOT in Data → not serialized): the embedded mesh is Z-up
+    // and needs the −90°-about-X correction on (re)load, so the editor reload
+    // matches the placed raster. Set for reangle meshes at placement. Not
+    // persisted — after save/reload, re-editing shows the raw orientation until
+    // the service emits Y-up (the preferred permanent fix).
+    bool zUpToYUpHint = false;
+
     // Replace the baked raster (called by the modal on Bake). Invalidates cache.
     void set_raster(std::vector<uint8_t> rgba, int dim);
 

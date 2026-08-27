@@ -32,7 +32,12 @@ public:
     // geometry + skin. Validates that a skin with JOINTS_0/WEIGHTS_0 is present
     // (risk #5). On failure returns false and fills `err`. Does not touch GL;
     // `data`/`size` need only stay valid for the duration of the call.
-    bool load_from_memory(const void* data, size_t size, std::string& err);
+    // `zUpToYUp` rotates the loaded geometry −90° about X (Z-up → Y-up). The
+    // reangle service returns trimesh/TripoSR meshes that are Z-up (figure tall
+    // along +Z), which lie down in this Y-up viewer; reangle passes true. Leave
+    // false for normal glTF (Y-up by spec) so user-loaded models aren't rotated.
+    bool load_from_memory(const void* data, size_t size, std::string& err,
+                          bool zUpToYUp = false);
 
     // Create GL buffers + the skinning program for the parsed data. The GL
     // context must be current. On failure returns false and fills `err`.
@@ -172,7 +177,8 @@ private:
     void upload_texture();
 
     // Flatten a non-armature glTF into one static reference mesh (M7).
-    bool load_static(cgltf_data* gltf, std::string& err);
+    // `zUpToYUp` applies the −90°-about-X up-axis correction (see load_from_memory).
+    bool load_static(cgltf_data* gltf, std::string& err, bool zUpToYUp = false);
 
     Eigen::Matrix4f node_local_matrix(int nodeIndex) const;
     void compute_node_worlds(std::vector<Eigen::Matrix4f>& world) const;

@@ -276,7 +276,8 @@ ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen>
                                          CanvasComponentContainer::ObjInfo* editTarget)
     : Screen(m), mPrev(std::move(prev)), mEditDrawP(editDrawP), mEditTarget(editTarget) {
     if (!mEditTarget) return;
-    const auto& d = static_cast<ArmatureCanvasComponent&>(mEditTarget->obj->get_comp()).d;
+    auto& editComp = static_cast<ArmatureCanvasComponent&>(mEditTarget->obj->get_comp());
+    const auto& d = editComp.d;
     // Pick the model. An embedded external model ({} != id) is loaded + GL-uploaded
     // here and owned by the modal; otherwise we borrow the shared default rig.
     if (!(d.modelResourceId == NetworkingObjects::NetObjID{})) {
@@ -285,7 +286,8 @@ ArmatureModalScreen::ArmatureModalScreen(MainProgram& m, std::unique_ptr<Screen>
         if (ref && ref->data && !ref->data->empty()) {
             auto owned = std::make_unique<Armature::ArmatureModel>();
             std::string err;
-            if (owned->load_from_memory(ref->data->data(), ref->data->size(), err) &&
+            if (owned->load_from_memory(ref->data->data(), ref->data->size(), err,
+                                        editComp.zUpToYUpHint) &&
                 owned->upload_gl(err)) {
                 mOwnedModel = std::move(owned);
                 mModel = mOwnedModel.get();
@@ -864,6 +866,11 @@ void ArmatureModalScreen::render_3d() {
     glDisable(GL_BLEND);
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_CULL_FACE);
+    // Skia can leave GL_FRAMEBUFFER_SRGB enabled; with it on, our shader's linear
+    // byte writes get sRGB-encoded into the RGBA8 FBO, brightening the readback.
+    // Invisible on the flat mannequin, but it "photocopies" a real texture (the
+    // reangle art). Force it off so bytes pass through unchanged.
+    glDisable(GL_FRAMEBUFFER_SRGB);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1181,7 +1188,9 @@ bool ArmatureModalScreen::load_reangle_mesh_into_canvas(DrawingProgram& drawP,
 
     Armature::ArmatureModel model;
     std::string err;
-    if (!model.load_from_memory(glb.data(), glb.size(), err)) {
+    // zUpToYUp: the service's meshes are Z-up (trimesh/TripoSR) and would lie down
+    // in this Y-up viewer without the correction.
+    if (!model.load_from_memory(glb.data(), glb.size(), err, /*zUpToYUp=*/true)) {
         Logger::get().log("USERINFO", "Reangle load: " + err);
         return false;
     }
@@ -1195,6 +1204,9 @@ bool ArmatureModalScreen::load_reangle_mesh_into_canvas(DrawingProgram& drawP,
     CanvasComponentContainer::ObjInfo* placed =
         place_model_component(drawP, model, res.get_net_id());
     if (!placed) return false;
+    // Mark the component so the editor's reload from the embedded bytes applies the
+    // same Z-up→Y-up correction the placed raster was baked with (runtime-only).
+    static_cast<ArmatureCanvasComponent&>(placed->obj->get_comp()).zUpToYUpHint = true;
     ArmatureModalScreen::open_for(drawP, placed);
     return true;
 }
