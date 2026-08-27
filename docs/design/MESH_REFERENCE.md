@@ -189,12 +189,15 @@ The success toast: "3D reference ready — orbit it and draw over it on a new la
   path: `CoordSpaceHelper(regionTopLeft, sideWorld/DIM, rotation)`), so the
   reference sits where the artist sketched at a sensible size. Framing can stay the
   looser 1.3× margin (this is a reference, not a registered overlay).
-- **Layer intent (§7.6 of the reangle doc applies double here):** a reference is
-  meant to be *drawn over*, so it belongs on its **own layer below the artist's
-  drawing layer**, or clearly marked as reference. The reangle "only renders when
-  selected" episode was a layer-ordering artifact — for mesh, where the artist
-  actively draws on top, getting the layer relationship right is part of the
-  feature, not an afterthought. Decision in §9.
+- **Layer intent — DECIDED & BUILT:** the reference lands on its **own new layer
+  directly ABOVE the artist's drawing** ("3D Reference"), created by
+  `DrawingProgramLayerManagerGUI::create_layer_above_editing`. The workflow the artist
+  described: rough sketch (bottom) → 3D reference above it → **draw the detailed
+  version on a new layer on top of the reference**, then hide/remove the reference.
+  Placing it above (not below) is deliberate — it's a guide to trace over, so it must
+  be visible over the sketch. A mesh render is opaque only where the figure is (the rest
+  is transparent), so it occludes exactly the area being traced and nothing else. The
+  new layer becomes the edit target; the artist's next "new layer" then sits above it.
 - **Re-editing** reloads from the embedded `.glb` bytes via the same modal
   constructor path; the `zUpToYUpHint` runtime flag we added for reangle must be
   set for mesh components too (or, preferably, the server ships Y-up and the hint
@@ -277,9 +280,9 @@ reangle. Consequences for our `WarmLease`:
 2. ✅ **`MeshFlow` + menu + placement** (§4–§5) — DONE (`6b2b418`). `src/AI/MeshFlow.*`,
    the "AI 3D Reference (sketch)" menu item (warm-gated), and
    `ArmatureModalScreen::load_reference_mesh_into_canvas` (untextured, perspective,
-   1.3× frame). Capture helpers extracted to `ServiceCapture.hpp`. **Placed on the
-   active layer** for now — the own-reference-layer question (§10) is still open, and is
-   the main follow-up for this phase. Not yet runtime-tested against the live endpoint.
+   1.3× frame). Capture helpers extracted to `ServiceCapture.hpp`. **Placed on its own
+   new "3D Reference" layer directly above the drawing** (`1236736`, §5). Not yet
+   runtime-tested against the live endpoint.
 3. **Per-endpoint warming** (§7): teach `WarmLease` which tool/endpoint to warm — and
    fix that a "warm" lease still costs ~57 s on the first mesh job (§8.3, server-side).
 4. **The library** (§6): persist by `X-Cache-Key`, thumbnails, asset browser, reuse
@@ -298,8 +301,8 @@ reangle. Consequences for our `WarmLease`:
   `.glb` locally (offline, larger canvases)? *(open — Phase 4)*
 - **Warm scope:** one toggle warming the tool-in-use, or per-tool indicators? *(open —
   Phase 3; today one warm lease gates both tools)*
-- **Reference layer:** auto-create a reference layer below the active layer, put it on
-  the active layer, or ask? *(open — MVP places on the active layer; ties into the
-  reangle §7.6 own-layer question, worth solving once for both)*
+- ~~Reference layer~~ — **DECIDED & BUILT (`1236736`):** its own new "3D Reference"
+  layer directly ABOVE the artist's drawing (the artist draws the detailed pass on top
+  of it). `create_layer_above_editing` handles it; reangle keeps active-layer placement.
 - **Input:** capture-a-sketch only, or also "make reference from selected image"?
   *(open — MVP is capture-only)*
