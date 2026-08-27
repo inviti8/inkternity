@@ -191,9 +191,17 @@ datacenter (EU-RO-1) because the network volume holding the result cache lives t
 and within it the worker image can only run on GPUs it was compiled for. That left two
 GPU pools, and RunPod frequently has neither free. Mitigations applied on 2026-08-27:
 an `AMPERE_80` (A100) fallback on the mesh endpoint, and a rebuild of the reangle
-image widening its compiled architectures to cover A100, H100 and Blackwell. **Neither
-removes throttling — they widen the pool.** The warm lease remains the actual fix,
-because a held worker cannot be throttled out from under you.
+image widening its compiled architectures to cover A100, H100 and Blackwell — since
+**verified**: a reangle job pinned to the Blackwell pool ran on an RTX 5090, 45.5 s,
+HTTP 200.
+
+**The two endpoints are deliberately not symmetric.** reangle can now take Blackwell;
+mesh cannot, because its image pins torch 2.4.1/cu124 and tops out at sm_90. So
+**mesh stays on the narrower, more throttled pool**, and is the one that benefits most
+from a warm lease. Expect cold mesh requests to keep costing minutes.
+
+**None of this removes throttling — it widens the pool.** The warm lease remains the
+actual fix, because a held worker cannot be throttled out from under you.
 
 **Do not build a progress bar on RunPod's worker counts.** The service's own health
 endpoint reported `inQueue: 1, completed: 15` well after a job had returned, and it
