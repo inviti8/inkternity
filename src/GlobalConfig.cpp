@@ -38,6 +38,8 @@ nlohmann::json GlobalConfig::get_config_json(const InputManager& input) const {
     toRet["applyDisplayScale"] = applyDisplayScale;
 #endif
     toRet["displayName"] = displayName;
+    toRet["hvymToolsKey"] = hvymToolsKey;
+    toRet["hvymToolsEndpoint"] = hvymToolsEndpoint;
     toRet["antialiasing"] = antialiasing;
     toRet["useNativeFilePicker"] = useNativeFilePicker;
     toRet["verifiablePublishingEnabled"] = verifiablePublishingEnabled;
@@ -101,6 +103,8 @@ void GlobalConfig::set_config_json(InputManager& input, const nlohmann::json& j,
         input.keyAssignments = input.defaultKeyAssignments;
     }
     try{j.at("displayName").get_to(displayName);} catch(...) {}
+    try{j.at("hvymToolsKey").get_to(hvymToolsKey);} catch(...) {}
+    try{j.at("hvymToolsEndpoint").get_to(hvymToolsEndpoint);} catch(...) {}
     try{j.at("dragZoomSpeed").get_to(dragZoomSpeed);} catch(...) {}
     try{j.at("scrollZoomSpeed").get_to(scrollZoomSpeed);} catch(...) {}
     try{j.at("vsync").get_to(vsyncValue);} catch(...) {}

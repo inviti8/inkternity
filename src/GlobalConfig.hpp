@@ -88,6 +88,15 @@ class GlobalConfig {
         std::string displayName;
         bool flipZoomToolDirection = false;
 
+        // AI reangle service (docs/design/REANGLE_API.md). Demo convenience: the
+        // scoped API key + endpoint can be entered in Settings → Debug instead of
+        // exporting HVYM_TOOLS_KEY / HVYM_TOOLS_ENDPOINT. If a field is left blank
+        // the matching env var (then the built-in default endpoint) is used.
+        // NOTE: persisted to config.json in plaintext — it is spend-control, not
+        // identity, and rotatable server-side; keep it out of shared configs.
+        std::string hvymToolsKey;
+        std::string hvymToolsEndpoint;
+
         bool disableGraphicsDriverWorkarounds = false;
         int vsyncValue = 1;
         // PHASE5.5: Skia GPU resource-cache budget (MB). Large flattened layers

@@ -2658,6 +2658,9 @@ void Toolbar::general_settings_inner_gui() {
                 case GSETTINGS_DEBUG: {
                     general_scroll_area("debug settings menu", [&] {
                         checkbox_boolean_field(gui, "show performance metrics", "Show metrics", &showPerformance);
+                        text_label_light(gui, "AI Reangle service (leave blank to use HVYM_TOOLS_KEY / HVYM_TOOLS_ENDPOINT env vars)");
+                        input_text_field(gui, "hvym tools key", "HVYM Tools API key", &main.conf.hvymToolsKey);
+                        input_text_field(gui, "hvym tools endpoint", "HVYM Tools endpoint (blank = https://img.hvym.link)", &main.conf.hvymToolsEndpoint);
                         input_scalars_field(gui, "jump transition easing", "Jump easing", &main.conf.jumpTransitionEasing, 4, -10.0f, 10.0f, { .decimalPrecision = 2 });
                         input_scalar_field<int>(gui, "image load max threads", "Maximum image loading threads", &ImageResourceDisplay::IMAGE_LOAD_THREAD_COUNT_MAX, 1, 10000);
                         text_label_light(gui, "Cache related settings");

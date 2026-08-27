@@ -4,6 +4,9 @@
 #include "../DrawingProgram/DrawingProgram.hpp"
 #include "../DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
 #include "../Armature/ArmatureModalScreen.hpp"
+#include "../World.hpp"
+#include "../MainProgram.hpp"        // world.main.conf — the HVYM Tools key/endpoint fields
+#include "../GlobalConfig.hpp"
 
 #include <Helpers/Logger.hpp>
 
@@ -79,12 +82,18 @@ void ReangleFlow::begin_capture(DrawingProgram& drawP) {
 }
 
 void ReangleFlow::start(DrawingProgram& drawP, std::vector<uint8_t> png) {
-    (void)drawP;  // completion is routed through tick(), which owns the drawP ref
-    const std::string endpoint = env_or("HVYM_TOOLS_ENDPOINT", "https://img.hvym.link");
-    const char* key = std::getenv("HVYM_TOOLS_KEY");
-    if (!key || !*key) {
+    // Settings → Debug field wins; a blank field falls back to the env var, then
+    // (for the endpoint) the built-in default. Lets a demo skip the env var.
+    const GlobalConfig& conf = drawP.world.main.conf;
+    const std::string key = !conf.hvymToolsKey.empty() ? conf.hvymToolsKey
+                                                        : env_or("HVYM_TOOLS_KEY", "");
+    const std::string endpoint = !conf.hvymToolsEndpoint.empty()
+                                     ? conf.hvymToolsEndpoint
+                                     : env_or("HVYM_TOOLS_ENDPOINT", "https://img.hvym.link");
+    if (key.empty()) {
         Logger::get().log("USERINFO",
-            "Reangle is not configured — set the HVYM_TOOLS_KEY environment variable.");
+            "Reangle is not configured — set the HVYM Tools API key in Settings \xe2\x86\x92 "
+            "Debug (or the HVYM_TOOLS_KEY environment variable).");
         return;
     }
     gPending = ReangleClient::request(png, endpoint, key, 256);
