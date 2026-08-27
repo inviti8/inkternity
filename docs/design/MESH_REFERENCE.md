@@ -153,9 +153,14 @@ name**, so the client never learns the RunPod endpoint id.
 1. **Menu action** — "Add 3D Reference (sketch)" (next to "AI Reangle (3D)" in the
    Toolbar menu), gated on the warm state exactly like reangle (§7).
 2. **Input** — a rough sketch. Reuse `SquareCanvasCaptureTool`:
-   - **`transparentBackground` can stay `true`** here — TRELLIS needs the shape, not
-     an opaque drawing-on-paper. (This is the opposite of reangle, and the whole
-     reason that flag is a parameter.)
+   - **Send an OPAQUE image — `transparentBackground = false`, same as reangle.**
+     This is the proven-safe choice: reangle showed that a transparent capture
+     (bare strokes, alpha = coverage) breaks the service's isnet matte and yields
+     garbage, while an opaque drawing-on-paper image works. The mesh endpoint is
+     not implemented yet, so nothing about its input is verified — but it almost
+     certainly runs the same matte, so default to what we know works. (This is the
+     one input assumption *not* to guess at; if the endpoint later proves it
+     tolerates transparency, relax it then, with a measurement.)
    - **`centerOut` optional.** Unlike reangle we don't have to register a textured
      result back onto the source, so exact placement matters less — but center-out
      is still nicer framing. Keep the captured `CaptureRegion` anyway; §5 uses it.
