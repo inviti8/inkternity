@@ -1085,7 +1085,7 @@ CanvasComponentContainer::ObjInfo* place_model_component(
         DrawingProgram& drawP, Armature::ArmatureModel& model,
         const NetworkingObjects::NetObjID& resourceId,
         const WorldVec& regionTopLeft = WorldVec{}, const WorldScalar& regionSideWorld = WorldScalar(0),
-        double regionRotation = 0.0) {
+        double regionRotation = 0.0, bool ortho = false, float frameMargin = 1.3f) {
     auto& world = drawP.world;
     auto& main = world.main;
     auto editLayer = drawP.layerMan.get_editing_layer().lock();
@@ -1097,14 +1097,14 @@ CanvasComponentContainer::ObjInfo* place_model_component(
     model.set_height(1.0f);          // clear any leftover state from a prior edit
     model.reset_material_colors();   // (the default rig is a shared singleton)
     model.reset_morphs();
-    // Reangle: default to orthographic — the source is a flat 2D drawing, so an
-    // ortho view matches it (no perspective foreshortening) for the initial bake
-    // AND when the editor opens (persisted below via arm.d.ortho). Frame tight
-    // (small margin) so the baked figure fills the square like the captured one.
-    const bool reangle = regionSideWorld > WorldScalar(0);
+    // Framing is caller-chosen. Reangle wants orthographic + a tight margin so the
+    // baked figure fills the square and registers onto the flat source drawing (no
+    // perspective foreshortening); Add-Armature / Load-Model / mesh-reference want
+    // the default perspective + looser margin. `ortho` is persisted below via
+    // arm.d.ortho so the editor opens the same way.
     Armature::OrbitCamera cam;
-    cam.frame_bounds(model.bounds_min(), model.bounds_max(), reangle ? 1.05f : 1.3f);
-    if (reangle) cam.ortho = true;
+    cam.frame_bounds(model.bounds_min(), model.bounds_max(), frameMargin);
+    cam.ortho = ortho;
     Armature::Lighting light;
 
     constexpr int DIM = 1024;
@@ -1155,6 +1155,57 @@ CanvasComponentContainer::ObjInfo* place_model_component(
     }
     return placedInfo;
 }
+
+// Shared by reangle and mesh-reference: embed the received .glb, load it (with the
+// Z-up→Y-up correction the service's meshes need), GL-upload, place it at the
+// captured world region, and open the orbit editor on it straight away. The two
+// tools differ only in framing (ortho + tight for reangle's flat-drawing overlay,
+// perspective + loose for a draw-over reference), the resource name, and wording.
+bool place_service_mesh(DrawingProgram& drawP, std::string_view glb,
+                        const WorldVec& regionTopLeft, const WorldScalar& regionSideWorld,
+                        double regionRotation, bool ortho, float frameMargin,
+                        const char* resourceName, const char* what) {
+    const std::string label = what;
+    // Guard the loader against a non-model body (the client already validates,
+    // but this is the last line before cgltf).
+    if (glb.size() < 12 || std::memcmp(glb.data(), "glTF", 4) != 0) {
+        Logger::get().log("USERINFO", label + ": the service did not return a valid model.");
+        return false;
+    }
+    auto& world = drawP.world;
+    // Embed the received bytes in the shared ResourceManager (like Load Model, but
+    // from memory) so the on-canvas component persists and re-edits reload it.
+    ResourceData resource;
+    resource.name = resourceName;
+    resource.data = std::make_shared<std::string>(glb);
+    const auto& res = world.rMan.add_resource(resource);
+
+    Armature::ArmatureModel model;
+    std::string err;
+    // zUpToYUp: the service's meshes are Z-up (trimesh/TripoSR/TRELLIS) and would
+    // lie down in this Y-up viewer without the correction.
+    if (!model.load_from_memory(glb.data(), glb.size(), err, /*zUpToYUp=*/true)) {
+        Logger::get().log("USERINFO", label + " load: " + err);
+        return false;
+    }
+    if (!model.upload_gl(err)) {
+        Logger::get().log("USERINFO", label + " load (GL): " + err);
+        return false;
+    }
+    // Place it, then open the orbit editor straight away — the artist wants to
+    // adjust the view (reangle: bake it; mesh: pick an angle to draw over), so
+    // don't make them hunt for the model and double-click it (which also only
+    // works from the Edit tool).
+    CanvasComponentContainer::ObjInfo* placed =
+        place_model_component(drawP, model, res.get_net_id(),
+                              regionTopLeft, regionSideWorld, regionRotation, ortho, frameMargin);
+    if (!placed) return false;
+    // Mark the component so the editor's reload from the embedded bytes applies the
+    // same Z-up→Y-up correction the placed raster was baked with (runtime-only).
+    static_cast<ArmatureCanvasComponent&>(placed->obj->get_comp()).zUpToYUpHint = true;
+    ArmatureModalScreen::open_for(drawP, placed);
+    return true;
+}
 }  // namespace
 
 void ArmatureModalScreen::add_armature_to_canvas(DrawingProgram& drawP) {
@@ -1197,42 +1248,19 @@ bool ArmatureModalScreen::load_reangle_mesh_into_canvas(DrawingProgram& drawP,
                                                         const WorldVec& regionTopLeft,
                                                         const WorldScalar& regionSideWorld,
                                                         double regionRotation) {
-    // Guard the loader against a non-model body (the client already validates,
-    // but this is the last line before cgltf).
-    if (glb.size() < 12 || std::memcmp(glb.data(), "glTF", 4) != 0) {
-        Logger::get().log("USERINFO", "Reangle: the service did not return a valid model.");
-        return false;
-    }
-    auto& world = drawP.world;
-    // Embed the received bytes in the shared ResourceManager (like Load Model,
-    // but from memory) so the on-canvas component persists and re-edits reload it.
-    ResourceData resource;
-    resource.name = "reangle.glb";
-    resource.data = std::make_shared<std::string>(glb);
-    const auto& res = world.rMan.add_resource(resource);
+    // Reangle overlays a textured proxy onto a flat drawing: orthographic + a tight
+    // frame so the baked figure registers onto the source pixels.
+    return place_service_mesh(drawP, glb, regionTopLeft, regionSideWorld, regionRotation,
+                              /*ortho=*/true, /*frameMargin=*/1.05f, "reangle.glb", "Reangle");
+}
 
-    Armature::ArmatureModel model;
-    std::string err;
-    // zUpToYUp: the service's meshes are Z-up (trimesh/TripoSR) and would lie down
-    // in this Y-up viewer without the correction.
-    if (!model.load_from_memory(glb.data(), glb.size(), err, /*zUpToYUp=*/true)) {
-        Logger::get().log("USERINFO", "Reangle load: " + err);
-        return false;
-    }
-    if (!model.upload_gl(err)) {
-        Logger::get().log("USERINFO", "Reangle load (GL): " + err);
-        return false;
-    }
-    // Place it, then open the orbit editor on it straight away — the whole point
-    // of reangle is to adjust the camera and bake, so don't make the artist hunt
-    // for the model and double-click it (which also only works from the Edit tool).
-    CanvasComponentContainer::ObjInfo* placed =
-        place_model_component(drawP, model, res.get_net_id(),
-                              regionTopLeft, regionSideWorld, regionRotation);
-    if (!placed) return false;
-    // Mark the component so the editor's reload from the embedded bytes applies the
-    // same Z-up→Y-up correction the placed raster was baked with (runtime-only).
-    static_cast<ArmatureCanvasComponent&>(placed->obj->get_comp()).zUpToYUpHint = true;
-    ArmatureModalScreen::open_for(drawP, placed);
-    return true;
+bool ArmatureModalScreen::load_reference_mesh_into_canvas(DrawingProgram& drawP,
+                                                          std::string_view glb,
+                                                          const WorldVec& regionTopLeft,
+                                                          const WorldScalar& regionSideWorld,
+                                                          double regionRotation) {
+    // A draw-over reference is a real 3D object the artist orbits: default
+    // perspective + the looser framing margin, placed where the sketch was drawn.
+    return place_service_mesh(drawP, glb, regionTopLeft, regionSideWorld, regionRotation,
+                              /*ortho=*/false, /*frameMargin=*/1.3f, "reference.glb", "3D reference");
 }

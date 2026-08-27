@@ -56,6 +56,16 @@ public:
                                               const WorldVec& regionTopLeft,
                                               const WorldScalar& regionSideWorld,
                                               double regionRotation);
+    // Mesh reference (MESH_REFERENCE.md §4): place a service-produced UNTEXTURED
+    // .glb from memory as a static reference model (the flat/lit gray look) at the
+    // captured world region, then open the orbit editor. Same shape as the reangle
+    // loader but perspective + a looser frame — this is a 3D object to draw over,
+    // not a textured overlay registered onto a flat drawing. Returns false (having
+    // logged why) if the bytes aren't loadable.
+    static bool load_reference_mesh_into_canvas(DrawingProgram& drawP, std::string_view glb,
+                                                const WorldVec& regionTopLeft,
+                                                const WorldScalar& regionSideWorld,
+                                                double regionRotation);
 
     void update() override;
     void draw(SkCanvas* canvas) override;

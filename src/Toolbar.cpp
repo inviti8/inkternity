@@ -11,6 +11,7 @@
 #include "DrawingProgram/RasterResolution.hpp"
 #include "Armature/ArmatureModalScreen.hpp"  // PHASE9: armature editor + add/load actions
 #include "AI/ReangleFlow.hpp"                 // AI reangle: capture selection → 3D proxy
+#include "AI/MeshFlow.hpp"                     // AI mesh reference: sketch → untextured 3D
 #include "AI/WarmLease.hpp"                    // AI inference warm-lease (header toggle)
 #include "Diagnostics/RenderStats.hpp"
 #include "FileHelpers.hpp"
@@ -893,6 +894,26 @@ void Toolbar::top_toolbar() {
                                             return;
                                         }
                                         AI::ReangleFlow::begin_capture(main.world->drawProg);
+                                    });
+
+                                    // Mesh reference (MESH_REFERENCE.md): sketch → untextured
+                                    // orbitable 3D to draw over. Same warm gate as reangle.
+                                    const bool meshBusy = AI::MeshFlow::is_busy();
+                                    const char* meshLabel =
+                                        meshBusy ? "AI 3D Reference (working\xE2\x80\xA6)" :
+                                        aiReady  ? "AI 3D Reference (sketch)"
+                                                 : "AI 3D Reference (enable AI inference first)";
+                                    menu_popup_text_button("ai mesh reference", meshLabel, [&] {
+                                        if (AI::MeshFlow::is_busy()) {
+                                            Logger::get().log("USERINFO", "A 3D reference is already being built.");
+                                            return;
+                                        }
+                                        if (AI::WarmLease::state() != AI::WarmLease::State::WARM) {
+                                            Logger::get().log("USERINFO",
+                                                "Turn on AI inference (top bar) and wait for \"ready\" before building a reference.");
+                                            return;
+                                        }
+                                        AI::MeshFlow::begin_capture(main.world->drawProg);
                                     });
                                 }
                             }

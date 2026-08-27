@@ -1,6 +1,7 @@
 #include "ReangleFlow.hpp"
 
 #include "ReangleClient.hpp"
+#include "ServiceCapture.hpp"       // capture_has_content / encode_capture_png (shared)
 #include "../DrawingProgram/DrawingProgram.hpp"
 #include "../DrawingProgram/Tools/SquareCanvasCaptureTool.hpp"
 #include "../Armature/ArmatureModalScreen.hpp"
@@ -11,15 +12,9 @@
 #include <Helpers/Logger.hpp>
 
 #include <include/core/SkImage.h>
-#include <include/core/SkImageInfo.h>
-#include <include/core/SkPixmap.h>
-#include <include/core/SkStream.h>
-#include <include/encode/SkPngEncoder.h>
 
 #include <cstdlib>
-#include <cstring>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -38,46 +33,6 @@ SquareCanvasCaptureTool::CaptureRegion gPendingRegion;
 std::string env_or(const char* name, const std::string& fallback) {
     const char* v = std::getenv(name);
     return (v && *v) ? std::string(v) : fallback;
-}
-
-// Does the capture contain a drawing, or just an empty region? The reangle capture
-// composites all visible layers over the canvas background (WYSIWYG, opaque), so an
-// empty frame is a near-uniform image (the bare background), not transparency —
-// detect it by a lack of tonal range. Fail-open on any read failure.
-bool image_has_content(const sk_sp<SkImage>& image) {
-    if (!image) return false;
-    sk_sp<SkImage> raster = image->makeRasterImage(nullptr);
-    SkPixmap pix;
-    if (!raster || !raster->peekPixels(&pix)) return true;
-    if (pix.info().bytesPerPixel() != 4) return true;   // unknown layout → don't block
-    int lo = 255, hi = 0;
-    const int w = pix.width(), h = pix.height();
-    for (int y = 0; y < h; y += 2) {
-        const auto* row = static_cast<const uint8_t*>(pix.addr(0, y));
-        if (!row) continue;
-        for (int x = 0; x < w; x += 2) {
-            const int L = (row[x * 4] + row[x * 4 + 1] + row[x * 4 + 2]) / 3;
-            if (L < lo) lo = L;
-            if (L > hi) hi = L;
-        }
-    }
-    return (hi - lo) > 16;   // a meaningful tonal spread means there's a drawing
-}
-
-// Encode a captured square (premultiplied RGBA, transparent background) to PNG —
-// the SquareCanvasCaptureTool / BrushCustomizationDrawer icon path.
-std::optional<std::vector<uint8_t>> encode_png(const sk_sp<SkImage>& image) {
-    if (!image) return std::nullopt;
-    sk_sp<SkImage> raster = image->makeRasterImage(nullptr);
-    SkPixmap pix;
-    if (!raster || !raster->peekPixels(&pix)) return std::nullopt;
-    SkDynamicMemoryWStream stream;
-    if (!SkPngEncoder::Encode(&stream, pix, {})) return std::nullopt;
-    auto data = stream.detachAsData();
-    if (!data) return std::nullopt;
-    std::vector<uint8_t> bytes(data->size());
-    std::memcpy(bytes.data(), data->bytes(), data->size());
-    return bytes;
 }
 
 }  // namespace
@@ -104,12 +59,12 @@ void ReangleFlow::begin_capture(DrawingProgram& drawP) {
     // reference for the capture callback is safe.
     auto onCapture = [&drawP](sk_sp<SkImage> image,
                               const SquareCanvasCaptureTool::CaptureRegion& region) {
-        if (!image_has_content(image)) {
+        if (!capture_has_content(image)) {
             Logger::get().log("USERINFO",
                 "Reangle: that area is empty — frame a drawn character and try again.");
             return;
         }
-        auto png = encode_png(image);
+        auto png = encode_capture_png(image);
         if (!png) {
             Logger::get().log("USERINFO", "Reangle: could not read the captured region.");
             return;
