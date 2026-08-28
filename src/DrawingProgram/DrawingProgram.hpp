@@ -49,6 +49,10 @@ class DrawingProgram {
         // after the cached composite so it is NOT baked into the cache / flatten /
         // screenshots, and skipped in reader mode (editing aid only).
         void draw_mask_outlines(SkCanvas* canvas, const DrawData& drawData);
+        // While an AI reangle/mesh request is in flight, dim the canvas and show a
+        // "Building…" label so the wait reads as a deliberate state, not a freeze.
+        // Drawn last (over everything, screen space), skipped in screenshots/exports.
+        void draw_ai_busy_overlay(SkCanvas* canvas, const DrawData& drawData);
         void write_components_server(cereal::PortableBinaryOutputArchive& a);
         void read_components_client(cereal::PortableBinaryInputArchive& a);
         void init_server_callbacks();

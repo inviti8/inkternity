@@ -2,6 +2,8 @@
 #include "Helpers/Networking/NetLibrary.hpp"
 #include "Tools/DrawingProgramToolBase.hpp"
 #include <include/core/SkPaint.h>
+#include <include/core/SkFont.h>
+#include <include/core/SkRect.h>
 #include <include/core/SkVertices.h>
 #include "../DrawCamera.hpp"
 #include "Tools/EllipseDrawTool.hpp"
@@ -25,6 +27,8 @@
 #include <chrono>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <cmath>
 #include <include/effects/SkDashPathEffect.h>
 #ifdef HVYM_HAS_TIMELINEFX_LEGACY
 #include "../CanvasComponents/Particles/LegacyFxLibrary.hpp"
@@ -1206,7 +1210,82 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
         draw_mask_outlines(canvas, drawData);
     }
 
+    draw_ai_busy_overlay(canvas, drawData);   // dim + "Building…" while a request is in flight
+
     stats.live.drawMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
+}
+
+void DrawingProgram::draw_ai_busy_overlay(SkCanvas* canvas, const DrawData& drawData) {
+    // Only while a reangle/mesh request is actually in flight. Both flows are UI-
+    // thread-only, so is_busy() is a plain read here.
+    const bool reangleBusy = AI::ReangleFlow::is_busy();
+    const bool meshBusy = AI::MeshFlow::is_busy();
+    if(!reangleBusy && !meshBusy)
+        return;
+    if(!drawData.main)
+        return;
+
+    const float w = static_cast<float>(drawData.main->window.size.x());
+    const float h = static_cast<float>(drawData.main->window.size.y());
+    if(w <= 0.0f || h <= 0.0f)
+        return;
+
+    // NON-BLOCKING: a mesh request can be in flight for minutes (cold/throttled
+    // worker), so we must NOT dim the canvas — the artist keeps working while it
+    // runs. Just a small "Building…" pill at the bottom-centre with a pulsing dot.
+    const char* text = meshBusy ? "Building 3D reference\xE2\x80\xA6" : "Building model\xE2\x80\xA6";
+    const size_t textLen = std::strlen(text);
+
+    SkFont font;
+    font.setSize(std::clamp(h * 0.024f, 14.0f, 24.0f));
+    font.setEdging(SkFont::Edging::kAntiAlias);
+    if(drawData.main->fonts) {
+        auto it = drawData.main->fonts->map.find("Roboto");
+        if(it != drawData.main->fonts->map.end())
+            font.setTypeface(it->second);
+    }
+    const float textWidth = font.measureText(text, textLen, SkTextEncoding::kUTF8);
+    SkFontMetrics fm;
+    font.getMetrics(&fm);
+    const float textH = fm.fDescent - fm.fAscent;
+    const float fontSize = font.getSize();
+
+    // Gentle pulse for the leading dot so the pill reads as "working". Frame-based
+    // (no clock dependency); ~stable across resizes.
+    static uint32_t sBusyFrame = 0;
+    ++sBusyFrame;
+    const float pulse = 0.45f + 0.55f * (0.5f + 0.5f * std::sin(sBusyFrame * 0.11f));
+
+    const float padX = fontSize * 0.85f;
+    const float padY = fontSize * 0.5f;
+    const float dotR = fontSize * 0.22f;
+    const float dotGap = fontSize * 0.55f;
+    const float pillW = padX * 2.0f + dotR * 2.0f + dotGap + textWidth;
+    const float pillH = std::max(textH, dotR * 2.0f) + padY * 2.0f;
+    const float pillX = (w - pillW) * 0.5f;
+    const float pillY = h - pillH - h * 0.06f;   // floats above the bottom edge
+
+    SkPaint pillBg;
+    pillBg.setAntiAlias(true);
+    pillBg.setColor4f(SkColor4f{0.10f, 0.10f, 0.12f, 0.86f});
+    canvas->drawRoundRect(SkRect::MakeXYWH(pillX, pillY, pillW, pillH),
+                          pillH * 0.5f, pillH * 0.5f, pillBg);
+
+    // Leading pulsing dot.
+    SkPaint dotPaint;
+    dotPaint.setAntiAlias(true);
+    dotPaint.setColor4f(SkColor4f{0.55f, 0.80f, 1.0f, pulse});
+    const float dotCx = pillX + padX + dotR;
+    const float dotCy = pillY + pillH * 0.5f;
+    canvas->drawCircle(dotCx, dotCy, dotR, dotPaint);
+
+    // Label, vertically centred in the pill.
+    SkPaint textPaint;
+    textPaint.setAntiAlias(true);
+    textPaint.setColor4f(SkColor4f{0.96f, 0.96f, 0.97f, 1.0f});
+    const float textX = dotCx + dotR + dotGap;
+    const float textY = pillY + pillH * 0.5f - (fm.fAscent + fm.fDescent) * 0.5f;
+    canvas->drawSimpleText(text, textLen, SkTextEncoding::kUTF8, textX, textY, font, textPaint);
 }
 
 void DrawingProgram::draw_mask_outlines(SkCanvas* canvas, const DrawData& drawData) {
