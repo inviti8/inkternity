@@ -62,12 +62,17 @@ public:
     // — no CORS). `toolName` also names the tool in failure messages and logs.
     // `timeoutSeconds` is the whole-transfer budget: it MUST stay above the
     // service's own cold-start budget so a stuck job surfaces as the service's JSON
-    // error, not a client timeout — reangle ~300 s, mesh ≥900 s (MESH_API.md §3).
+    // error, not a client timeout. Since reangle 0.3.0 both tools run on the same
+    // TRELLIS worker/endpoint, so there is no per-tool number: ≥900 s for every tool,
+    // because the proxy's budget is 840 s and nginx's is 900 s and the client must be
+    // the last to give up (MESH_API.md §3). A slow response here is a normal response;
+    // the previous 300 s default let the client abort a job the service then cached,
+    // which read as "flaky, retry twice" rather than a timeout.
     static std::shared_ptr<Request> request(const std::string& baseUrl,
                                              const std::string& apiKey,
                                              const std::string& toolName,
                                              std::vector<Field> fields,
-                                             long timeoutSeconds = 300);
+                                             long timeoutSeconds = 900);
 };
 
 }  // namespace AI

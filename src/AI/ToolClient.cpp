@@ -13,6 +13,7 @@
 
 #include <curl/curl.h>
 #include <curl/multi.h>
+#include <nlohmann/json.hpp>
 
 namespace AI {
 namespace {
@@ -98,6 +99,22 @@ int xfer_callback(void* clientp, curl_off_t dltotal, curl_off_t dlnow,
 // we translate to something an artist understands and keep the body for the log.
 // Tool-specific hints (e.g. "try a front-facing pose") belong to the flow layer;
 // these stay tool-neutral and name the tool.
+// Pull `detail` out of a FastAPI-style `{"detail": "..."}` error body, if the body
+// is that JSON. Returns "" when the body is not JSON or has no string `detail` —
+// so callers can fall back to a coded message. Truncated to keep a runaway body out
+// of a toast.
+std::string json_detail(const std::vector<uint8_t>& body) {
+    try {
+        auto j = nlohmann::json::parse(body.begin(), body.end(), nullptr, /*allow_exceptions=*/false);
+        if (j.is_discarded() || !j.contains("detail") || !j["detail"].is_string()) return {};
+        std::string d = j["detail"].get<std::string>();
+        if (d.size() > 300) d.resize(300);
+        return d;
+    } catch (...) {
+        return {};
+    }
+}
+
 std::string message_for_http(const std::string& tool, long code,
                              const std::vector<uint8_t>& body) {
     switch (code) {
@@ -106,12 +123,24 @@ std::string message_for_http(const std::string& tool, long code,
         case 422: return "The " + tool + " request was malformed (internal bug).";
         case 500: return "The " + tool + " pipeline failed on this drawing — try a clearer input.";
         case 502:
-        case 504: return "The " + tool + " service is busy or warming up — try again in a moment.";
+        case 504: {
+            // The proxy's 840 s budget returns 504 with a JSON `detail` explaining a
+            // genuinely stuck job. Now that the client timeout (≥900 s) outlasts that
+            // budget, this path is actually reachable, so surface the service's own
+            // words rather than "try again in a moment" — which would train the
+            // retry-twice distrust the timeout design exists to avoid (MESH_API.md §3).
+            std::string detail = json_detail(body);
+            if (!detail.empty()) return "The " + tool + " service: " + detail;
+            return "The " + tool + " service could not finish this request in time.";
+        }
         case 503: return "The " + tool + " service is misconfigured — try again later.";
         default:  break;
     }
-    std::string detail(body.begin(), body.end());
-    if (detail.size() > 300) detail.resize(300);
+    std::string detail = json_detail(body);
+    if (detail.empty()) {
+        detail.assign(body.begin(), body.end());
+        if (detail.size() > 300) detail.resize(300);
+    }
     return "The " + tool + " service errored (HTTP " + std::to_string(code) + "): " + detail;
 }
 
