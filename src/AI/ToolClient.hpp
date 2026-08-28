@@ -60,10 +60,14 @@ public:
     // POST `fields` to {baseUrl}/tools/{toolName} with `apiKey` as X-API-Key.
     // Returns immediately; poll the handle. Native only (the WASM stub fails fast
     // — no CORS). `toolName` also names the tool in failure messages and logs.
+    // `timeoutSeconds` is the whole-transfer budget: it MUST stay above the
+    // service's own cold-start budget so a stuck job surfaces as the service's JSON
+    // error, not a client timeout — reangle ~300 s, mesh ≥900 s (MESH_API.md §3).
     static std::shared_ptr<Request> request(const std::string& baseUrl,
                                              const std::string& apiKey,
                                              const std::string& toolName,
-                                             std::vector<Field> fields);
+                                             std::vector<Field> fields,
+                                             long timeoutSeconds = 300);
 };
 
 }  // namespace AI

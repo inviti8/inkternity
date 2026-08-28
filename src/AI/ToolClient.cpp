@@ -228,7 +228,7 @@ void ToolClient::init() {
 
 std::shared_ptr<ToolClient::Request> ToolClient::request(
         const std::string& baseUrl, const std::string& apiKey,
-        const std::string& toolName, std::vector<Field> fields) {
+        const std::string& toolName, std::vector<Field> fields, long timeoutSeconds) {
     auto req = std::make_shared<Request>();
 
     if (baseUrl.empty() || apiKey.empty()) {
@@ -279,10 +279,13 @@ std::shared_ptr<ToolClient::Request> ToolClient::request(
     }
     curl_easy_setopt(h->easy, CURLOPT_MIMEPOST, h->mime);
 
-    // --- timeouts (REANGLE_API.md §2) --------------------------------------
+    // --- timeouts (REANGLE_API.md §2, MESH_API.md §3) ----------------------
     // A cold serverless worker can take minutes to first byte; a "reasonable"
-    // default aborts mid-cold-start while the job keeps running server-side.
-    curl_easy_setopt(h->easy, CURLOPT_TIMEOUT, 300L);          // whole transfer
+    // default aborts mid-cold-start while the job keeps running server-side. The
+    // budget is per-tool (mesh cold-start measured ~547 s) and must exceed the
+    // service's own budget so a stuck job surfaces as its JSON error, not a client
+    // timeout.
+    curl_easy_setopt(h->easy, CURLOPT_TIMEOUT, (long)timeoutSeconds);  // whole transfer
     curl_easy_setopt(h->easy, CURLOPT_CONNECTTIMEOUT, 15L);    // TCP+TLS only
     // During a cold start literally nothing transfers for minutes — the exact
     // condition the low-speed abort exists to kill. Disable it here.

@@ -695,7 +695,10 @@ void Toolbar::top_toolbar() {
             // lease, not a switch: it auto-releases if the app crashes/closes.
             {
                 using WL = AI::WarmLease;
-                const WL::State aiState = WL::state();
+                // reangle and mesh are separate GPU endpoints; the toggle warms BOTH
+                // (each its own lease) so either tool is ready. The indicator is the
+                // COMBINED state — "ready" only once both leases are warm.
+                const WL::State aiState = WL::combined_state();
                 const std::string aiLabel =
                     aiState == WL::State::WARM    ? "AI: ready" :
                     aiState == WL::State::WARMING ? "AI: warming\xE2\x80\xA6" :
@@ -704,18 +707,19 @@ void Toolbar::top_toolbar() {
                     .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
                     .isSelected = (aiState == WL::State::WARM || aiState == WL::State::WARMING),
                     .onClick = [&] {
-                        if (WL::is_enabled()) {
-                            WL::disable();
-                            Logger::get().log("USERINFO", "AI inference lease released.");
+                        if (WL::any_enabled()) {
+                            WL::disable_all();
+                            Logger::get().log("USERINFO", "AI inference leases released.");
                         } else {
                             std::string key, endpoint;
                             if (!AI::ReangleFlow::resolve_config(main.conf, key, endpoint))
                                 Logger::get().log("USERINFO",
                                     "Set the HVYM Tools API key in Settings \xE2\x86\x92 Debug first.");
                             else {
-                                WL::enable(endpoint, key);
+                                WL::enable(endpoint, key, "reangle");
+                                WL::enable(endpoint, key, "mesh");
                                 Logger::get().log("USERINFO",
-                                    "Warming AI inference\xE2\x80\xA6 reangle unlocks once it reads \"ready\".");
+                                    "Warming AI inference\xE2\x80\xA6 both tools unlock once it reads \"ready\".");
                             }
                         }
                     }
@@ -874,21 +878,23 @@ void Toolbar::top_toolbar() {
                                     RasterResolution::halve_layer(main.world->drawProg);
                                 });
                                 {
-                                    // Gated: disabled until AI inference is warm (top-bar
-                                    // toggle) and while a reangle is already in flight — a
-                                    // cold call would otherwise silently take minutes.
+                                    // Each tool is gated on ITS OWN endpoint's warmth —
+                                    // reangle and mesh are separate RunPod endpoints, so a
+                                    // single global "warm" would un-gate a cold tool (the
+                                    // WARM_LEASE_FIX_PROMPT.md bug). Also gated while a call
+                                    // of that tool is already in flight.
                                     const bool aiBusy = AI::ReangleFlow::is_busy();
-                                    const bool aiReady = AI::WarmLease::state() == AI::WarmLease::State::WARM;
+                                    const bool reangleReady = AI::WarmLease::state("reangle") == AI::WarmLease::State::WARM;
                                     const char* reangleLabel =
-                                        aiBusy  ? "AI Reangle (working\xE2\x80\xA6)" :
-                                        aiReady ? "AI Reangle (3D)"
-                                                : "AI Reangle (enable AI inference first)";
+                                        aiBusy       ? "AI Reangle (working\xE2\x80\xA6)" :
+                                        reangleReady ? "AI Reangle (3D)"
+                                                     : "AI Reangle (enable AI inference first)";
                                     menu_popup_text_button("ai reangle", reangleLabel, [&] {
                                         if (AI::ReangleFlow::is_busy()) {
                                             Logger::get().log("USERINFO", "A reangle is already in progress.");
                                             return;
                                         }
-                                        if (AI::WarmLease::state() != AI::WarmLease::State::WARM) {
+                                        if (AI::WarmLease::state("reangle") != AI::WarmLease::State::WARM) {
                                             Logger::get().log("USERINFO",
                                                 "Turn on AI inference (top bar) and wait for \"ready\" before reangling.");
                                             return;
@@ -897,18 +903,19 @@ void Toolbar::top_toolbar() {
                                     });
 
                                     // Mesh reference (MESH_REFERENCE.md): sketch → untextured
-                                    // orbitable 3D to draw over. Same warm gate as reangle.
+                                    // orbitable 3D to draw over. Gated on the MESH endpoint.
                                     const bool meshBusy = AI::MeshFlow::is_busy();
+                                    const bool meshReady = AI::WarmLease::state("mesh") == AI::WarmLease::State::WARM;
                                     const char* meshLabel =
-                                        meshBusy ? "AI 3D Reference (working\xE2\x80\xA6)" :
-                                        aiReady  ? "AI 3D Reference (sketch)"
-                                                 : "AI 3D Reference (enable AI inference first)";
+                                        meshBusy  ? "AI 3D Reference (working\xE2\x80\xA6)" :
+                                        meshReady ? "AI 3D Reference (sketch)"
+                                                  : "AI 3D Reference (enable AI inference first)";
                                     menu_popup_text_button("ai mesh reference", meshLabel, [&] {
                                         if (AI::MeshFlow::is_busy()) {
                                             Logger::get().log("USERINFO", "A 3D reference is already being built.");
                                             return;
                                         }
-                                        if (AI::WarmLease::state() != AI::WarmLease::State::WARM) {
+                                        if (AI::WarmLease::state("mesh") != AI::WarmLease::State::WARM) {
                                             Logger::get().log("USERINFO",
                                                 "Turn on AI inference (top bar) and wait for \"ready\" before building a reference.");
                                             return;
