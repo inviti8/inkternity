@@ -89,6 +89,11 @@ public:
     std::array<float, 4> material_color(int i) const { return mMatColor[i]; }
     void set_material_color(int i, float r, float g, float b, float a);
     void reset_material_colors();   // restore the glb defaults (shared model hygiene)
+    // Force EVERY material to one colour, updating the reset default too so it
+    // survives reset_material_colors() in the placement path. Used to render an
+    // untextured service mesh as a neutral gray mannequin instead of its glb base
+    // colour (TRELLIS ships flat white — material_0 = [1,1,1,1]).
+    void set_all_material_colors(float r, float g, float b, float a);
 
     // Shape keys / morph targets (M5.1c). Weights apply BEFORE skinning (CPU sum
     // of base + Σ w·delta, re-uploaded to the VBO). `weights` is indexed by target.

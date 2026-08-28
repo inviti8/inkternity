@@ -1166,9 +1166,13 @@ bool place_service_mesh(DrawingProgram& drawP, std::string_view glb,
                         double regionRotation, bool ortho, float frameMargin,
                         const char* resourceName, const char* what, bool ownLayer) {
     const std::string label = what;
+    const std::string tag = "[" + label + "] ";
+    Logger::get().cross_platform_println(tag + "place_service_mesh: glb " +
+        std::to_string(glb.size()) + " bytes, ownLayer=" + (ownLayer ? "true" : "false"));
     // Guard the loader against a non-model body (the client already validates,
     // but this is the last line before cgltf).
     if (glb.size() < 12 || std::memcmp(glb.data(), "glTF", 4) != 0) {
+        Logger::get().cross_platform_println(tag + "invalid model body (bad glTF magic)");
         Logger::get().log("USERINFO", label + ": the service did not return a valid model.");
         return false;
     }
@@ -1177,8 +1181,10 @@ bool place_service_mesh(DrawingProgram& drawP, std::string_view glb,
     // (MESH_REFERENCE.md §5): the artist draws the detailed version on top of it,
     // then hides/removes the reference. Reangle instead registers onto the source
     // pixels on the active layer, so it does not create a layer.
-    if (ownLayer)
+    if (ownLayer) {
+        Logger::get().cross_platform_println(tag + "creating '3D Reference' layer above the drawing");
         drawP.layerMan.listGUI.create_layer_above_editing("3D Reference");
+    }
     // Embed the received bytes in the shared ResourceManager (like Load Model, but
     // from memory) so the on-canvas component persists and re-edits reload it.
     ResourceData resource;
@@ -1191,13 +1197,24 @@ bool place_service_mesh(DrawingProgram& drawP, std::string_view glb,
     // zUpToYUp: the service's meshes are Z-up (trimesh/TripoSR/TRELLIS) and would
     // lie down in this Y-up viewer without the correction.
     if (!model.load_from_memory(glb.data(), glb.size(), err, /*zUpToYUp=*/true)) {
+        Logger::get().cross_platform_println(tag + "load_from_memory FAILED: " + err);
         Logger::get().log("USERINFO", label + " load: " + err);
         return false;
     }
+    Logger::get().cross_platform_println(tag + "load_from_memory OK (static=" +
+        std::string(model.is_static() ? "yes" : "no") + ")");
     if (!model.upload_gl(err)) {
+        Logger::get().cross_platform_println(tag + "upload_gl FAILED: " + err);
         Logger::get().log("USERINFO", label + " load (GL): " + err);
         return false;
     }
+    // An untextured service mesh (mesh reference, or a reangle whose texture
+    // failed) carries the glb's base colour — TRELLIS ships flat white — which the
+    // flat/lit shader renders as a blown-out silhouette. Force a neutral gray so it
+    // reads as a shaded clay mannequin. (Textured reangle keeps its atlas.)
+    if (!model.is_textured())
+        model.set_all_material_colors(0.55f, 0.55f, 0.58f, 1.0f);
+    Logger::get().cross_platform_println(tag + "upload_gl OK → place_model_component");
     // Place it, then open the orbit editor straight away — the artist wants to
     // adjust the view (reangle: bake it; mesh: pick an angle to draw over), so
     // don't make them hunt for the model and double-click it (which also only
@@ -1205,7 +1222,11 @@ bool place_service_mesh(DrawingProgram& drawP, std::string_view glb,
     CanvasComponentContainer::ObjInfo* placed =
         place_model_component(drawP, model, res.get_net_id(),
                               regionTopLeft, regionSideWorld, regionRotation, ortho, frameMargin);
-    if (!placed) return false;
+    if (!placed) {
+        Logger::get().cross_platform_println(tag + "place_model_component returned null (no active layer / bake failed)");
+        return false;
+    }
+    Logger::get().cross_platform_println(tag + "placed OK → opening orbit editor");
     // Mark the component so the editor's reload from the embedded bytes applies the
     // same Z-up→Y-up correction the placed raster was baked with (runtime-only).
     static_cast<ArmatureCanvasComponent&>(placed->obj->get_comp()).zUpToYUpHint = true;

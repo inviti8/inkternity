@@ -499,6 +499,38 @@ bool ArmatureModel::load_static(cgltf_data* gltf, std::string& err, bool zUpToYU
                 for (size_t k = 0; k < vcount; ++k) out.indices[k] = static_cast<uint32_t>(k);
             }
             out.indexCount = static_cast<int>(out.indices.size());
+            // TRELLIS/decimated reference meshes often ship WITHOUT normals. The
+            // vertex loop above then gives every vertex the same default normal, so
+            // the flat/lit shader renders one uniform (unshaded) tone — the "flat
+            // white" bug. Regenerate smooth vertex normals from the triangles
+            // (area-weighted face normals accumulated, then normalized) so the
+            // mannequin actually shades. Positions are already in final (upFix'd)
+            // space, so the normals come out in the right space too.
+            if (!nrm) {
+                for (size_t v = 0; v < vcount; ++v) {
+                    float* d = &out.verts[v * FLOATS_PER_VERT];
+                    d[3] = d[4] = d[5] = 0.0f;
+                }
+                for (size_t k = 0; k + 2 < out.indices.size(); k += 3) {
+                    const uint32_t i0 = out.indices[k], i1 = out.indices[k + 1], i2 = out.indices[k + 2];
+                    const float* a = &out.verts[i0 * FLOATS_PER_VERT];
+                    const float* b = &out.verts[i1 * FLOATS_PER_VERT];
+                    const float* c = &out.verts[i2 * FLOATS_PER_VERT];
+                    const Eigen::Vector3f p0(a[0], a[1], a[2]), p1(b[0], b[1], b[2]), p2(c[0], c[1], c[2]);
+                    const Eigen::Vector3f fn = (p1 - p0).cross(p2 - p0);   // area-weighted
+                    for (uint32_t idx : {i0, i1, i2}) {
+                        float* d = &out.verts[idx * FLOATS_PER_VERT];
+                        d[3] += fn.x(); d[4] += fn.y(); d[5] += fn.z();
+                    }
+                }
+                for (size_t v = 0; v < vcount; ++v) {
+                    float* d = &out.verts[v * FLOATS_PER_VERT];
+                    Eigen::Vector3f n(d[3], d[4], d[5]);
+                    if (n.squaredNorm() > 1e-20f) n.normalize();
+                    else n = Eigen::Vector3f(0.0f, 1.0f, 0.0f);
+                    d[3] = n.x(); d[4] = n.y(); d[5] = n.z();
+                }
+            }
             if (prim.material && prim.material->has_pbr_metallic_roughness) {
                 const cgltf_float* bc = prim.material->pbr_metallic_roughness.base_color_factor;
                 out.baseColor = Eigen::Vector4f(bc[0], bc[1], bc[2], bc[3]);
@@ -645,6 +677,11 @@ void ArmatureModel::set_material_color(int i, float r, float g, float b, float a
 }
 
 void ArmatureModel::reset_material_colors() { mMatColor = mMatColorDefault; }
+
+void ArmatureModel::set_all_material_colors(float r, float g, float b, float a) {
+    for (auto& c : mMatColor) c = {r, g, b, a};
+    mMatColorDefault = mMatColor;   // so reset_material_colors() keeps this colour
+}
 
 int ArmatureModel::find_target(const std::string& name) const {
     for (int t = 0; t < mTargetCount; ++t)
