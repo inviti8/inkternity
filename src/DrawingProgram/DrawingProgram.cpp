@@ -86,6 +86,7 @@ void DrawingProgram::on_tab_out() {
 }
 
 void DrawingProgram::input_paste_callback(const CustomEvents::PasteEvent& paste) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     if(paste.type == CustomEvents::PasteEvent::DataType::IMAGE)
         selection.paste_image_process_event(paste);
     else
@@ -93,6 +94,7 @@ void DrawingProgram::input_paste_callback(const CustomEvents::PasteEvent& paste)
 }
 
 void DrawingProgram::input_drop_file_callback(const InputManager::DropCallbackArgs& drop) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     if(std::filesystem::is_regular_file(drop.data)) {
         #ifdef __EMSCRIPTEN_
             add_file_to_canvas_by_path(drop.data, world.main.input.mouse.pos);
@@ -103,6 +105,7 @@ void DrawingProgram::input_drop_file_callback(const InputManager::DropCallbackAr
 }
 
 void DrawingProgram::input_drop_text_callback(const InputManager::DropCallbackArgs& drop) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     if(is_valid_http_url(drop.data)) {
         CanvasComponentContainer* newContainer = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::IMAGE);
         ImageCanvasComponent& img = static_cast<ImageCanvasComponent&>(newContainer->get_comp());
@@ -118,14 +121,17 @@ void DrawingProgram::input_drop_text_callback(const InputManager::DropCallbackAr
 }
 
 void DrawingProgram::input_text_key_callback(const InputManager::KeyCallbackArgs& key) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     drawTool->input_text_key_callback(key);
 }
 
 void DrawingProgram::input_text_callback(const InputManager::TextCallbackArgs& text) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     drawTool->input_text_callback(text);
 }
 
 void DrawingProgram::input_mouse_button_callback(const InputManager::MouseButtonCallbackArgs& button) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     auto buttonCallbacks = [&](const InputManager::MouseButtonCallbackArgs& b) {
         drawTool->input_mouse_button_on_canvas_callback(b);
     };
@@ -204,10 +210,19 @@ void DrawingProgram::input_mouse_button_callback(const InputManager::MouseButton
 }
 
 void DrawingProgram::input_mouse_motion_callback(const InputManager::MouseMotionCallbackArgs& motion) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     drawTool->input_mouse_motion_callback(motion);
 }
 
 void DrawingProgram::input_key_callback(const InputManager::KeyCallbackArgs& key) {
+    // While an AI build's modal dim is up, the canvas is locked. Esc dismisses the
+    // modal (keep working; the request still runs and places its result); every other
+    // key is swallowed so no tool switch / shortcut leaks through the dim.
+    if(ai_busy_modal_active()) {
+        if(key.key == InputManager::KEY_GENERIC_ESCAPE && key.down)
+            aiBusyModalDismissed = true;
+        return;
+    }
     switch(key.key) {
         case InputManager::KEY_DRAW_TOOL_BRUSH: {
             if(key.down && !key.repeat)
@@ -301,21 +316,25 @@ void DrawingProgram::input_key_callback(const InputManager::KeyCallbackArgs& key
 }
 
 void DrawingProgram::input_pen_button_callback(const InputManager::PenButtonCallbackArgs& button) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     pen_tool_switch_check();
     drawTool->input_pen_button_callback(button);
 }
 
 void DrawingProgram::input_pen_touch_callback(const InputManager::PenTouchCallbackArgs& touch) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     pen_tool_switch_check();
     drawTool->input_pen_touch_callback(touch);
 }
 
 void DrawingProgram::input_pen_motion_callback(const InputManager::PenMotionCallbackArgs& motion) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     pen_tool_switch_check();
     drawTool->input_pen_motion_callback(motion);
 }
 
 void DrawingProgram::input_pen_axis_callback(const InputManager::PenAxisCallbackArgs& axis) {
+    if(ai_busy_modal_active()) return;   // canvas is modal while an AI build runs
     pen_tool_switch_check();
     drawTool->input_pen_axis_callback(axis);
 }
@@ -1215,13 +1234,21 @@ void DrawingProgram::draw(SkCanvas* canvas, const DrawData& drawData) {
     stats.live.drawMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
 }
 
+bool DrawingProgram::ai_busy_modal_active() const {
+    // Both flows are UI-thread-only, so is_busy() is a plain read here.
+    return (AI::ReangleFlow::is_busy() || AI::MeshFlow::is_busy()) && !aiBusyModalDismissed;
+}
+
 void DrawingProgram::draw_ai_busy_overlay(SkCanvas* canvas, const DrawData& drawData) {
     // Only while a reangle/mesh request is actually in flight. Both flows are UI-
     // thread-only, so is_busy() is a plain read here.
     const bool reangleBusy = AI::ReangleFlow::is_busy();
     const bool meshBusy = AI::MeshFlow::is_busy();
-    if(!reangleBusy && !meshBusy)
+    if(!reangleBusy && !meshBusy) {
+        // Idle frame: arm the modal again for the next build.
+        aiBusyModalDismissed = false;
         return;
+    }
     if(!drawData.main)
         return;
 
@@ -1230,14 +1257,23 @@ void DrawingProgram::draw_ai_busy_overlay(SkCanvas* canvas, const DrawData& draw
     if(w <= 0.0f || h <= 0.0f)
         return;
 
-    // NON-BLOCKING: a mesh request can be in flight for minutes (cold/throttled
-    // worker), so we must NOT dim the canvas — the artist keeps working while it
-    // runs. Just a small "Building…" pill at the bottom-centre with a pulsing dot.
     const char* text = meshBusy ? "Building 3D reference\xE2\x80\xA6" : "Building model\xE2\x80\xA6";
     const size_t textLen = std::strlen(text);
+    const bool modal = !aiBusyModalDismissed;
+
+    // Gentle pulse for the leading dot so it reads as "working". Frame-based (no
+    // clock dependency); ~stable across resizes.
+    static uint32_t sBusyFrame = 0;
+    ++sBusyFrame;
+    const float pulse = 0.45f + 0.55f * (0.5f + 0.5f * std::sin(sBusyFrame * 0.11f));
 
     SkFont font;
-    font.setSize(std::clamp(h * 0.024f, 14.0f, 24.0f));
+    // MODAL: a larger, centred card — a generation is a commit-and-wait operation, so
+    // the whole canvas dims and input is blocked (ai_busy_modal_active) until it lands.
+    // DISMISSED (Esc): fall back to the small non-blocking bottom pill so a slow cold
+    // start can't trap the artist — the request keeps running and still places.
+    font.setSize(modal ? std::clamp(h * 0.034f, 20.0f, 34.0f)
+                       : std::clamp(h * 0.024f, 14.0f, 24.0f));
     font.setEdging(SkFont::Edging::kAntiAlias);
     if(drawData.main->fonts) {
         auto it = drawData.main->fonts->map.find("Roboto");
@@ -1250,42 +1286,76 @@ void DrawingProgram::draw_ai_busy_overlay(SkCanvas* canvas, const DrawData& draw
     const float textH = fm.fDescent - fm.fAscent;
     const float fontSize = font.getSize();
 
-    // Gentle pulse for the leading dot so the pill reads as "working". Frame-based
-    // (no clock dependency); ~stable across resizes.
-    static uint32_t sBusyFrame = 0;
-    ++sBusyFrame;
-    const float pulse = 0.45f + 0.55f * (0.5f + 0.5f * std::sin(sBusyFrame * 0.11f));
+    if(modal) {
+        // Full-canvas dim so the card reads as a deliberate state over the drawing.
+        SkPaint dim;
+        dim.setColor4f(SkColor4f{0.05f, 0.05f, 0.07f, 0.55f});
+        canvas->drawRect(SkRect::MakeXYWH(0.0f, 0.0f, w, h), dim);
+    }
+
+    // A hint line under the label (modal only) so the artist knows the wait is normal
+    // and how to keep working.
+    const char* hint = "This usually takes a few seconds \xE2\x80\x94 press Esc to keep working";
+    const size_t hintLen = std::strlen(hint);
+    SkFont hintFont;
+    hintFont.setSize(std::clamp(fontSize * 0.46f, 11.0f, 16.0f));
+    hintFont.setEdging(SkFont::Edging::kAntiAlias);
+    if(drawData.main->fonts) {
+        auto it = drawData.main->fonts->map.find("Roboto");
+        if(it != drawData.main->fonts->map.end())
+            hintFont.setTypeface(it->second);
+    }
+    const float hintWidth = modal ? hintFont.measureText(hint, hintLen, SkTextEncoding::kUTF8) : 0.0f;
+    SkFontMetrics hfm;
+    hintFont.getMetrics(&hfm);
+    const float hintH = modal ? (hfm.fDescent - hfm.fAscent) : 0.0f;
+    const float hintGap = modal ? fontSize * 0.45f : 0.0f;
 
     const float padX = fontSize * 0.85f;
-    const float padY = fontSize * 0.5f;
+    const float padY = fontSize * 0.55f;
     const float dotR = fontSize * 0.22f;
     const float dotGap = fontSize * 0.55f;
-    const float pillW = padX * 2.0f + dotR * 2.0f + dotGap + textWidth;
-    const float pillH = std::max(textH, dotR * 2.0f) + padY * 2.0f;
-    const float pillX = (w - pillW) * 0.5f;
-    const float pillY = h - pillH - h * 0.06f;   // floats above the bottom edge
+    const float rowW = dotR * 2.0f + dotGap + textWidth;
+    const float bodyW = std::max(rowW, hintWidth);
+    const float cardW = padX * 2.0f + bodyW;
+    const float rowH = std::max(textH, dotR * 2.0f);
+    const float cardH = padY * 2.0f + rowH + (modal ? hintGap + hintH : 0.0f);
+    const float cardX = (w - cardW) * 0.5f;
+    // MODAL: centred. DISMISSED: floats above the bottom edge (the old pill spot).
+    const float cardY = modal ? (h - cardH) * 0.5f : (h - cardH - h * 0.06f);
 
-    SkPaint pillBg;
-    pillBg.setAntiAlias(true);
-    pillBg.setColor4f(SkColor4f{0.10f, 0.10f, 0.12f, 0.86f});
-    canvas->drawRoundRect(SkRect::MakeXYWH(pillX, pillY, pillW, pillH),
-                          pillH * 0.5f, pillH * 0.5f, pillBg);
+    SkPaint cardBg;
+    cardBg.setAntiAlias(true);
+    cardBg.setColor4f(modal ? SkColor4f{0.12f, 0.12f, 0.15f, 0.96f}
+                            : SkColor4f{0.10f, 0.10f, 0.12f, 0.86f});
+    const float corner = modal ? std::clamp(fontSize * 0.5f, 12.0f, 22.0f) : cardH * 0.5f;
+    canvas->drawRoundRect(SkRect::MakeXYWH(cardX, cardY, cardW, cardH), corner, corner, cardBg);
 
-    // Leading pulsing dot.
+    // Leading pulsing dot, vertically centred on the label row.
+    const float rowCy = cardY + padY + rowH * 0.5f;
     SkPaint dotPaint;
     dotPaint.setAntiAlias(true);
     dotPaint.setColor4f(SkColor4f{0.55f, 0.80f, 1.0f, pulse});
-    const float dotCx = pillX + padX + dotR;
-    const float dotCy = pillY + pillH * 0.5f;
-    canvas->drawCircle(dotCx, dotCy, dotR, dotPaint);
+    const float dotCx = cardX + padX + dotR;
+    canvas->drawCircle(dotCx, rowCy, dotR, dotPaint);
 
-    // Label, vertically centred in the pill.
+    // Label.
     SkPaint textPaint;
     textPaint.setAntiAlias(true);
     textPaint.setColor4f(SkColor4f{0.96f, 0.96f, 0.97f, 1.0f});
     const float textX = dotCx + dotR + dotGap;
-    const float textY = pillY + pillH * 0.5f - (fm.fAscent + fm.fDescent) * 0.5f;
+    const float textY = rowCy - (fm.fAscent + fm.fDescent) * 0.5f;
     canvas->drawSimpleText(text, textLen, SkTextEncoding::kUTF8, textX, textY, font, textPaint);
+
+    if(modal) {
+        // Hint line, centred under the label row.
+        SkPaint hintPaint;
+        hintPaint.setAntiAlias(true);
+        hintPaint.setColor4f(SkColor4f{0.72f, 0.74f, 0.80f, 1.0f});
+        const float hintX = cardX + (cardW - hintWidth) * 0.5f;
+        const float hintY = cardY + padY + rowH + hintGap - hfm.fAscent;
+        canvas->drawSimpleText(hint, hintLen, SkTextEncoding::kUTF8, hintX, hintY, hintFont, hintPaint);
+    }
 }
 
 void DrawingProgram::draw_mask_outlines(SkCanvas* canvas, const DrawData& drawData) {

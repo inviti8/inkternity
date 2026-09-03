@@ -50,9 +50,16 @@ class DrawingProgram {
         // screenshots, and skipped in reader mode (editing aid only).
         void draw_mask_outlines(SkCanvas* canvas, const DrawData& drawData);
         // While an AI reangle/mesh request is in flight, dim the canvas and show a
-        // "Building…" label so the wait reads as a deliberate state, not a freeze.
-        // Drawn last (over everything, screen space), skipped in screenshots/exports.
+        // centred "Building…" card so the wait reads as a deliberate modal state, not
+        // a freeze. Drawn last (over everything, screen space), skipped in
+        // screenshots/exports. Canvas input is blocked while the modal is up (see
+        // ai_busy_modal_active); Esc drops it to a small corner pill (the request
+        // keeps running and still places its result) so a slow cold start can't trap
+        // the artist.
         void draw_ai_busy_overlay(SkCanvas* canvas, const DrawData& drawData);
+        // True while an AI request is in flight AND the artist has not pressed Esc to
+        // keep working. Canvas/tool input callbacks early-out on this.
+        bool ai_busy_modal_active() const;
         void write_components_server(cereal::PortableBinaryOutputArchive& a);
         void read_components_client(cereal::PortableBinaryInputArchive& a);
         void init_server_callbacks();
@@ -171,6 +178,11 @@ class DrawingProgram {
         bool temporaryEraser = false;
         TemporaryMoveToolSwitch tempMoveToolSwitch = TemporaryMoveToolSwitch::NONE;
         DrawingProgramToolType toolTypeAfterTempMove;
+
+        // Set when the artist presses Esc during an AI build to dismiss the modal dim
+        // and keep working; reset to false the frame no request is in flight, so each
+        // new build starts modal again. See draw_ai_busy_overlay / ai_busy_modal_active.
+        bool aiBusyModalDismissed = false;
 
         struct GlobalControls {
             std::optional<WorldScalar> lockedCameraScale;
