@@ -195,6 +195,18 @@ class Toolbar {
         bool showPerformance = false;
 
         bool menuPopUpOpen = false;
+        // Which flyout submenu of the main (hamburger) menu is open, if any.
+        // Only one is open at a time; reset to NONE whenever the main menu
+        // closes. See the "main menu popup" block in Toolbar.cpp.
+        enum class FileMenuSubmenu { NONE, IMPORT, EXPORT, EDIT, AI, NETWORK };
+        FileMenuSubmenu openFileSubmenu = FileMenuSubmenu::NONE;
+        // Element of the currently-open flyout submenu (if any). Reassigned
+        // every layout pass (nullptr when no group is open) and read by the
+        // main menu's outside-click handler, which fires on a LATER input
+        // pass. It MUST be a member, not a build-time stack local: the stored
+        // onClick outlives the layout stack frame, so a by-reference capture
+        // of a local would dangle and crash on the next click. See Toolbar.cpp.
+        GUIStuff::Element* openFileSubmenuElem = nullptr;
         bool optionsMenuOpen = false;
         bool playerMenuOpen = false;
 

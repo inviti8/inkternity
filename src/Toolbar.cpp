@@ -505,6 +505,8 @@ void Toolbar::top_toolbar() {
 
             Element* mainMenuButton = icon_button_top_toolbar("Main Menu Button", "data/icons/menu.svg", menuPopUpOpen, [&] {
                 menuPopUpOpen = !menuPopUpOpen;
+                if(!menuPopUpOpen)
+                    openFileSubmenu = FileMenuSubmenu::NONE;
             });
 
             std::vector<MovableTabListData::IconNamePair> tabNames;
@@ -739,6 +741,14 @@ void Toolbar::top_toolbar() {
             }
 
             if(menuPopUpOpen) {
+                // Reset per layout pass; the build below sets it to the open
+                // flyout submenu's element (if any) so the outside-click handler
+                // can tell a click ON the floating submenu (which sits outside
+                // the main panel's bounds) apart from a click truly outside the
+                // whole menu. This is a MEMBER (openFileSubmenuElem), not a stack
+                // local, because the handler's onClick is stored and fires on a
+                // later input pass — a by-ref capture of a local would dangle.
+                openFileSubmenuElem = nullptr;
                 gui.set_z_index(5, [&] {
                     gui.element<LayoutElement>("main menu popup", [&] (LayoutElement*, const Clay_ElementId& id) {
                         CLAY(id, {
@@ -761,7 +771,61 @@ void Toolbar::top_toolbar() {
                                     .onClick = [&, onClick]{
                                         onClick();
                                         menuPopUpOpen = false;
+                                        openFileSubmenu = FileMenuSubmenu::NONE;
                                     }
+                                });
+                            };
+                            // A collapsible group row ("Import ›", "Edit ›", …).
+                            // Clicking it toggles a flyout child popup that floats
+                            // to the RIGHT of the main menu, top-aligned with the
+                            // row, holding the group's leaf items (each built with
+                            // menu_popup_text_button, so a leaf click runs its
+                            // action and closes the whole menu). Only one group is
+                            // open at a time. gui.new_id namespaces the reused
+                            // inner ids per group so sibling rows don't collide
+                            // (same fix the fx/brush menus needed).
+                            auto menu_group_button = [&](FileMenuSubmenu which, const char* label, const std::function<void()>& buildItems) {
+                                gui.new_id(8200 + static_cast<int>(which), [&] {
+                                    gui.element<LayoutElement>("file menu group row", [&] (LayoutElement*, const Clay_ElementId& gid) {
+                                        CLAY(gid, {
+                                            .layout = {
+                                                .sizing = {.width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIT(0) },
+                                                .layoutDirection = CLAY_TOP_TO_BOTTOM
+                                            }
+                                        }) {
+                                            text_button(gui, "file menu group button", std::string(label) + "   \xE2\x80\xBA", {
+                                                .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                                                .isSelected = (openFileSubmenu == which),
+                                                .wide = true,
+                                                .centered = false,
+                                                .onClick = [&, which]{
+                                                    openFileSubmenu = (openFileSubmenu == which)
+                                                        ? FileMenuSubmenu::NONE : which;
+                                                }
+                                            });
+                                            if(openFileSubmenu == which) {
+                                                gui.set_z_index(gui.get_z_index() + 1, [&] {
+                                                    gui.element<LayoutElement>("file menu submenu popup", [&] (LayoutElement* submenuElem, const Clay_ElementId& sid) {
+                                                        openFileSubmenuElem = submenuElem;
+                                                        CLAY(sid, {
+                                                            .layout = {
+                                                                .sizing = {.width = CLAY_SIZING_FIT(160), .height = CLAY_SIZING_FIT(0) },
+                                                                .padding = CLAY_PADDING_ALL(io.theme->padding1),
+                                                                .childGap = 1,
+                                                                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_TOP},
+                                                                .layoutDirection = CLAY_TOP_TO_BOTTOM
+                                                            },
+                                                            .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+                                                            .cornerRadius = CLAY_CORNER_RADIUS(io.theme->windowCorners1),
+                                                            .floating = {.offset = {.x = static_cast<float>(io.theme->padding1), .y = 0}, .zIndex = gui.get_z_index(), .attachPoints = {.element = CLAY_ATTACH_POINT_LEFT_TOP, .parent = CLAY_ATTACH_POINT_RIGHT_TOP}, .attachTo = CLAY_ATTACH_TO_PARENT}
+                                                        }) {
+                                                            buildItems();
+                                                        }
+                                                    });
+                                                });
+                                            }
+                                        }
+                                    });
                                 });
                             };
                             menu_popup_text_button("new file local", "New File", [&] {
@@ -773,116 +837,90 @@ void Toolbar::top_toolbar() {
                             if(!main.world->clientStillConnecting) {
                                 menu_popup_text_button("save file", "Save", [&] { save_func(); });
                                 menu_popup_text_button("save as file", "Save As", [&] { save_as_func(); });
-                                #ifndef __EMSCRIPTEN__
-                                // Export/Import a single layer group (folder or
-                                // layer) to a .inkgroup sidecar — lift a group
-                                // out of one canvas and drop it into another
-                                // (e.g. recover a group deleted from a later
-                                // working file). Export needs one selected item.
-                                menu_popup_text_button("export layer group", "Export Layer Group…", [&] {
-                                    open_file_selector("Export Layer Group", {{"Inkternity Layer Group", World::GROUP_FILE_EXTENSION}}, [w = make_weak_ptr(main.world)](const std::filesystem::path& p, const auto& e) {
-                                        auto world = w.lock();
-                                        if(world)
-                                            world->drawProg.layerMan.listGUI.export_selected_group(p);
-                                    }, "", true);
-                                });
-                                menu_popup_text_button("import layer group", "Import Layer Group…", [&] {
-                                    open_file_selector("Import Layer Group", {{"Inkternity Layer Group", World::GROUP_FILE_EXTENSION}}, [w = make_weak_ptr(main.world)](const std::filesystem::path& p, const auto& e) {
-                                        auto world = w.lock();
-                                        if(world)
-                                            world->drawProg.layerMan.listGUI.import_group_from_file(p);
-                                    }, "", false);
-                                });
-                                #endif
-                                menu_popup_text_button("screenshot", "Screenshot", [&] { main.world->drawProg.switch_to_tool(DrawingProgramToolType::SCREENSHOT); });
-                                menu_popup_text_button("add image or file to canvas", "Add Image/File to Canvas", [&] {
-                                    #ifdef __EMSCRIPTEN__
-                                        emscripten_browser_file::upload("*", [](std::string const& fileName, std::string const& mimeType, std::string_view buffer, void* callbackData) {
-                                            if(!buffer.empty()) {
+
+                                // Import ›  — bring outside content into the canvas.
+                                menu_group_button(FileMenuSubmenu::IMPORT, "Import", [&] {
+                                    menu_popup_text_button("add image or file to canvas", "Add Image/File to Canvas", [&] {
+                                        #ifdef __EMSCRIPTEN__
+                                            emscripten_browser_file::upload("*", [](std::string const& fileName, std::string const& mimeType, std::string_view buffer, void* callbackData) {
+                                                if(!buffer.empty()) {
+                                                    CustomEvents::emit_event<CustomEvents::AddFileToCanvasEvent>({
+                                                        .type = CustomEvents::AddFileToCanvasEvent::Type::BUFFER,
+                                                        .name = fileName,
+                                                        .buffer = std::string(buffer)
+                                                    });
+                                                }
+                                            }, &main);
+                                        #else
+                                            open_file_selector("Open File", {{"Any File", "*"}}, [&](const std::filesystem::path& p, const auto& e) {
                                                 CustomEvents::emit_event<CustomEvents::AddFileToCanvasEvent>({
-                                                    .type = CustomEvents::AddFileToCanvasEvent::Type::BUFFER,
-                                                    .name = fileName,
-                                                    .buffer = std::string(buffer)
+                                                    .type = CustomEvents::AddFileToCanvasEvent::Type::PATH,
+                                                    .filePath = p,
+                                                    .pos = main.window.size.cast<float>() / 2.0f
                                                 });
-                                            }
-                                        }, &main);
-                                    #else
-                                        open_file_selector("Open File", {{"Any File", "*"}}, [&](const std::filesystem::path& p, const auto& e) {
-                                            CustomEvents::emit_event<CustomEvents::AddFileToCanvasEvent>({
-                                                .type = CustomEvents::AddFileToCanvasEvent::Type::PATH,
-                                                .filePath = p,
-                                                .pos = main.window.size.cast<float>() / 2.0f
                                             });
+                                        #endif
+                                    });
+                                    #ifdef HVYM_HAS_TIMELINEFX_LEGACY
+                                    menu_popup_text_button("import fx library", "Import FX Library (.eff)", [&] {
+                                        open_file_selector("Import FX Library", {{"TimelineFX Library", "eff"}}, [&](const std::filesystem::path& p, const auto& e) {
+                                            main.world->drawProg.import_fx_library(p);
                                         });
+                                    });
+                                    #endif
+                                    #ifndef __EMSCRIPTEN__
+                                    // Import a single layer group (folder or layer) from a
+                                    // .inkgroup sidecar — drop a group lifted from another
+                                    // canvas into this one (e.g. recover a group deleted
+                                    // from a later working file).
+                                    menu_popup_text_button("import layer group", "Import Layer Group…", [&] {
+                                        open_file_selector("Import Layer Group", {{"Inkternity Layer Group", World::GROUP_FILE_EXTENSION}}, [w = make_weak_ptr(main.world)](const std::filesystem::path& p, const auto& e) {
+                                            auto world = w.lock();
+                                            if(world)
+                                                world->drawProg.layerMan.listGUI.import_group_from_file(p);
+                                        }, "", false);
+                                    });
                                     #endif
                                 });
-                                #ifdef HVYM_HAS_TIMELINEFX_LEGACY
-                                menu_popup_text_button("import fx library", "Import FX Library (.eff)", [&] {
-                                    open_file_selector("Import FX Library", {{"TimelineFX Library", "eff"}}, [&](const std::filesystem::path& p, const auto& e) {
-                                        main.world->drawProg.import_fx_library(p);
+
+                                // Export ›  — take content out of the canvas.
+                                menu_group_button(FileMenuSubmenu::EXPORT, "Export", [&] {
+                                    menu_popup_text_button("screenshot", "Screenshot", [&] { main.world->drawProg.switch_to_tool(DrawingProgramToolType::SCREENSHOT); });
+                                    #ifndef __EMSCRIPTEN__
+                                    // Export a single layer group (folder or layer) to a
+                                    // .inkgroup sidecar. Needs one selected item.
+                                    menu_popup_text_button("export layer group", "Export Layer Group…", [&] {
+                                        open_file_selector("Export Layer Group", {{"Inkternity Layer Group", World::GROUP_FILE_EXTENSION}}, [w = make_weak_ptr(main.world)](const std::filesystem::path& p, const auto& e) {
+                                            auto world = w.lock();
+                                            if(world)
+                                                world->drawProg.layerMan.listGUI.export_selected_group(p);
+                                        }, "", true);
+                                    });
+                                    #endif
+                                });
+
+                                // Edit ›  — consolidating / rasterizing layer operations.
+                                menu_group_button(FileMenuSubmenu::EDIT, "Edit", [&] {
+                                    menu_popup_text_button("flatten layer", "Flatten Layer", [&] {
+                                        RasterFlatten::flatten_layer(main.world->drawProg);
+                                    });
+                                    menu_popup_text_button("consolidate vectors", "Consolidate Vector Strokes", [&] {
+                                        RasterFlatten::consolidate_vectors(main.world->drawProg);
+                                    });
+                                    menu_popup_text_button("optimize vectors", "Optimize Vector Object", [&] {
+                                        RasterFlatten::optimize_vectors(main.world->drawProg);
+                                    });
+                                    menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
+                                        RasterResolution::halve_layer(main.world->drawProg);
                                     });
                                 });
-                                #endif
-                                if(main.world->netObjMan.is_connected()) {
-                                    menu_popup_text_button("lobby info", "Lobby Info", [&] {
-                                        optionsMenuOpen = true;
-                                        optionsMenuType = LOBBY_INFO_MENU;
-                                    });
-                                }
-                                menu_popup_text_button("start hosting", "Host", [&] {
-                                    // Default to SUBSCRIPTION when the canvas is portal-published —
-                                    // that's the artist's likely intent for a published canvas — and
-                                    // COLLAB otherwise. Artist can still flip in the menu.
-                                    hostMenuMode = main.world->has_subscription_metadata()
-                                        ? HostMode::SUBSCRIPTION : HostMode::COLLAB;
-                                    if (hostMenuMode == HostMode::SUBSCRIPTION) {
-                                        // DISTRIBUTION-PHASE0.md §12.5: stable share code derived
-                                        // from (app_seed_bytes, canvas_id). World::start_hosting will
-                                        // install the same globalID on NetLibrary before connect,
-                                        // so the preview here matches the actual WSS path.
-                                        std::string previewGlobal;
-                                        if (main.devKeys.is_loaded()) {
-                                            previewGlobal = CanvasShareId::derive_global_id(main.devKeys.app_seed_bytes(), main.world->canvasId);
-                                            serverLocalID = CanvasShareId::derive_local_id(main.devKeys.app_seed_bytes(), main.world->canvasId);
-                                        }
-                                        if (previewGlobal.empty() || serverLocalID.empty()) {
-                                            // Fallback: degraded path with localID-only stability
-                                            // (matches pre-§12.5 behavior). World::start_hosting
-                                            // logs why; the lobby code will rotate per launch.
-                                            previewGlobal = NetLibrary::get_global_id();
-                                            serverLocalID = NetLibrary::deterministic_local_id_from_seed(main.world->canvasId);
-                                        }
-                                        serverToConnectTo = previewGlobal + serverLocalID;
-                                    } else {
-                                        // Ephemeral: fresh random for ad-hoc collab sessions.
-                                        serverLocalID = NetLibrary::get_random_server_local_id();
-                                        serverToConnectTo = NetLibrary::get_global_id() + serverLocalID;
-                                    }
-                                    optionsMenuOpen = true;
-                                    optionsMenuType = HOST_MENU;
-                                });
-                                menu_popup_text_button("canvas specific settings", "Canvas Settings", [&] {
-                                    optionsMenuOpen = true;
-                                    optionsMenuType = CANVAS_SETTINGS_MENU;
-                                });
-                                menu_popup_text_button("flatten layer", "Flatten Layer", [&] {
-                                    RasterFlatten::flatten_layer(main.world->drawProg);
-                                });
-                                menu_popup_text_button("consolidate vectors", "Consolidate Vector Strokes", [&] {
-                                    RasterFlatten::consolidate_vectors(main.world->drawProg);
-                                });
-                                menu_popup_text_button("optimize vectors", "Optimize Vector Object", [&] {
-                                    RasterFlatten::optimize_vectors(main.world->drawProg);
-                                });
-                                menu_popup_text_button("reduce layer resolution", "Reduce Layer Resolution (\xc2\xbd)", [&] {
-                                    RasterResolution::halve_layer(main.world->drawProg);
-                                });
-                                {
-                                    // Each tool is gated on ITS OWN endpoint's warmth —
-                                    // reangle and mesh are separate RunPod endpoints, so a
-                                    // single global "warm" would un-gate a cold tool (the
-                                    // WARM_LEASE_FIX_PROMPT.md bug). Also gated while a call
-                                    // of that tool is already in flight.
+
+                                // AI ›  — generative helpers. Each tool is gated on ITS
+                                // OWN endpoint's warmth — reangle and mesh are separate
+                                // RunPod endpoints, so a single global "warm" would
+                                // un-gate a cold tool (the WARM_LEASE_FIX_PROMPT.md bug).
+                                // Also gated while a call of that tool is already in flight.
+                                menu_group_button(FileMenuSubmenu::AI, "AI", [&] {
                                     const bool aiBusy = AI::ReangleFlow::is_busy();
                                     const bool reangleReady = AI::WarmLease::state("reangle") == AI::WarmLease::State::WARM;
                                     const char* reangleLabel =
@@ -922,13 +960,71 @@ void Toolbar::top_toolbar() {
                                         }
                                         AI::MeshFlow::begin_capture(main.world->drawProg);
                                     });
-                                }
+                                });
+
+                                // Network ›  — session sharing. Connect stays reachable
+                                // even mid-connect (see the else branch below); Host and
+                                // Lobby Info require the not-still-connecting context, so
+                                // they live only here.
+                                menu_group_button(FileMenuSubmenu::NETWORK, "Network", [&] {
+                                    menu_popup_text_button("start connecting", "Connect", [&] {
+                                        serverToConnectTo.clear();
+                                        optionsMenuOpen = true;
+                                        optionsMenuType = CONNECT_MENU;
+                                    });
+                                    menu_popup_text_button("start hosting", "Host", [&] {
+                                        // Default to SUBSCRIPTION when the canvas is portal-published —
+                                        // that's the artist's likely intent for a published canvas — and
+                                        // COLLAB otherwise. Artist can still flip in the menu.
+                                        hostMenuMode = main.world->has_subscription_metadata()
+                                            ? HostMode::SUBSCRIPTION : HostMode::COLLAB;
+                                        if (hostMenuMode == HostMode::SUBSCRIPTION) {
+                                            // DISTRIBUTION-PHASE0.md §12.5: stable share code derived
+                                            // from (app_seed_bytes, canvas_id). World::start_hosting will
+                                            // install the same globalID on NetLibrary before connect,
+                                            // so the preview here matches the actual WSS path.
+                                            std::string previewGlobal;
+                                            if (main.devKeys.is_loaded()) {
+                                                previewGlobal = CanvasShareId::derive_global_id(main.devKeys.app_seed_bytes(), main.world->canvasId);
+                                                serverLocalID = CanvasShareId::derive_local_id(main.devKeys.app_seed_bytes(), main.world->canvasId);
+                                            }
+                                            if (previewGlobal.empty() || serverLocalID.empty()) {
+                                                // Fallback: degraded path with localID-only stability
+                                                // (matches pre-§12.5 behavior). World::start_hosting
+                                                // logs why; the lobby code will rotate per launch.
+                                                previewGlobal = NetLibrary::get_global_id();
+                                                serverLocalID = NetLibrary::deterministic_local_id_from_seed(main.world->canvasId);
+                                            }
+                                            serverToConnectTo = previewGlobal + serverLocalID;
+                                        } else {
+                                            // Ephemeral: fresh random for ad-hoc collab sessions.
+                                            serverLocalID = NetLibrary::get_random_server_local_id();
+                                            serverToConnectTo = NetLibrary::get_global_id() + serverLocalID;
+                                        }
+                                        optionsMenuOpen = true;
+                                        optionsMenuType = HOST_MENU;
+                                    });
+                                    if(main.world->netObjMan.is_connected()) {
+                                        menu_popup_text_button("lobby info", "Lobby Info", [&] {
+                                            optionsMenuOpen = true;
+                                            optionsMenuType = LOBBY_INFO_MENU;
+                                        });
+                                    }
+                                });
+
+                                menu_popup_text_button("canvas specific settings", "Canvas Settings", [&] {
+                                    optionsMenuOpen = true;
+                                    optionsMenuType = CANVAS_SETTINGS_MENU;
+                                });
+                            } else {
+                                // Still connecting as a client: only Connect is offered
+                                // (matches the prior always-visible Connect entry).
+                                menu_popup_text_button("start connecting", "Connect", [&] {
+                                    serverToConnectTo.clear();
+                                    optionsMenuOpen = true;
+                                    optionsMenuType = CONNECT_MENU;
+                                });
                             }
-                            menu_popup_text_button("start connecting", "Connect", [&] {
-                                serverToConnectTo.clear();
-                                optionsMenuOpen = true;
-                                optionsMenuType = CONNECT_MENU;
-                            });
                             menu_popup_text_button("open options", "Settings", [&] {
                                 optionsMenuOpen = true;
                                 optionsMenuType = GENERAL_SETTINGS_MENU;
@@ -946,8 +1042,17 @@ void Toolbar::top_toolbar() {
                         }
                     }, LayoutElement::Callbacks {
                         .onClick = [&, mainMenuButton](LayoutElement* l, const InputManager::MouseButtonCallbackArgs& button) {
-                            if(!l->mouseHovering && button.down && !mainMenuButton->mouseHovering) {
+                            // A leaf/group in an open flyout submenu floats OUTSIDE this
+                            // panel's bounds, so a click there registers as "outside" here.
+                            // Only treat it as a dismiss when the click is also outside the
+                            // open submenu — otherwise using a submenu would slam the whole
+                            // menu shut before its own leaf handler runs.
+                            const bool overSubmenu = openFileSubmenuElem &&
+                                (openFileSubmenuElem->mouseHovering || openFileSubmenuElem->childMouseHovering);
+                            if(!l->mouseHovering && button.down && !mainMenuButton->mouseHovering
+                               && !overSubmenu) {
                                 menuPopUpOpen = false;
+                                openFileSubmenu = FileMenuSubmenu::NONE;
                                 gui.set_to_layout();
                             }
                         }
