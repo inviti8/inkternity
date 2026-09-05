@@ -1,13 +1,30 @@
-# AI_BILLING_INTEGRATION.md — warm-time billing, wallet-native, crypto-rails-gated
+# AI_BILLING_INTEGRATION.md — warm-time billing, wallet-native, no free tier
 
 **Status:** planning → model decided; cost basis grounded in live RunPod data.
-**Owners:** Inkternity client + hvym-img-tools proxy + HEAVYMETA portal.
+**Owners:** Inkternity client + hvym-img-tools proxy (HEAVYMETA is the payee).
 **Depends on:** the crypto-rails opt-in (`verifiablePublishingEnabled` pattern), the
-`WalletPanel`/`DevKeys` Stellar wallet, the `WarmLease` lifecycle, the proxy's `/warm` lease,
-and [[project_glasswing_keypair_pattern]] (portal identity).
+`WalletPanel`/`DevKeys` Stellar wallet, the `WarmLease` lifecycle, and the proxy's `/warm` lease.
 
 Related: `docs/design/MESH_REFERENCE.md`, hvym-img-tools `docs/WARMING.md` (the billing
 brief this builds on), `docs/AUTH.md`, `docs/DEPLOY.md`.
+
+---
+
+## 0. Governing decision
+
+**The inference endpoint is always payment-required. There is no free tier.** No paid, live
+warm window → no warm → no inference, full stop. An unfunded wallet gets nothing.
+
+This one rule sets the shape of everything below:
+- **No portal identity in the billing path.** A portal-issued credential was only ever needed
+  to gate free trial minutes against Sybil. With no free tier, there is nothing free to
+  Sybil, so billing auth rides the **client-side `DevKeys` wallet key** and nothing else. The
+  portal handshake stays where it belongs — C2PA verifiable publishing — and has no role here.
+- **Fund safety is client-side.** Losing the wallet on reinstall is solved by the mnemonic
+  export/restore the app already ships (`DevKeys::restore_from_input`, the standing decision in
+  `C2PA.md:572-576`). No portal recovery, no custody.
+- **Free-riding is impossible by construction, not by client secrecy** (§6): every request is
+  either a settled payment or a signature from a wallet that already paid the current window.
 
 ---
 
@@ -18,18 +35,21 @@ HEAVYMETA for the GPU they spin up. The service side already decided the shape (
 **the artist pays for warm time, not per image** — active/warm GPU is the entire cost, and a
 generation is ~5–11 s of GPU on a worker that costs the same warm or inferring.
 
-**The core decision (this pass): AI is a crypto-rails feature, paid wallet-native.** It sits
-behind the same opt-in that already gates verifiable publishing, and it is paid **peer-to-peer
-from the user's own self-custodied Stellar wallet** — the same wallet C2PA already uses. No
-fiat, no merchant-of-record, no server-held balance, no on-ramp. This is the elegant path: we
-already have a wallet and signing; we use them, rather than building a fiat system beside them.
+**The core decision: AI is a crypto-rails feature, paid wallet-native, with no free tier.** It
+sits behind the same opt-in that already gates verifiable publishing, and it is paid
+**peer-to-peer from the user's own self-custodied Stellar wallet** — the same wallet C2PA
+already uses. No fiat, no merchant-of-record, no server-held balance, no on-ramp, no free
+minutes. This is the elegant path: we already have a wallet and signing; we use them, rather
+than building a fiat system or a trial-tier Sybil defense beside them.
 
-That choice dissolves the two problems we kept hitting:
+That choice dissolves the problems we kept hitting:
 - **Money-transmitter risk** — avoided by construction (see §2.4): opt-in, self-custody, and
   HEAVYMETA only ever *receives* crypto as payment for its own service.
 - **Crypto-averse friction** — scoped out: AI is for users who turn crypto rails on, exactly
   the bargain verifiable publishing already makes. We are not trying to serve AI to users who
   won't touch a wallet.
+- **Free-tier Sybil / portal-identity gating** — scoped out entirely by having no free tier
+  (§0, §6). The paid path needs no portal identity to defend.
 
 ---
 
@@ -61,13 +81,22 @@ That choice dissolves the two problems we kept hitting:
    never from the request — a throttled/cold worker the artist waited on but never got must
    not bill.
 7. **Server authoritative on time.** The proxy owns the warm window and `held_s()`; never
-   trust the client clock. Minimal state: a **paid-through timestamp per identity**, not a
+   trust the client clock. Minimal state: a **paid-through timestamp per wallet pubkey**, not a
    full prepaid ledger.
-8. **Product tradeoff, owned:** AI tools are **crypto-rails-only**. Crypto-averse users don't
-   get them — the same call verifiable publishing already made, plausibly the same audience.
-9. **Prerequisite: portal-issued identity.** Auth must not ride on raw `DevKeys` — it's a
-   plaintext, reinstall-invalidated dev stand-in. Finishing portal identity issuance
-   ([[project_glasswing_keypair_pattern]]) is the **gate** before real money (see §6).
+8. **Product tradeoff, owned:** AI tools are **crypto-rails-only, pay-to-play**. Crypto-averse
+   users don't get them, and there is no free trial to seed adoption — the funded wallet *is*
+   the price of entry. Same bargain verifiable publishing already made, plausibly the same
+   audience. The growth lever we give up (free minutes) is an accepted cost, not an oversight.
+9. **No free tier; always payment-required.** The endpoint never serves inference without a
+   paid, live warm window (§0). This deletes the only Sybil surface (§6) and removes any need
+   for a portal-issued identity as a money gate.
+10. **Identity is the client-side wallet key — no portal in the billing path.** Auth rides the
+    existing `DevKeys` ed25519 wallet keypair (`app_pubkey`/`app_secret`), signing each
+    request. Fund safety is client-side mnemonic export/restore, already shipped
+    (`DevKeys::restore_from_input`; standing decision `C2PA.md:572-576`). The portal identity
+    ([[project_glasswing_keypair_pattern]]) is **not** a billing prerequisite — it remains
+    relevant only to C2PA publishing, and reinstall of the app is recovered by restoring the
+    mnemonic (same seed → same pubkey → same paid-through window).
 
 ---
 
@@ -169,7 +198,7 @@ nobody burns balance staring at the canvas. Small revenue give-back, large trust
 
 ```
 Inkternity (C++, crypto rails ON)        Proxy (hvym-img-tools)        RunPod
-  WarmLease::worker() ──renew (signed, free)──► /warm  ── keepalive ──► worker (warm)
+  WarmLease::worker() ──renew (wallet-signed, free)──► /warm ── keepalive ──► worker (warm)
   x402 client ────────pay next window (signed XLM/USDC payment)───────►
                         POST /warm/pay (402 → verify payment) ──► extend paid-through window
   ToolClient::request ──generate (free while warm)──────► /tools/{name}
@@ -177,17 +206,21 @@ Inkternity (C++, crypto rails ON)        Proxy (hvym-img-tools)        RunPod
 ```
 
 - **Gate (client):** AI toggle + warm path appear only when crypto rails are enabled and the
-  wallet has balance — mirror `verifiablePublishingEnabled` (`FileSelectScreen.cpp:599`).
-- **Identity (client):** every `/warm` renewal and `/tools/*` call is **signed by the
-  identity key** so the proxy knows who to hold warm / attribute. This replaces the constant
-  `kLabel = "inkternity"` in `WarmLease` — the whole per-user attribution gap is that one
-  string becoming a signed identity.
+  wallet has balance — mirror `verifiablePublishingEnabled` (`FileSelectScreen.cpp:599`). The
+  client check is UX; the authoritative gate is the proxy returning `402` until a payment
+  extends the window.
+- **Identity (client):** every `/warm` renewal and `/tools/*` call is **signed by the wallet
+  key** (`DevKeys` ed25519) so the proxy knows which paid window to attribute it to. This
+  replaces the constant `kLabel = "inkternity"` in `WarmLease` — the whole per-user
+  attribution gap is that one string becoming a signed wallet identity. No portal, no
+  server-issued credential: the key is the one the app already generated on first launch.
 - **Payment (client ↔ proxy):** the x402 endpoint. `402` carries price + payee address +
   window length; the client answers with a **signed Stellar payment from the wallet**; the
-  proxy verifies it landed and extends this identity's warm window. Coarse (~15 min).
-- **Window accounting (proxy):** minimal — a **paid-through timestamp per identity**; warm is
-  granted while `now < paid_through`; renewals refuse (→ lease lapses → AI auto-disables in
-  the app) once it passes and no new payment arrives. No prepaid balance held by HEAVYMETA.
+  proxy verifies it landed and extends this pubkey's warm window. Coarse (~15 min).
+- **Window accounting (proxy):** minimal — a **paid-through timestamp per wallet pubkey**;
+  warm is granted while `now < paid_through`; renewals refuse (→ lease lapses → AI
+  auto-disables in the app) once it passes and no new payment arrives. No prepaid balance held
+  by HEAVYMETA.
 - **Top-up (client):** *not our flow.* The user funds their own wallet with their own USDC;
   `WalletPanel` just shows the balance (it already does the Horizon read). If they have no
   crypto, acquiring it is a third-party on-ramp's job — outside the app and outside our
@@ -205,14 +238,15 @@ model must **not** depend on client secrecy. The goal is to make free-riding *st
 impossible*, which the pay-from-wallet model does for free.
 
 ### The reframe
-Free-riding collapses into "spending a funded wallet." If every inference request is
-attributed to a **funded, server-tracked identity**, a cracked client can't get *free*
-inference — only spend value someone funded. The server answers two questions the client
-cannot forge:
-1. **Which identity/wallet does this charge?** (authenticate identity)
-2. **Has it paid for the current window, and did its owner authorize this?** (verify signature)
+With no free tier (§0), free-riding collapses into "spending a funded wallet." Every inference
+request is attributed to a **funded, server-tracked wallet pubkey**, so a cracked client can't
+get *free* inference — only spend value someone funded. The server answers two questions the
+client cannot forge:
+1. **Which wallet does this charge?** (the payment's source account / the signing pubkey)
+2. **Has it paid for the current window, and did its owner authorize this request?** (verify
+   the signature over a server nonce)
 
-Neither depends on the binary being secret.
+Neither depends on the binary being secret, and neither needs a portal.
 
 ### Kill the current primitive
 `HVYM_TOOLS_KEY` today is a **single shared bearer secret** (`X-API-Key`), self-described as
@@ -220,42 +254,38 @@ Neither depends on the binary being secret.
 once → free inference for everyone until rotation. **This is the exact free-ride vector.** It
 must not gate billing — keep it, if at all, only as a coarse bot-gate / kill-switch.
 
-### Reuse the rails we already have
-- **Identity:** per-install `DevKeys` ed25519 keypair (`app_pubkey`/`app_secret`), upgraded
-  to the **portal-issued** credential in Phase 1.
+### Reuse the rails we already have — all client-side
+- **Identity:** the per-install `DevKeys` ed25519 wallet keypair (`app_pubkey`/`app_secret`).
+  No portal upgrade needed for billing — the paid path (below) makes provenance of the key
+  irrelevant. Recovery on reinstall is the shipped mnemonic export/restore.
 - **Signed-request auth (not bearer):** every `/warm` renewal and `/tools/*` call is signed
-  by the identity key over a **server nonce + timestamp + lease_id**. Server verifies against
+  by the wallet key over a **server nonce + timestamp + lease_id**. Server verifies against
   the claimed pubkey. Replay-proof. Reuses the `base64url(sig).base64url(payload)` ed25519
   envelope from `Subscription/TokenVerifier` (`parse_and_check_signature`) and `C2PA/WireToken`.
   The x402 pay path is already a signed payment, so it self-authenticates the settlement.
-- **Provenance / trust anchor:** portal-minted token binding {identity → account}, verified
-  by the proxy via the `is_trusted` / registry pattern — distinguishes a real provisioned
-  account from a raw self-minted key; enables revoke and gating.
 
-**Sybil is free but worthless on the paid path:** mint 10,000 `DevKeys` identities — each has
-an empty wallet. Inference requires a funded window → they pay. Free inference is impossible
-by construction.
-
-### The one place client integrity still matters: the free tier
-Self-minted identities + N free trial-minutes each = unlimited free inference via Sybil.
-**This is the real Sybil surface — not the paid path.** Bind any free grant to a
-**portal-issued** identity that costs something to create (email / captcha / device check),
-verified through the WireToken / `is_trusted` rails. The paid path needs none of this.
+### Why the paid-only model needs no trust anchor
+On the paid path, provenance of the identity is moot: mint 10,000 `DevKeys` wallets — each has
+an empty balance, and inference requires a funded, paid window. A self-minted key and a
+"provisioned" one are worth exactly the same to the proxy: nothing until they pay. So the
+`is_trusted` / portal-registry machinery that C2PA uses has **no role in billing** — there is
+no free grant to protect and nothing to revoke that money doesn't already govern. Free
+inference is impossible by construction, not by a registry.
 
 ### Residual threats (all bounded)
 | Threat | Outcome | Mitigation |
 |---|---|---|
 | Extract shared API key | Free inference today | Remove it as billing auth; coarse gate/kill-switch only |
 | Clone client, reimplement requests | Still must pay per window from a funded wallet | Not free-riding — a paying customer on another client |
-| Steal `app_secret` (plaintext on disk) | Drain **that user's** wallet | Portal identity + encryption at rest + session-float sub-wallet; loss capped at wallet balance |
+| Steal `app_secret` (plaintext on disk) | Drain **that user's** wallet | Wallet-hardening (independent of billing): encryption at rest and/or a small session-float sub-wallet so the on-disk key never holds much. Self-custody → loss capped at wallet balance, and it's the user's key. |
 | Share one funded key across people | Concurrent paid usage | Refcounted; can't exceed what's funded |
-| Sybil the **free tier** | Free minutes ×∞ | Portal-issued, cost-to-create identity for trial grants only |
+| Replay a signed renewal | Ride someone's paid window | Server nonce + timestamp + lease_id in the signed payload |
 
-**Net:** shared key retired as the auth primitive; **signed-per-identity requests +
-pay-from-wallet are the defense** (economic, robust to cracking by construction); the
-**portal handshake is the trust anchor** and the only thing between us and free-tier Sybil.
-No new crypto — the ed25519 wire-token + portal machinery already exists, pointed at the
-inference path.
+**Net:** shared key retired as the auth primitive; **signed-per-wallet requests +
+pay-from-wallet are the defense** — economic, robust to cracking by construction, and entirely
+client-side. No portal, no server-issued credential, no free tier to Sybil. The ed25519
+wire-token envelope already exists (`WireToken`, `TokenVerifier`); billing just points it at
+the inference path.
 
 ---
 
@@ -264,12 +294,16 @@ inference path.
 | Phase | Where | Work |
 |---|---|---|
 | **0 — validate rate** | proxy | Reconcile $1.12/hr against `/billing/endpoints` after a real day. Confirms every number in §3–4. |
-| **1 — identity** | client + portal | Portal-issued credential ([[project_glasswing_keypair_pattern]]); sign `/warm` + `/tools/*` with it. **Gate for real money.** |
-| **2 — window accounting** | proxy | Paid-through timestamp per identity; grant warm while inside it; refuse renewal past it. Lightweight — metering half-exists (`Lease.label`/`held_s()`). |
-| **3 — x402 endpoint** | proxy | `402` challenge → verify a signed Stellar payment landed → extend the window. |
+| **1 — signed identity** | client (C++) | Sign `/warm` + `/tools/*` with the existing `DevKeys` wallet key over a server nonce; replace the hardcoded `kLabel = "inkternity"`; retire `HVYM_TOOLS_KEY` as auth. No portal, no new credential. |
+| **2 — window accounting** | proxy | Paid-through timestamp per **wallet pubkey**; grant warm while inside it; refuse renewal past it. Lightweight — metering half-exists (`Lease.label`/`held_s()`). |
+| **3 — x402 endpoint** | proxy | `402` challenge → verify a signed Stellar payment landed → extend the window. Idempotent on payment tx id. |
 | **4 — x402 client** | client (C++) | Native x402 in `WarmLease`/`ToolClient`: sign a Stellar payment from the wallet, retry, extend. |
 | **5 — crypto-rails gate + UX** | client | Gate the AI toggle behind crypto-rails-enabled + funded (mirror `verifiablePublishingEnabled`); wallet balance, low-balance warning, auto-disable at zero, idle auto-shutoff. Reuse `WalletPanel`. |
 | **6 — display** | client | Live "~$0.05/min · ~$2.40 in wallet · ~48 min" on the AI toggle; settled in USDC for stable pricing. |
+
+There is no portal-identity phase: with no free tier (§0), the paid path authenticates itself.
+Optional wallet-hardening (encrypt `app_secret` at rest / session-float sub-wallet, §6 table)
+can land any time and is not a gate.
 
 ---
 
@@ -285,8 +319,12 @@ inference path.
    an artist forfeits on early exit. Tunable.
 4. **Warm-window vs. streaming.** A single payment per window is simple; Stellar payment
    channels could stream finer later. Not needed for v1.
-5. **Free tier / trial** — N free warm-minutes to seed adoption, bound to portal identity?
-   Comes straight out of the 63% margin.
+5. **Free tier / trial — RESOLVED: no.** The endpoint is always payment-required (§0, §2.9).
+   No free minutes, no portal identity to gate them. Revisit only if adoption demands it, and
+   then as a deliberate reversal that reintroduces the Sybil surface this decision removes.
+6. **Wallet hardening — when?** Encrypting `app_secret` at rest and/or a session-float
+   sub-wallet (§6 table) reduces on-disk-key drain risk. Not a launch gate; schedule against
+   how much balance users realistically hold.
 
 ---
 
@@ -295,10 +333,12 @@ inference path.
 | Risk | Mitigation |
 |---|---|
 | Published $1.12/hr wrong | Phase 0 reconciles against real billing before pricing is fixed. |
-| Auth/identity orphaned on reinstall | Phase 1 portal identity (the hard gate). |
+| Wallet/funds lost on reinstall | Client-side mnemonic export/restore (already shipped, `DevKeys::restore_from_input`); same seed → same pubkey → same paid-through window. No portal recovery, no custody. |
+| `app_secret` plaintext on disk stolen | Wallet drain capped at that user's balance (self-custody). Optional hardening: encryption at rest / session-float sub-wallet (§6, §8.6) — not a gate. |
 | Forgotten warm burns wallet balance | Lease TTL bounds it to ~60 s; idle auto-shutoff on top. |
 | Throttled worker, artist waits, no model | Settle on **grant**, not request — no warm, no charge. |
 | XLM volatility | Settle in **USDC**; price windows in USD. |
 | Double-charge on retry | Idempotent window extension keyed on the payment tx id. |
+| Replay of a signed request | Server nonce + timestamp + lease_id in the signed payload. |
 | Concurrency contention | `workersMax` scales with concurrent warm users; refcounting shares one worker where clients overlap. |
-| AI unavailable to crypto-averse users | **Accepted** — AI is a crypto-rails feature (§2.8), same bargain as verifiable publishing. |
+| AI unavailable to crypto-averse users | **Accepted** — AI is a crypto-rails, pay-to-play feature (§2.8), same bargain as verifiable publishing. |
