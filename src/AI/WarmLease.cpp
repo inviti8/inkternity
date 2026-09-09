@@ -1,4 +1,5 @@
 #include "WarmLease.hpp"
+#include "RequestSigner.hpp"
 
 #include <Helpers/Logger.hpp>
 
@@ -39,7 +40,27 @@ std::string gUrl, gKey;                     // shared base + key (same for both 
 std::map<std::string, Lease> gLeases;       // key = tool name ("reangle" | "mesh")
 std::unique_ptr<std::thread> gThread;
 
-const char* kLabel = "inkternity";          // shows in the service's lease metering
+// Fallback lease-metering label when no wallet identity is loaded. With a
+// DevKeys identity present, the label IS the wallet pubkey (per-user
+// attribution) — the single-string change AI_BILLING_INTEGRATION.md §5 calls
+// the whole attribution gap. Kept only as the pre-identity fallback.
+const char* kLabel = "inkternity";
+
+// The metering label for /warm bodies: the wallet pubkey when signing is
+// available, else the legacy shared label.
+std::string lease_label() {
+    return RequestSigner::available() ? RequestSigner::pubkey() : std::string(kLabel);
+}
+
+// Append the Phase-1 signed-identity headers (X-Ink-Pubkey / X-Ink-Auth) to a
+// curl header list, alongside the existing X-API-Key. No-op when no identity is
+// loaded. Returns the (possibly-grown) list.
+curl_slist* append_signed_headers(curl_slist* headers, const std::string& method,
+                                  const std::string& tool, const std::string& leaseId) {
+    for (const auto& h : RequestSigner::sign_request(method, "/warm", tool, leaseId))
+        headers = curl_slist_append(headers, (h.name + ": " + h.value).c_str());
+    return headers;
+}
 
 size_t collect(void* data, size_t size, size_t nmemb, void* userp) {
     auto* out = static_cast<std::string*>(userp);
@@ -80,7 +101,7 @@ struct WarmResult {
 // Build a /warm body. `tool` is ALWAYS included — omitting it warms reangle by
 // default (the bug). `lease_id` only on renew/release.
 std::string warm_body(const std::string& tool, const std::string& leaseId) {
-    std::string b = "{\"tool\":\"" + tool + "\",\"label\":\"" + kLabel + "\"";
+    std::string b = "{\"tool\":\"" + tool + "\",\"label\":\"" + lease_label() + "\"";
     if (!leaseId.empty()) b += ",\"lease_id\":\"" + leaseId + "\"";
     b += "}";
     return b;
@@ -101,6 +122,7 @@ WarmResult post_warm(const std::string& baseUrl, const std::string& key,
     curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, ("X-API-Key: " + key).c_str());
     headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = append_signed_headers(headers, "POST", tool, leaseId);
 
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_POSTFIELDS, body.c_str());
@@ -148,6 +170,7 @@ void delete_warm(const std::string& baseUrl, const std::string& key,
     curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, ("X-API-Key: " + key).c_str());
     headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = append_signed_headers(headers, "DELETE", tool, leaseId);
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_CUSTOMREQUEST, "DELETE");
     curl_easy_setopt(c, CURLOPT_POSTFIELDS, body.c_str());

@@ -4,6 +4,7 @@
 #include "Helpers/FileDownloader.hpp"
 #include "AI/ReangleClient.hpp"
 #include "AI/WarmLease.hpp"
+#include "AI/RequestSigner.hpp"
 #include "Screens/FileSelectScreen.hpp"
 #include "Screens/DesktopDrawingProgramScreen.hpp"
 #include "Screens/PhoneDrawingProgramScreen.hpp"
@@ -751,6 +752,13 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         mS.m->load_config();
         mS.m->devKeys.ensure_app_keypair(mS.m->conf.configPath);
         mS.m->devKeys.load(mS.m->conf.configPath);
+
+        // AI_BILLING_INTEGRATION.md Phase 1 — arm request signing with the
+        // wallet identity so /warm and /tools/* calls are attributed to the
+        // DevKeys pubkey. Disabled (no-op) if the keypair didn't load.
+        AI::RequestSigner::init(
+            mS.m->devKeys.is_loaded() ? mS.m->devKeys.app_seed_bytes() : nullptr,
+            mS.m->devKeys.is_loaded() ? mS.m->devKeys.app_pubkey() : std::string());
 
         // DISTRIBUTION-PHASE1.md §4.3 — auto-host every published
         // canvas via a `--host-only` side-instance OS process. Each

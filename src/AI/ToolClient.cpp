@@ -1,4 +1,5 @@
 #include "ToolClient.hpp"
+#include "RequestSigner.hpp"
 
 #include <Helpers/Logger.hpp>
 
@@ -290,7 +291,13 @@ std::shared_ptr<ToolClient::Request> ToolClient::request(
     curl_easy_setopt(h->easy, CURLOPT_URL, url.c_str());
 
     // --- auth --------------------------------------------------------------
+    // X-API-Key stays (coarse gate + coordinated cutover), plus the Phase-1
+    // signed-identity headers so the proxy attributes inference to the wallet
+    // pubkey, not the shared key (AI_BILLING_INTEGRATION.md §5-6). No-op when
+    // no DevKeys identity is loaded.
     h->headers = curl_slist_append(h->headers, ("X-API-Key: " + apiKey).c_str());
+    for (const auto& sh : RequestSigner::sign_request("POST", "/tools/" + toolName, toolName, ""))
+        h->headers = curl_slist_append(h->headers, (sh.name + ": " + sh.value).c_str());
     curl_easy_setopt(h->easy, CURLOPT_HTTPHEADER, h->headers);
 
     // --- multipart body ----------------------------------------------------
