@@ -1,6 +1,7 @@
 #include "RegistrationFlow.hpp"
 
 #include "Bundle.hpp"
+#include "SharedStellarCli.hpp"
 #include "SorobanSubmit.hpp"
 #include "WalletPanel.hpp"
 #include "../MainProgram.hpp"
@@ -18,12 +19,9 @@
 namespace C2PA {
 
 RegistrationFlow::RegistrationFlow(std::filesystem::path configPath)
-    : cli_(configPath),
+    : cli_(shared_stellar_cli(configPath)),   // shared, probed on first use
       store_(std::move(configPath)),
       reg_(cli_) {
-    // Probe the stellar CLI eagerly so subsequent registry / submit
-    // calls don't pay the PATH-resolution cost on the GUI thread.
-    cli_.probe();
 }
 
 RegistrationFlow::~RegistrationFlow() {

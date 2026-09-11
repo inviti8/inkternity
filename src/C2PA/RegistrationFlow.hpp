@@ -92,10 +92,12 @@ private:
     // four walkthrough cards re-render against ROT semantics.
     void begin_rotation(MainProgram& main);
 
-    // Backend modules (long-lived per session).
-    StellarCli cli_;
-    KeyStore   store_;
-    Registry   reg_;
+    // Backend modules (long-lived per session). cli_ is the process-wide shared
+    // StellarCli (see SharedStellarCli.hpp) — borrowed, not owned, so AI billing
+    // and verifiable publishing share one probe/install.
+    StellarCli& cli_;
+    KeyStore    store_;
+    Registry    reg_;
 
     // CA + derived bundle. Lazy-initialized in ensure_ca_loaded.
     AppCa       ca_;

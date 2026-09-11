@@ -1,5 +1,7 @@
 #include "WarmLease.hpp"
 #include "RequestSigner.hpp"
+#include "WarmPay.hpp"
+#include "X402Challenge.hpp"
 
 #include <Helpers/Logger.hpp>
 
@@ -10,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -34,11 +37,18 @@ struct Lease {
 
 std::atomic<bool> gShutdown{false};
 
-std::mutex gMutex;                          // guards gUrl/gKey/gLeases + CV predicate
+std::mutex gMutex;                          // guards gUrl/gKey/gLeases + CV predicate + billing
 std::condition_variable gCv;
 std::string gUrl, gKey;                     // shared base + key (same for both tools)
 std::map<std::string, Lease> gLeases;       // key = tool name ("reangle" | "mesh")
 std::unique_ptr<std::thread> gThread;
+
+// Billing (Phase 4). Set once the artist consents; the renewal thread reads these
+// to answer a 402 by paying a warm window on-chain. gConsumedPriceIds guards
+// against paying the same quote twice within a retry storm (§4 settle-on-grant).
+bool gPayEnabled = false;
+PayContext gPayCtx;
+std::set<std::string> gConsumedPriceIds;
 
 // Fallback lease-metering label when no wallet identity is loaded. With a
 // DevKeys identity present, the label IS the wallet pubkey (per-user
@@ -96,6 +106,8 @@ struct WarmResult {
     double      elapsed = 0.0;
     double      ttl = 60.0;          // lease_ttl_s from the response
     double      renewWithin = 20.0;  // renew_within_s from the response
+    bool        paymentRequired = false;  // HTTP 402 — no live paid window
+    std::string body;                     // response body (the x402 challenge on 402)
 };
 
 // Build a /warm body. `tool` is ALWAYS included — omitting it warms reangle by
@@ -145,6 +157,7 @@ WarmResult post_warm(const std::string& baseUrl, const std::string& key,
     if (http != 200) {
         Logger::get().cross_platform_println("[warm:" + tool + "] HTTP " +
             std::to_string(http) + ": " + resp.substr(0, 200));
+        if (http == 402) { r.paymentRequired = true; r.body = resp; }
         return r;
     }
     auto j = nlohmann::json::parse(resp, nullptr, /*allow_exceptions=*/false);
@@ -157,6 +170,50 @@ WarmResult post_warm(const std::string& baseUrl, const std::string& key,
     r.renewWithin = j.value("renew_within_s", 20.0);
     r.ok = true;
     return r;
+}
+
+// Wrap post_warm with the Phase-4 pay path: on a 402, if billing is enabled and
+// consented, buy a warm window on-chain (once per quote) and retry. Runs on the
+// renewal thread, entirely OUTSIDE gMutex — settlement is a 5-10 s CLI round trip.
+WarmResult warm_with_pay(const std::string& baseUrl, const std::string& key,
+                         const std::string& tool, const std::string& leaseId) {
+    WarmResult r = post_warm(baseUrl, key, tool, leaseId);
+    if (r.ok || !r.paymentRequired) return r;
+
+    PayContext ctx;
+    bool enabled = false;
+    {
+        std::lock_guard<std::mutex> lk(gMutex);
+        enabled = gPayEnabled;
+        ctx = gPayCtx;
+    }
+    if (!enabled) return r;   // no consent/identity — surfaces as FAILED
+
+    auto ch = X402Challenge::parse(r.body);
+    if (!ch || !ch->valid()) {
+        Logger::get().cross_platform_println("[warm:" + tool + "] 402 with unparseable challenge");
+        return r;
+    }
+
+    // Don't pay the same quote twice (retry storms / settle-on-grant pending window).
+    {
+        std::lock_guard<std::mutex> lk(gMutex);
+        if (!ch->priceId.empty() && gConsumedPriceIds.count(ch->priceId))
+            return post_warm(baseUrl, key, tool, leaseId);   // already paid; just retry
+        auto it = gLeases.find(tool);                          // show PAYING while we settle
+        if (it != gLeases.end()) it->second.state = WarmLease::State::PAYING;
+    }
+
+    const SettleResult s = settle_window(*ch, tool, baseUrl, key, ctx);
+    if (!s.ok) {
+        Logger::get().cross_platform_println("[warm:" + tool + "] window purchase failed: " + s.error);
+        return r;   // stays FAILED; the artist sees the reason in the log
+    }
+    {
+        std::lock_guard<std::mutex> lk(gMutex);
+        if (!ch->priceId.empty()) gConsumedPriceIds.insert(ch->priceId);
+    }
+    return post_warm(baseUrl, key, tool, leaseId);   // window granted (or pending) — retry
 }
 
 void delete_warm(const std::string& baseUrl, const std::string& key,
@@ -215,7 +272,7 @@ void worker() {
         for (auto& [t, lid] : toRelease) delete_warm(url, key, t, lid);
         std::vector<std::pair<std::string, WarmResult>> results;
         results.reserve(toRenew.size());
-        for (auto& [t, lid] : toRenew) results.emplace_back(t, post_warm(url, key, t, lid));
+        for (auto& [t, lid] : toRenew) results.emplace_back(t, warm_with_pay(url, key, t, lid));
 
         {
             std::lock_guard<std::mutex> lk(gMutex);
@@ -289,6 +346,19 @@ void WarmLease::disable_all() {
     gCv.notify_all();
 }
 
+void WarmLease::set_billing(const PayContext& ctx) {
+    std::lock_guard<std::mutex> lk(gMutex);
+    gPayCtx = ctx;
+    gPayEnabled = (ctx.cli != nullptr && !ctx.secret.empty() && !ctx.pubkey.empty());
+}
+
+void WarmLease::clear_billing() {
+    std::lock_guard<std::mutex> lk(gMutex);
+    gPayEnabled = false;
+    gPayCtx = PayContext{};
+    gConsumedPriceIds.clear();
+}
+
 void WarmLease::cleanup() {
     { std::lock_guard<std::mutex> lk(gMutex); gShutdown = true; }
     gCv.notify_all();
@@ -348,6 +418,8 @@ void WarmLease::cleanup() {}
 void WarmLease::enable(const std::string&, const std::string&, const std::string&) {}
 void WarmLease::disable(const std::string&) {}
 void WarmLease::disable_all() {}
+void WarmLease::set_billing(const PayContext&) {}
+void WarmLease::clear_billing() {}
 bool WarmLease::is_enabled(const std::string&) { return false; }
 WarmLease::State WarmLease::state(const std::string&) { return State::OFF; }
 float WarmLease::elapsed_s(const std::string&) { return 0.0f; }

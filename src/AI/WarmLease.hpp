@@ -20,6 +20,8 @@
 #include <atomic>
 #include <string>
 
+#include "WarmPay.hpp"   // PayContext — the identity + stellar CLI the 402 path needs
+
 class GlobalConfig;
 
 namespace AI {
@@ -34,6 +36,7 @@ public:
         WARMING,   // lease held, worker not ready to serve yet
         WARM,      // a worker can serve this tool now
         FAILED,    // the lease poll is failing (shown, but keeps retrying)
+        PAYING,    // a 402 came back; buying a warm window on-chain right now
     };
 
     static void init();      // reset flags (call at startup, before enable)
@@ -48,6 +51,13 @@ public:
     static void disable(const std::string& tool);
     // Release every held lease (the top-bar toggle's "off").
     static void disable_all();
+
+    // Give the renewal thread what it needs to answer a 402 by paying on-chain
+    // (AI_BILLING_PHASE4.md §5). Call once the artist has consented ("confirm
+    // first, then auto"); after this, a 402 during warm auto-settles a window.
+    // Without it (or after clear_billing), a 402 just fails — no money moves.
+    static void set_billing(const PayContext& ctx);
+    static void clear_billing();
 
     // Per-tool status — gate each tool's button on ITS OWN tool.
     static bool  is_enabled(const std::string& tool);  // lease held/attempted for this tool?
