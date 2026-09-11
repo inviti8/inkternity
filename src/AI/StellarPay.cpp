@@ -218,10 +218,12 @@ PayResult StellarPay::pay(const StellarCli& cli,
     const std::string xdr2 = extract_xdr(encoded.out);
     if (xdr2.empty()) { r.error = "could not read memo'd transaction XDR"; r.raw = encoded.out; return r; }
 
-    // 5. Sign (needs the passphrase to compute the tx hash), then send.
+    // 5. Sign (needs the passphrase to compute the tx hash — and 23.4.1 also
+    //    requires --rpc-url alongside it), then send.
     auto signed_ = run(cli, {
         "tx", "sign", xdr2,
         "--sign-with-key", sourceSecret,
+        "--rpc-url", rpcUrl,
         "--network-passphrase", networkPassphrase,
     });
     if (!signed_.ok()) { r.error = "tx sign failed"; r.raw = signed_.out; return r; }
