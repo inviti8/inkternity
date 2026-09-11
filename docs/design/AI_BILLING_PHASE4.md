@@ -267,6 +267,23 @@ follows `config_for_env_or_global`, cross-checked against the challenge's `netwo
 
 ## 10. Task breakdown (ordered, each independently testable)
 
+**Status (2026-09-11):** tasks 1–7 built + committed on reangle-pipeline (`0eef1f4`
+core, `5f12636` shared-cli + WarmLease 402 engine, `a42b11d` toolbar consent, `9511d36`
+sign fix). Pipeline **validated on-chain** — a 5-step memo'd testnet USDC payment settled
+(tx `3bfa26c3c5927268baca7e0b33078d85c2bd6a133d6a17c329a6c9c0f8183ce3`, Horizon confirms
+`memo_type=text memo='phase4-test'`). Gotcha found + fixed: `stellar tx sign`/`tx hash`
+need `--rpc-url` alongside `--network-passphrase` in 23.4.1.
+
+**Task 8 DONE (2026-09-11) — full app-through-proxy e2e PASSED.** `inkternity
+--x402-selftest` (X402SelfTest.{hpp,cpp}, commit `2ae99f1`) drove the real compiled
+RequestSigner→X402Challenge→StellarPay→WarmPay against a payment-ENFORCED proxy on testnet
+(hvym-img-tools `scripts/x402_e2e_server.py`): 402 → on-chain USDC pay (memo=price_id) →
+`/warm/pay` → window credited → `/warm` returned `state=warm ready=true`. Two 0.75 USDC
+payments settled (artist wallet 10→8.5). Fix found by the run: `tx send --quiet` prints no
+scrapeable hash → compute it up front with `tx hash`. **All Phase-4 tasks complete.**
+Optional follow-ups only: ToolClient 402 path; consent-card live balance line.
+
+
 1. **Confirm memo JSON shape** (§2.2 task #1) against testnet; write the stroops
    converter + a `stellar_pay` smoke test that pays testnet USDC by hand.
 2. **`StellarPay`** (§3.1) — `ensure_trustline`, `pay`, `has_trustline`. Test
