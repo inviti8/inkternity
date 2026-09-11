@@ -1,6 +1,9 @@
 # AI_BILLING_INTEGRATION.md — warm-time billing, wallet-native, no free tier
 
-**Status:** planning → model decided; cost basis grounded in live RunPod data.
+**Status:** SHIPPING — client Phases 1–4 built, validated end-to-end on Stellar testnet,
+released in v0.14.0-rc15 (see `AI_BILLING_PHASE4.md`). Proxy Phases 2–3 live on `img.hvym.link`
+with enforcement flags OFF. Remaining: Phase 0 (rate reconcile), Phase 5 UX gating (consent
+card done; funded-gate / low-balance / idle-shutoff pending), Phase 6 (live cost display).
 **Owners:** Inkternity client + hvym-img-tools proxy (HEAVYMETA is the payee).
 **Depends on:** the crypto-rails opt-in (`verifiablePublishingEnabled` pattern), the
 `WalletPanel`/`DevKeys` Stellar wallet, the `WarmLease` lifecycle, and the proxy's `/warm` lease.
@@ -291,15 +294,17 @@ the inference path.
 
 ## 7. Build phases
 
-| Phase | Where | Work |
-|---|---|---|
-| **0 — validate rate** | proxy | Reconcile $1.12/hr against `/billing/endpoints` after a real day. Confirms every number in §3–4. |
-| **1 — signed identity** | client (C++) | Sign `/warm` + `/tools/*` with the existing `DevKeys` wallet key over a server nonce; replace the hardcoded `kLabel = "inkternity"`; retire `HVYM_TOOLS_KEY` as auth. No portal, no new credential. |
-| **2 — window accounting** | proxy | Paid-through timestamp per **wallet pubkey**; grant warm while inside it; refuse renewal past it. Lightweight — metering half-exists (`Lease.label`/`held_s()`). |
-| **3 — x402 endpoint** | proxy | `402` challenge → verify a signed Stellar payment landed → extend the window. Idempotent on payment tx id. |
-| **4 — x402 client** | client (C++) | Native x402 in `WarmLease`/`ToolClient`: sign a Stellar payment from the wallet, retry, extend. |
-| **5 — crypto-rails gate + UX** | client | Gate the AI toggle behind crypto-rails-enabled + funded (mirror `verifiablePublishingEnabled`); wallet balance, low-balance warning, auto-disable at zero, idle auto-shutoff. Reuse `WalletPanel`. |
-| **6 — display** | client | Live "~$0.05/min · ~$2.40 in wallet · ~48 min" on the AI toggle; settled in USDC for stable pricing. |
+Status key: ✅ done · 🟡 partial · ⬜ pending. Client work detail in `AI_BILLING_PHASE4.md`.
+
+| Phase | Status | Where | Work |
+|---|---|---|---|
+| **0 — validate rate** | ⬜ | proxy | Reconcile $1.12/hr against `/billing/endpoints` after a real day. Confirms every number in §3–4. |
+| **1 — signed identity** | ✅ | client (C++) | Sign `/warm` + `/tools/*` with the existing `DevKeys` wallet key over a server nonce; replace the hardcoded `kLabel = "inkternity"`; retire `HVYM_TOOLS_KEY` as auth. No portal, no new credential. *(ff02443)* |
+| **2 — window accounting** | ✅ | proxy | Paid-through timestamp per **wallet pubkey**; grant warm while inside it; refuse renewal past it. Lightweight — metering half-exists (`Lease.label`/`held_s()`). *(shipped on `img.hvym.link`, flag off)* |
+| **3 — x402 endpoint** | ✅ | proxy | `402` challenge → verify a signed Stellar payment landed → extend the window. Idempotent on payment tx id. *(shipped, flag off)* |
+| **4 — x402 client** | ✅ | client (C++) | Native x402 in `WarmLease`: sign a Stellar payment from the wallet, retry, extend. Validated e2e on testnet. *(2ae99f1; `ToolClient` 402 path still optional)* |
+| **5 — crypto-rails gate + UX** | 🟡 | client | Consent card done (confirm-first). Pending: gate the AI toggle on crypto-rails-enabled + funded, low-balance warning, auto-disable at zero, idle auto-shutoff. Reuse `WalletPanel`. |
+| **6 — display** | ⬜ | client | Live "~$0.05/min · ~$2.40 in wallet · ~48 min" on the AI toggle; settled in USDC for stable pricing. |
 
 There is no portal-identity phase: with no free tier (§0), the paid path authenticates itself.
 Optional wallet-hardening (encrypt `app_secret` at rest / session-float sub-wallet, §6 table)
