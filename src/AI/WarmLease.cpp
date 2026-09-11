@@ -389,15 +389,17 @@ float WarmLease::elapsed_s(const std::string& tool) {
 
 WarmLease::State WarmLease::combined_state() {
     std::lock_guard<std::mutex> lk(gMutex);
-    bool any = false, anyFailed = false, allWarm = true;
+    bool any = false, anyFailed = false, anyPaying = false, allWarm = true;
     for (auto& [t, L] : gLeases) {
         if (L.releaseRequested) continue;
         any = true;
         if (L.state == State::FAILED) anyFailed = true;
+        if (L.state == State::PAYING) anyPaying = true;
         if (L.state != State::WARM) allWarm = false;
     }
     if (!any) return State::OFF;
     if (anyFailed) return State::FAILED;
+    if (anyPaying) return State::PAYING;
     return allWarm ? State::WARM : State::WARMING;
 }
 

@@ -128,6 +128,14 @@ class Toolbar {
         // popover can attach to it.
         GUIStuff::Element* avatar_tile();
         void avatar_popover(GUIStuff::Element* triggerTile);
+
+        // AI inference top-bar toggle (Phase 4 billing). on_ai_inference_toggle
+        // handles off->on (with the "confirm first" consent popover) and on->off.
+        // enable_ai_inference wires the wallet PayContext into WarmLease then
+        // holds both leases. ai_consent_popover is the one-time consent card.
+        void on_ai_inference_toggle();
+        void enable_ai_inference(const std::string& endpoint, const std::string& apiKey);
+        void ai_consent_popover(GUIStuff::Element* triggerTile);
         // Pulls the master avatar PNG off disk into avatarImage_. Called
         // lazily on first render and after every save (B.M3 capture
         // callback). No-op when no avatar file exists.
@@ -255,6 +263,12 @@ class Toolbar {
         sk_sp<SkImage> avatarImage;
         bool avatarLoaded = false;
         bool avatarPopoverOpen = false;
+
+        // AI billing consent (Phase 4). "Confirm first, then auto": the first
+        // enable of a session opens a one-time consent card; once accepted,
+        // windows auto-buy silently for the rest of the session.
+        bool aiConsentPopoverOpen = false;
+        bool aiPaymentConsented = false;
 
         struct GridMenu {
             bool popupOpen = false;

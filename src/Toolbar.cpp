@@ -13,6 +13,7 @@
 #include "AI/ReangleFlow.hpp"                 // AI reangle: capture selection → 3D proxy
 #include "AI/MeshFlow.hpp"                     // AI mesh reference: sketch → untextured 3D
 #include "AI/WarmLease.hpp"                    // AI inference warm-lease (header toggle)
+#include "C2PA/SharedStellarCli.hpp"           // shared stellar CLI for the 402 pay path
 #include "Diagnostics/RenderStats.hpp"
 #include "FileHelpers.hpp"
 #include "GUIStuff/Elements/MemoryImageDisplay.hpp"
@@ -704,28 +705,23 @@ void Toolbar::top_toolbar() {
                 const std::string aiLabel =
                     aiState == WL::State::WARM    ? "AI: ready" :
                     aiState == WL::State::WARMING ? "AI: warming\xE2\x80\xA6" :
+                    aiState == WL::State::PAYING  ? "AI: paying\xE2\x80\xA6" :
                     aiState == WL::State::FAILED  ? "AI: error" : "AI: off";
-                text_button(gui, "ai inference toggle", aiLabel, {
-                    .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
-                    .isSelected = (aiState == WL::State::WARM || aiState == WL::State::WARMING),
-                    .onClick = [&] {
-                        if (WL::any_enabled()) {
-                            WL::disable_all();
-                            Logger::get().log("USERINFO", "AI inference leases released.");
-                        } else {
-                            std::string key, endpoint;
-                            if (!AI::ReangleFlow::resolve_config(main.conf, key, endpoint))
-                                Logger::get().log("USERINFO",
-                                    "Set the HVYM Tools API key in Settings \xE2\x86\x92 Debug first.");
-                            else {
-                                WL::enable(endpoint, key, "reangle");
-                                WL::enable(endpoint, key, "mesh");
-                                Logger::get().log("USERINFO",
-                                    "Warming AI inference\xE2\x80\xA6 both tools unlock once it reads \"ready\".");
-                            }
+                // Wrap the toggle in a tile so the consent popover can anchor under
+                // it (attachTo PARENT) and use the tile as its outside-click target.
+                gui.element<LayoutElement>(
+                    "ai inference toggle tile",
+                    [&](LayoutElement* tileEl, const Clay_ElementId& lId) {
+                        CLAY(lId, {.layout = {.sizing = {.width = CLAY_SIZING_FIT(0),
+                                                          .height = CLAY_SIZING_GROW(0)}}}) {
+                            text_button(gui, "ai inference toggle", aiLabel, {
+                                .drawType = SelectableButton::DrawType::TRANSPARENT_ALL,
+                                .isSelected = (aiState != WL::State::OFF && aiState != WL::State::FAILED),
+                                .onClick = [this] { on_ai_inference_toggle(); }
+                            });
+                            if (aiConsentPopoverOpen) ai_consent_popover(tileEl);
                         }
-                    }
-                });
+                    });
             }
 
             // Right-aligned live canvas-memory readout. The GROW spacer pushes it
@@ -1480,6 +1476,103 @@ void Toolbar::avatar_popover(Element* triggerTile) {
             .onClick = [&, triggerTile](LayoutElement* l, const InputManager::MouseButtonCallbackArgs& button) {
                 if (!l->mouseHovering && !l->childMouseHovering && !triggerTile->mouseHovering && button.down) {
                     avatarPopoverOpen = false;
+                    main.g.gui.set_to_layout();
+                }
+            }
+        });
+    });
+}
+
+void Toolbar::on_ai_inference_toggle() {
+    using WL = AI::WarmLease;
+    auto& gui = main.g.gui;
+    if (WL::any_enabled()) {
+        WL::disable_all();
+        Logger::get().log("USERINFO", "AI inference leases released.");
+        return;
+    }
+    std::string key, endpoint;
+    if (!AI::ReangleFlow::resolve_config(main.conf, key, endpoint)) {
+        Logger::get().log("USERINFO",
+            "Set the HVYM Tools API key in Settings \xE2\x86\x92 Debug first.");
+        return;
+    }
+    if (!aiPaymentConsented) {
+        // "Confirm first": show the one-time cost card; enabling happens on Enable.
+        aiConsentPopoverOpen = true;
+        gui.set_to_layout();
+        return;
+    }
+    enable_ai_inference(endpoint, key);
+}
+
+void Toolbar::enable_ai_inference(const std::string& endpoint, const std::string& apiKey) {
+    using WL = AI::WarmLease;
+    // Hand the renewal thread the wallet identity + shared stellar CLI so it can
+    // answer a 402 by buying a warm window on-chain (payer == identity).
+    if (main.devKeys.is_loaded()) {
+        AI::PayContext ctx;
+        ctx.cli    = &C2PA::shared_stellar_cli(main.conf.configPath);
+        ctx.pubkey = main.devKeys.app_pubkey();
+        ctx.secret = main.devKeys.app_secret();
+        ctx.expectedNetwork =
+            (main.conf.stellarNetwork == GlobalConfig::StellarNetwork::Testnet)
+                ? "testnet" : "public";
+        WL::set_billing(ctx);
+    }
+    WL::enable(endpoint, apiKey, "reangle");
+    WL::enable(endpoint, apiKey, "mesh");
+    Logger::get().log("USERINFO",
+        "Warming AI inference\xE2\x80\xA6 both tools unlock once it reads \"ready\".");
+}
+
+void Toolbar::ai_consent_popover(Element* triggerTile) {
+    auto& gui = main.g.gui;
+    auto& io = gui.io;
+
+    gui.set_z_index(gui.get_z_index() + 1, [&] {
+        gui.element<LayoutElement>("ai consent popover", [&](LayoutElement*, const Clay_ElementId& lId) {
+            CLAY(lId, {
+                .layout = {
+                    .sizing = { .width = CLAY_SIZING_FIXED(260), .height = CLAY_SIZING_FIT(0) },
+                    .padding = CLAY_PADDING_ALL(io.theme->padding1),
+                    .childGap = io.theme->childGap1,
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_TOP },
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM
+                },
+                .backgroundColor = convert_vec4<Clay_Color>(io.theme->backColor1),
+                .cornerRadius = CLAY_CORNER_RADIUS(io.theme->windowCorners1),
+                .floating = {.offset = {.x = 0, .y = static_cast<float>(io.theme->padding1)}, .zIndex = gui.get_z_index(), .attachPoints = {.element = CLAY_ATTACH_POINT_LEFT_TOP, .parent = CLAY_ATTACH_POINT_LEFT_BOTTOM}, .attachTo = CLAY_ATTACH_TO_PARENT}
+            }) {
+                using namespace GUIStuff::ElementHelpers;
+                text_label_centered(gui, "Enable AI generation?");
+                text_label(gui,
+                    "AI tools run on a GPU you pay for from your wallet \xE2\x80\x94 about "
+                    "$0.05 a minute while it's on. Time is bought automatically as you "
+                    "work; switch AI off any time to stop.");
+                text_button(gui, "ai consent enable", "Enable", TextButtonOptions{
+                    .wide = true,
+                    .onClick = [this, &gui] {
+                        aiPaymentConsented = true;
+                        aiConsentPopoverOpen = false;
+                        std::string key, endpoint;
+                        if (AI::ReangleFlow::resolve_config(main.conf, key, endpoint))
+                            enable_ai_inference(endpoint, key);
+                        gui.set_to_layout();
+                    }
+                });
+                text_button(gui, "ai consent cancel", "Cancel", TextButtonOptions{
+                    .wide = true,
+                    .onClick = [this, &gui] {
+                        aiConsentPopoverOpen = false;
+                        gui.set_to_layout();
+                    }
+                });
+            }
+        }, LayoutElement::Callbacks{
+            .onClick = [this, triggerTile](LayoutElement* l, const InputManager::MouseButtonCallbackArgs& button) {
+                if (!l->mouseHovering && !l->childMouseHovering && !triggerTile->mouseHovering && button.down) {
+                    aiConsentPopoverOpen = false;
                     main.g.gui.set_to_layout();
                 }
             }
