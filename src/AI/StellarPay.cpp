@@ -230,6 +230,17 @@ PayResult StellarPay::pay(const StellarCli& cli,
     const std::string sxdr = extract_xdr(signed_.out);
     if (sxdr.empty()) { r.error = "could not read signed transaction XDR"; r.raw = signed_.out; return r; }
 
+    // Compute the canonical tx hash from the signed envelope BEFORE submitting —
+    // `tx send --quiet` prints no scrapeable hash, and the JSON result carries
+    // none in bare hex. (`tx hash`, like `tx sign`, needs --rpc-url alongside
+    // --network-passphrase in 23.4.1.)
+    auto hashed = run(cli, {
+        "tx", "hash", sxdr,
+        "--rpc-url", rpcUrl,
+        "--network-passphrase", networkPassphrase,
+    });
+    const std::string preHash = find_tx_hash(hashed.out);
+
     auto sent = run(cli, {
         "tx", "send", sxdr,
         "--rpc-url", rpcUrl,
@@ -246,7 +257,7 @@ PayResult StellarPay::pay(const StellarCli& cli,
             r.error = "tx send failed (exit " + std::to_string(sent.exit_code) + ")";
         return r;
     }
-    r.tx_hash = find_tx_hash(sent.out);
+    r.tx_hash = !preHash.empty() ? preHash : find_tx_hash(sent.out);
     if (r.tx_hash.empty()) { r.error = "payment sent but no tx hash in output"; return r; }
     r.ok = true;
     return r;

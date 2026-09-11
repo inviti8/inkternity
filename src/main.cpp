@@ -5,6 +5,10 @@
 #include "AI/ReangleClient.hpp"
 #include "AI/WarmLease.hpp"
 #include "AI/RequestSigner.hpp"
+#include "AI/WarmPay.hpp"
+#include "AI/X402SelfTest.hpp"
+#include "C2PA/SharedStellarCli.hpp"
+#include "DevKeys.hpp"
 #include "Screens/FileSelectScreen.hpp"
 #include "Screens/DesktopDrawingProgramScreen.hpp"
 #include "Screens/PhoneDrawingProgramScreen.hpp"
@@ -659,6 +663,49 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                 f.close();
                 return SDL_APP_SUCCESS;
             }
+        }
+    }
+
+    // x402 pay-path e2e (AI_BILLING_PHASE4.md §10 task 8): drive the real
+    // RequestSigner + WarmPay::settle_window against a live proxy on testnet,
+    // headless. DevKeys is loaded from the given config dir (use a throwaway,
+    // funded testnet wallet — never the real one). Same bypass-before-init
+    // pattern as the c2pa probe; writes a report to <output-file>.
+    //   --x402-selftest <endpoint> <api-key> <config-dir> <output-file>
+    {
+        for (int i = 1; i + 4 < argc; ++i) {
+            if (std::string_view(argv[i]) != "--x402-selftest") continue;
+            if (!SDL_Init(0)) return SDL_APP_FAILURE;
+            static std::string s_log;
+            Logger::get().add_log("INFO",       [&](const std::string& s){ s_log += "[INFO] "       + s + "\n"; });
+            Logger::get().add_log("USERINFO",   [&](const std::string& s){ s_log += "[USERINFO] "   + s + "\n"; });
+            Logger::get().add_log("WORLDFATAL", [&](const std::string& s){ s_log += "[WORLDFATAL] " + s + "\n"; });
+
+            const std::string endpoint = argv[i + 1];
+            const std::string apiKey   = argv[i + 2];
+            const std::filesystem::path cfg(std::u8string_view(reinterpret_cast<char8_t*>(argv[i + 3])));
+            const std::filesystem::path outFile(std::u8string_view(reinterpret_cast<char8_t*>(argv[i + 4])));
+
+            DevKeys dk;
+            dk.load(cfg);
+            std::ofstream f(outFile, std::ios::binary | std::ios::trunc);
+            if (!dk.is_loaded()) {
+                f << "FAIL: DevKeys not loaded from " << cfg.string() << "\n" << s_log;
+                return SDL_APP_FAILURE;
+            }
+            AI::RequestSigner::init(dk.app_seed_bytes(), dk.app_pubkey());
+            AI::PayContext ctx;
+            ctx.cli             = &C2PA::shared_stellar_cli(cfg);
+            ctx.pubkey          = dk.app_pubkey();
+            ctx.secret          = dk.app_secret();
+            ctx.expectedNetwork = "testnet";
+            f << "wallet=" << dk.app_pubkey() << "\n";
+
+            bool ok = false;
+            const std::string report = AI::x402_selftest(endpoint, apiKey, ctx, ok);
+            f << report << "\n--- log ---\n" << s_log;
+            f.close();
+            return ok ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         }
     }
 
