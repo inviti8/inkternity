@@ -1159,6 +1159,9 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
             }
             case SDL_EVENT_PEN_PROXIMITY_OUT: {
                 mS.m->input.pen.inProximity = false;
+                // Don't let a stale eraser-tip bit survive between hovers — otherwise
+                // the next stray pen event re-applies it (see pen_tool_switch_check).
+                mS.m->input.pen.isEraser = false;
                 break;
             }
             case SDL_EVENT_PEN_MOTION: {

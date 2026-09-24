@@ -706,12 +706,20 @@ void DrawingProgram::update() {
 }
 
 void DrawingProgram::pen_tool_switch_check() {
-    if(world.main.input.pen.isEraser && !temporaryEraser && tempMoveToolSwitch == TemporaryMoveToolSwitch::NONE) {
+    auto& pen = world.main.input.pen;
+    // Engage the stylus eraser-tip ONLY on a genuine pen contact (pen.isDown).
+    // SDL sets pen.isEraser (SDL_PEN_INPUT_ERASER_TIP) on hover motion/axis events
+    // as well, and it is never cleared on proximity-out — so a hovering / BLE /
+    // phantom stylus reporting the eraser bit with no contact used to flip the tool
+    // to ERASER and erase strokes with no real input (observed on a Surface Pen with
+    // no touch and no session). Gating entry on contact kills that while keeping
+    // deliberate eraser-tip use (the tip engages the moment it touches the surface).
+    if(pen.isEraser && pen.isDown && !temporaryEraser && tempMoveToolSwitch == TemporaryMoveToolSwitch::NONE) {
         if(drawTool->get_type() == DrawingProgramToolType::BRUSH)
             switch_to_tool(DrawingProgramToolType::ERASER);
         temporaryEraser = true;
     }
-    else if(!world.main.input.pen.isEraser && temporaryEraser && tempMoveToolSwitch == TemporaryMoveToolSwitch::NONE) {
+    else if(!pen.isEraser && temporaryEraser && tempMoveToolSwitch == TemporaryMoveToolSwitch::NONE) {
         if(drawTool->get_type() == DrawingProgramToolType::ERASER)
             switch_to_tool(DrawingProgramToolType::BRUSH);
         temporaryEraser = false;
@@ -752,6 +760,18 @@ void DrawingProgram::duplicate_selection() { selection.duplicate_selection(); }
 
 void DrawingProgram::switch_to_tool(DrawingProgramToolType newToolType, bool force) {
     if(newToolType != drawTool->get_type() || force) {
+        // Instrumentation: record every tool change with the pen state at the moment,
+        // so a spurious eraser flip (Surface Pen hover/phantom events) is traceable in
+        // log.txt after the fact. Cheap — tool switches are rare, human-paced events.
+        const auto& pen = world.main.input.pen;
+        Logger::get().log("INFO", "[tool] switch " +
+            std::to_string(static_cast<int>(drawTool->get_type())) + " -> " +
+            std::to_string(static_cast<int>(newToolType)) +
+            " (pen isDown=" + std::to_string(pen.isDown) +
+            " isEraser=" + std::to_string(pen.isEraser) +
+            " inProximity=" + std::to_string(pen.inProximity) +
+            " temporaryEraser=" + std::to_string(temporaryEraser) +
+            (force ? " force" : "") + ")");
         drawTool->switch_tool(newToolType);
         drawTool = DrawingProgramToolBase::allocate_tool_type(*this, newToolType);
         clear_right_click_popup();
