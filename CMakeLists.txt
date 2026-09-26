@@ -728,6 +728,17 @@ if(NOT EMSCRIPTEN)
     target_compile_definitions(main PRIVATE HVYM_HAS_TIMELINEFX)
 endif()
 
+# ANIMATED_IMPORTS.md: 2D skeletal rig runtime. The vendored DragonBonesCPP core
+# (deps/dragonbones) is renderer-agnostic MIT, built isolated at C++17 via its own
+# CMakeLists (avoids the project's C++23, like timelinefx). Our Skia display adapter
+# sits on top (added next); the app will include only a plain facade header, never
+# DragonBones types. HVYM_HAS_DRAGONBONES gates the skeletal component.
+if(NOT EMSCRIPTEN)
+    add_subdirectory(deps/dragonbones)
+    target_link_libraries(main dragonBones)
+    target_compile_definitions(main PRIVATE HVYM_HAS_DRAGONBONES)
+endif()
+
 # PHASE5.1: legacy .eff particle path (deps/timelinefx_legacy = damucz/timelinefx,
 # MIT + miniz for in-memory .eff zip reading). Desktop-only; HVYM_HAS_TIMELINEFX_LEGACY
 # gates src/CanvasComponents/Particles/* (web gets the no-op paths). Linking the
