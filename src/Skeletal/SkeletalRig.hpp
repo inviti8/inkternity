@@ -32,6 +32,13 @@ public:
     // Play an animation. playTimes: 0 = loop forever, 1 = once, n = n times.
     void play(const std::string& name, int playTimes = 0);
 
+    // Stop all animation (holds the current pose). Used to park an ON_TOUCH rig.
+    void stop();
+
+    // True while an animation is actively advancing (a loop, or a one-shot that
+    // hasn't finished). False at rest or once a one-shot has completed.
+    bool isPlaying() const;
+
     // Advance the animation clock by dtSeconds (recomputes bones + mesh deform).
     void update(float dtSeconds);
 

@@ -39,6 +39,7 @@ VersionNumber header_to_version_number(const std::string& header) {
         m["INFPNT000031"] = VersionNumber(0, 30, 0); // PHASE10.1: PARTICLE gains boundsScale (artist clip/spread multiplier, particle brush)
         m["INFPNT000032"] = VersionNumber(0, 31, 0); // Scale-aware "on view": folder DisplayData gains autoTriggerMinScreenPx (min on-screen size before AUTO flip-book/anim-fx fires)
         m["INFPNT000033"] = VersionNumber(0, 32, 0); // Consolidate Vectors: CanvasComponentType::VECTORGROUP (many brush strokes baked into one pure-vector component)
+        m["INFPNT000034"] = VersionNumber(0, 33, 0); // ANIMATED_IMPORTS: SKELETAL gains playMode (AUTO / on-touch)
     }
     auto it = m.find(header);
     if(it == m.end())

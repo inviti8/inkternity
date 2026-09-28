@@ -498,6 +498,7 @@ void World::input_mouse_button_callback(const InputManager::MouseButtonCallbackA
             if(button.down) {
                 drawProg.trigger_touch_particles(button.pos);
                 drawProg.trigger_touch_flipbooks(button.pos);
+                drawProg.trigger_touch_skeletal(button.pos);
             }
             return;
         }

@@ -17,12 +17,21 @@
 #include <Helpers/NetworkingObjects/NetObjID.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 
 #ifdef HVYM_HAS_DRAGONBONES
 namespace AI { class SkeletalRig; }
 #endif
+
+// How a placed rig starts playing (mirrors ParticlePlayMode). AUTO loops its clip
+// while on view; ON_TOUCH rests at the setup pose until a reader-mode tap plays the
+// clip once (then holds the last frame).
+enum SkeletalPlayMode : uint8_t {
+    SKELETAL_PLAY_AUTO     = 0,
+    SKELETAL_PLAY_ON_TOUCH = 1
+};
 
 class SkeletalCanvasComponent : public CanvasComponent {
 public:
@@ -49,10 +58,18 @@ public:
         Vector2f pos   = {0.0f, 0.0f};                 // world anchor
         float    scale = 1.0f;                          // uniform scale
         std::string clip;                               // current animation ("" = first/none)
-        bool     playing = true;
+        bool     playing = true;                         // AUTO master enable (advance the loop)
         // Half-extents of the selection/collision box (world units, pre-scale).
         Vector2f halfExtent = {256.0f, 256.0f};
+        uint8_t  playMode = SKELETAL_PLAY_AUTO;          // SkeletalPlayMode (added INFPNT000034)
     } d;
+
+    // Request a one-shot play (reader-mode tap on an ON_TOUCH rig). Picked up next
+    // update(). Mirrors ParticleCanvasComponent::trigger_touch().
+    void trigger_touch();
+    // Reset live playback to match the current playMode (call after flipping the
+    // mode on a selected rig so the change takes effect immediately).
+    void apply_play_mode();
 
 private:
     virtual void draw(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<void>& predrawData) const override;
@@ -68,7 +85,11 @@ private:
     // but must lazily build the rig on first paint. Not serialized, not copied.
     mutable std::unique_ptr<AI::SkeletalRig> rig;
     mutable bool loadAttempted = false;
+    // The clip actually driving the rig (d.clip resolved against the rig's animation
+    // list, so an empty d.clip still knows what to play on touch).
+    mutable std::string activeClip;
     std::chrono::steady_clock::time_point lastTick{};
+    bool pendingTouch = false;   // a trigger_touch() awaiting the next update()
     void ensure_rig(class ResourceManager& rMan) const;
 #endif
 };

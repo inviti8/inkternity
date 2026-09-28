@@ -24,17 +24,24 @@ CanvasComponentType SkeletalCanvasComponent::get_type() const {
     return CanvasComponentType::SKELETAL;
 }
 
+// save/load are the in-memory (net-sync + undo) codec: always in lock-step with the
+// running binary, so the new playMode field is written unconditionally.
 void SkeletalCanvasComponent::save(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.skeletonResId, d.atlasJsonResId, d.atlasPngResId, d.pos, d.scale, d.clip, d.playing, d.halfExtent);
+    a(d.skeletonResId, d.atlasJsonResId, d.atlasPngResId, d.pos, d.scale, d.clip, d.playing, d.halfExtent, d.playMode);
 }
 void SkeletalCanvasComponent::load(cereal::PortableBinaryInputArchive& a) {
-    a(d.skeletonResId, d.atlasJsonResId, d.atlasPngResId, d.pos, d.scale, d.clip, d.playing, d.halfExtent);
+    a(d.skeletonResId, d.atlasJsonResId, d.atlasPngResId, d.pos, d.scale, d.clip, d.playing, d.halfExtent, d.playMode);
 }
 void SkeletalCanvasComponent::save_file(cereal::PortableBinaryOutputArchive& a) const {
-    a(d.skeletonResId, d.atlasJsonResId, d.atlasPngResId, d.pos, d.scale, d.clip, d.playing, d.halfExtent);
+    a(d.skeletonResId, d.atlasJsonResId, d.atlasPngResId, d.pos, d.scale, d.clip, d.playing, d.halfExtent, d.playMode);
 }
-void SkeletalCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber) {
+void SkeletalCanvasComponent::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     a(d.skeletonResId, d.atlasJsonResId, d.atlasPngResId, d.pos, d.scale, d.clip, d.playing, d.halfExtent);
+    // playMode added in INFPNT000034 (0.33.0); older rigs default to AUTO.
+    if (version >= VersionNumber(0, 33, 0))
+        a(d.playMode);
+    else
+        d.playMode = SKELETAL_PLAY_AUTO;
 }
 
 std::unique_ptr<CanvasComponent> SkeletalCanvasComponent::get_data_copy() const {
@@ -82,9 +89,12 @@ void SkeletalCanvasComponent::ensure_rig(ResourceManager& rMan) const {
     const auto& png = *itPng->second.data;
     if (built->load(*itSke->second.data, *itAj->second.data, png.data(), png.size())) {
         const auto anims = built->animationNames();
-        std::string clip = d.clip;
-        if (clip.empty() && !anims.empty()) clip = anims.front();
-        if (!clip.empty()) built->play(clip, 0);
+        activeClip = d.clip;
+        if (activeClip.empty() && !anims.empty()) activeClip = anims.front();
+        // AUTO: loop the clip immediately. ON_TOUCH: leave at the setup pose until a
+        // reader-mode tap calls trigger_touch() (which plays it once).
+        if (!activeClip.empty() && d.playMode == SKELETAL_PLAY_AUTO)
+            built->play(activeClip, 0);
     }
     rig = std::move(built);   // even if load failed: non-null invalid rig → placeholder, no rebuild spin
     loadAttempted = true;
@@ -94,17 +104,51 @@ void SkeletalCanvasComponent::ensure_rig(ResourceManager& rMan) const {
 void SkeletalCanvasComponent::update(DrawingProgram& drawP) {
 #ifdef HVYM_HAS_DRAGONBONES
     ensure_rig(*drawP.world.drawData.rMan);
-    if (rig && rig->valid() && d.playing) {
-        const auto now = std::chrono::steady_clock::now();
-        float dt = 0.0f;
-        if (lastTick.time_since_epoch().count() != 0) {
-            dt = std::chrono::duration<float>(now - lastTick).count();
-            dt = std::clamp(dt, 0.0f, 0.1f);
-        }
-        lastTick = now;
+    if (!rig || !rig->valid()) return;
+
+    // A reader-mode tap always (re)plays the clip once, regardless of mode.
+    if (pendingTouch) {
+        if (!activeClip.empty()) rig->play(activeClip, 1);
+        pendingTouch = false;
+    }
+
+    // Should the rig advance (and redraw) this frame?
+    //  AUTO:     while the master enable is on (the clip loops).
+    //  ON_TOUCH: only while a triggered one-shot is still running — at rest (setup
+    //            pose or holding the last frame) it neither ticks nor invalidates,
+    //            so a resting rig costs nothing.
+    const bool advancing = (d.playMode == SKELETAL_PLAY_AUTO) ? d.playing
+                                                              : rig->isPlaying();
+
+    const auto now = std::chrono::steady_clock::now();
+    float dt = 0.0f;
+    if (lastTick.time_since_epoch().count() != 0) {
+        dt = std::chrono::duration<float>(now - lastTick).count();
+        dt = std::clamp(dt, 0.0f, 0.1f);
+    }
+    lastTick = now;   // keep dt bounded across resting frames so playback resumes smoothly
+
+    if (advancing) {
         rig->update(dt);
         // Animated: force a redraw of this component's cache region each frame.
         drawP.invalidate_cache_at_component(&(*compContainer->objInfo));
+    }
+#endif
+}
+
+void SkeletalCanvasComponent::trigger_touch() {
+#ifdef HVYM_HAS_DRAGONBONES
+    pendingTouch = true;
+#endif
+}
+
+void SkeletalCanvasComponent::apply_play_mode() {
+#ifdef HVYM_HAS_DRAGONBONES
+    if (!rig || !rig->valid()) return;
+    if (d.playMode == SKELETAL_PLAY_AUTO) {
+        if (!activeClip.empty()) rig->play(activeClip, 0);   // resume the loop now
+    } else {
+        rig->stop();                                         // rest at the current pose until touched
     }
 #endif
 }

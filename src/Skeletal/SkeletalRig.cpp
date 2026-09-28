@@ -61,6 +61,14 @@ void SkeletalRig::play(const std::string& name, int playTimes) {
     if (_impl->proxy) _impl->proxy->getAnimation()->play(name, playTimes);
 }
 
+void SkeletalRig::stop() {
+    if (_impl->proxy) _impl->proxy->getAnimation()->stop("");   // "" = stop all states
+}
+
+bool SkeletalRig::isPlaying() const {
+    return _impl->proxy && _impl->proxy->getAnimation()->isPlaying();
+}
+
 void SkeletalRig::update(float dtSeconds) {
     // Advance THIS armature only (per-rig), not a shared global clock.
     if (_impl->proxy && _impl->proxy->getArmature())

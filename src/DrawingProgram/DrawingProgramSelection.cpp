@@ -24,7 +24,9 @@
 
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/RadioButtonHelpers.hpp"
+#include "../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/LayoutHelpers.hpp"
+#include "../CanvasComponents/SkeletalCanvasComponent.hpp"
 
 DrawingProgramSelection::DrawingProgramSelection(DrawingProgram& initDrawP):
     drawP(initDrawP)
@@ -56,6 +58,23 @@ void DrawingProgramSelection::selection_gui(Toolbar& t) {
                 });
                 text_label(gui, "Stroke Color");
             });
+            // ANIMATED_IMPORTS — a single selected 2D skeletal rig exposes its
+            // playback trigger mode (AUTO loop vs play-once on a reader-mode tap),
+            // mirroring the particle AUTO/ON_TOUCH convention. Editable any time.
+            if(selectedSet.size() == 1 &&
+               selectedSet[0]->obj->get_comp().get_type() == CanvasComponentType::SKELETAL) {
+                auto* info = selectedSet[0];
+                auto& sk = static_cast<SkeletalCanvasComponent&>(info->obj->get_comp());
+                checkbox_field(gui, "rig play on touch", "Play on touch",
+                    [&sk]() { return sk.d.playMode == SKELETAL_PLAY_ON_TOUCH; },
+                    [this, info, &sk]() {
+                        sk.d.playMode = (sk.d.playMode == SKELETAL_PLAY_ON_TOUCH)
+                                            ? SKELETAL_PLAY_AUTO : SKELETAL_PLAY_ON_TOUCH;
+                        sk.apply_play_mode();                                  // take effect live
+                        info->obj->commit_update_dont_invalidate_cache(drawP); // selected → not in cache
+                        info->obj->send_comp_update(drawP, false);             // net-sync the new mode
+                    });
+            }
         }
     });
 }

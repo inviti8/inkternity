@@ -93,6 +93,9 @@ class DrawingProgram {
         // PHASE5.1 polish — trigger any PARTICLE_PLAY_ON_TOUCH effects under a
         // cam-space point (reader-mode tap). No-op without the legacy path.
         void trigger_touch_particles(Vector2f camPos);
+        // ANIMATED_IMPORTS — trigger any SKELETAL_PLAY_ON_TOUCH rigs under a
+        // cam-space point (reader-mode tap). No-op without DragonBones.
+        void trigger_touch_skeletal(Vector2f camPos);
         // PHASE10 Feature B — per-frame flip-book playback tick (called from
         // World::focus_update) + ON_TOUCH dispatch for a reader-mode tap.
         void update_flipbook_playback(float deltaTime);

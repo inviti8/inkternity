@@ -1112,6 +1112,35 @@ void DrawingProgram::trigger_touch_particles(Vector2f camPos) {
 #endif
 }
 
+void DrawingProgram::trigger_touch_skeletal(Vector2f camPos) {
+#ifdef HVYM_HAS_DRAGONBONES
+    using namespace SCollision;
+    // A small collider at the tap point (cam space) -> world. Mirrors
+    // trigger_touch_particles.
+    ColliderCollection<float> cC;
+    const float r = 4.0f;
+    Vector2f lo = camPos - Vector2f{r, r};
+    Vector2f hi = camPos + Vector2f{r, r};
+    std::array<Vector2f, 4> t = triangle_from_rect_points(lo, hi);
+    cC.triangle.emplace_back(t[0], t[1], t[2]);
+    cC.triangle.emplace_back(t[2], t[3], t[0]);
+    auto cCWorld = world.drawData.cam.c.collider_to_world<ColliderCollection<WorldScalar>, ColliderCollection<float>>(cC);
+
+    // Only ON_TOUCH rigs under the tap get triggered (AUTO rigs already loop).
+    for (auto* info : updateableComponents) {
+        if (!info) continue;
+        CanvasComponent& comp = info->obj->get_comp();
+        if (comp.get_type() != CanvasComponentType::SKELETAL) continue;
+        SkeletalCanvasComponent& sc = static_cast<SkeletalCanvasComponent&>(comp);
+        if (sc.d.playMode != SKELETAL_PLAY_ON_TOUCH) continue;
+        if (info->obj->collides_with_world_coords(world.drawData.cam.c, cCWorld))
+            sc.trigger_touch();
+    }
+#else
+    (void)camPos;
+#endif
+}
+
 void DrawingProgram::update_flipbook_playback(float deltaTime) {
     // PHASE10 Feature B — advance every live flip-book group's frame. Playback
     // only runs in viewer/reader mode or under a group's transient preview
