@@ -49,7 +49,7 @@ inline uint8_t over8(uint8_t sc, uint8_t sa, uint8_t dc, uint8_t da, uint8_t out
 std::vector<uint8_t> make_composite(int32_t docW, int32_t docH, const std::vector<Layer>& layers) {
     std::vector<uint8_t> dst(static_cast<size_t>(docW) * docH * 4, 0);
     for (const auto& L : layers) {
-        if (!L.visible || L.rgba.empty()) continue;
+        if (L.kind != LayerKind::Image || !L.visible || L.rgba.empty()) continue;
         for (int32_t ly = 0; ly < L.height; ++ly) {
             const int32_t dy = L.y + ly;
             if (dy < 0 || dy >= docH) continue;
@@ -100,19 +100,29 @@ std::string build_psd(int32_t docW, int32_t docH, const std::vector<Layer>& laye
     static constexpr int16_t CH_ID[4] = {0, 1, 2, -1};   // R,G,B,A(=-1)
     static constexpr int     CH_SRC[4] = {0, 1, 2, 3};
 
+    // A 4-char PSD blend key, space-padded/truncated defensively.
+    auto blend4 = [](const std::string& b) {
+        std::string s = b;
+        s.resize(4, ' ');
+        return s;
+    };
+
     for (const auto& L : layers) {
-        put32s(li, L.y);                 // top
-        put32s(li, L.x);                 // left
-        put32s(li, L.y + L.height);      // bottom
-        put32s(li, L.x + L.width);       // right
+        const bool isImage = (L.kind == LayerKind::Image);
+        const int32_t w = isImage ? L.width  : 0;   // marker layers are 0x0
+        const int32_t h = isImage ? L.height : 0;
+        put32s(li, isImage ? L.y : 0);             // top
+        put32s(li, isImage ? L.x : 0);             // left
+        put32s(li, isImage ? (L.y + L.height) : 0);// bottom
+        put32s(li, isImage ? (L.x + L.width) : 0); // right
         put16(li, 4);                    // channel count
-        const uint32_t chBytes = 2u + static_cast<uint32_t>(L.width) * L.height;  // 2 (compression) + raw
+        const uint32_t chBytes = 2u + static_cast<uint32_t>(w) * h;  // 2 (compression) + raw
         for (int c = 0; c < 4; ++c) {
             put16(li, static_cast<uint16_t>(CH_ID[c]));
             put32(li, chBytes);
         }
         li += "8BIM";
-        li += "norm";                    // blend mode; blend baked per-layer into pixels
+        li += blend4(isImage ? L.blend : std::string("norm"));  // group markers: normal
         li.push_back(static_cast<char>(L.opacity));
         li.push_back('\0');              // clipping = base
         li.push_back(static_cast<char>(L.visible ? 0x00 : 0x02));  // flags: bit1 set = hidden
@@ -122,14 +132,26 @@ std::string build_psd(int32_t docW, int32_t docH, const std::vector<Layer>& laye
         put32(extra, 0);                 // layer mask data (none)
         put32(extra, 0);                 // layer blending ranges (none)
         extra += pascal_padded(L.name);  // legacy name (padded to 4)
+        // 'lsct' section-divider setting for group markers (1=open folder header,
+        // 3=bounding divider "</Layer group>").
+        if (L.kind == LayerKind::GroupOpen || L.kind == LayerKind::GroupClose) {
+            std::string data;
+            put32(data, L.kind == LayerKind::GroupOpen ? 1u : 3u);
+            extra += "8BIM";
+            extra += "lsct";
+            put32(extra, static_cast<uint32_t>(data.size()));
+            extra += data;
+        }
         put32(li, static_cast<uint32_t>(extra.size()));
         li += extra;
     }
-    // Channel image data: per layer, per channel -> [compression=0][raw plane]
+    // Channel image data: per record, per channel -> [compression=0][raw plane]
+    // (marker layers are 0x0, so they contribute only the 2-byte compression tag).
     for (const auto& L : layers) {
+        const bool isImage = (L.kind == LayerKind::Image);
         for (int c = 0; c < 4; ++c) {
             put16(li, 0);                // raw
-            if (L.width > 0 && L.height > 0 && !L.rgba.empty())
+            if (isImage && L.width > 0 && L.height > 0 && !L.rgba.empty())
                 append_plane(li, L.rgba, L.width, L.height, CH_SRC[c]);
         }
     }
