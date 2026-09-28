@@ -1074,6 +1074,18 @@ void DrawingProgramLayerManagerGUI::export_selected_group(const std::filesystem:
     }
 }
 
+void DrawingProgramLayerManagerGUI::export_selected_group_psd(const std::filesystem::path& path) {
+    // Same selection source as export_selected_group (the File menu closed the Layers
+    // panel, wiping the live selection). Queue the export — the GPU render must run on
+    // the GL thread, not here (this can be a native-dialog callback thread).
+    auto item = lastSingleSelectedItem.lock();
+    if(!item) {
+        Logger::get().log("USERINFO", "Select a layer or group in the Layers panel first, then Export PSD.");
+        return;
+    }
+    layerMan.drawP.request_psd_export(path, item.get_net_id());
+}
+
 void DrawingProgramLayerManagerGUI::import_group_from_file(const std::filesystem::path& path) {
     using namespace NetworkingObjects;
     refresh_gui_data();

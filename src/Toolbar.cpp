@@ -909,6 +909,16 @@ void Toolbar::top_toolbar() {
                                                 world->drawProg.layerMan.listGUI.export_selected_group(p);
                                         }, "", true);
                                     });
+                                    // ANIMATED_IMPORTS Phase 3 — export the selected group as a
+                                    // layered PSD (one PSD layer per child layer) for rigging in
+                                    // an external tool. Needs one selected group/layer.
+                                    menu_popup_text_button("export psd", "Export PSD…", [&] {
+                                        open_file_selector("Export PSD", {{"Photoshop Document", "psd"}}, [w = make_weak_ptr(main.world)](const std::filesystem::path& p, const auto& e) {
+                                            auto world = w.lock();
+                                            if(world)
+                                                world->drawProg.layerMan.listGUI.export_selected_group_psd(p);
+                                        }, "", true);
+                                    });
                                     #endif
                                 });
 

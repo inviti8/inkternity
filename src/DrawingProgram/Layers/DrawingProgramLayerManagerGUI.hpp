@@ -22,6 +22,9 @@ class DrawingProgramLayerManagerGUI {
         // failures to the user log rather than throwing. See
         // World::export_layer_group / read_layer_group_file.
         void export_selected_group(const std::filesystem::path& path);
+        // ANIMATED_IMPORTS Phase 3 — export the selected group as a layered PSD (queues
+        // the render for the GL thread). Uses lastSingleSelectedItem, like export_selected_group.
+        void export_selected_group_psd(const std::filesystem::path& path);
         void import_group_from_file(const std::filesystem::path& path);
         // Create a new (non-folder) layer directly above the current edit target —
         // in front of it in its parent list, i.e. higher in the visual stack — with

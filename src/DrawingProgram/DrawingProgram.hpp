@@ -96,6 +96,17 @@ class DrawingProgram {
         // ANIMATED_IMPORTS — trigger any SKELETAL_PLAY_ON_TOUCH rigs under a
         // cam-space point (reader-mode tap). No-op without DragonBones.
         void trigger_touch_skeletal(Vector2f camPos);
+
+        // ANIMATED_IMPORTS Phase 3 — group→PSD export. Requested from a menu/file-dialog
+        // callback (which can run off the GL thread); the actual GPU render + write is
+        // deferred to process_pending_psd_export() on the main/GL thread (see update()).
+        struct PendingPsdExport {
+            bool active = false;
+            std::filesystem::path path;
+            NetworkingObjects::NetObjID groupItemId;
+        } pendingPsdExport;
+        void request_psd_export(const std::filesystem::path& path, NetworkingObjects::NetObjID groupItemId);
+        void process_pending_psd_export();
         // PHASE10 Feature B — per-frame flip-book playback tick (called from
         // World::focus_update) + ON_TOUCH dispatch for a reader-mode tap.
         void update_flipbook_playback(float deltaTime);

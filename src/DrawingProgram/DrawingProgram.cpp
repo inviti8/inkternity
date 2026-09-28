@@ -51,6 +51,7 @@
 #include "../CanvasComponents/ImageCanvasComponent.hpp"
 #include "../CanvasComponents/ParticleCanvasComponent.hpp"
 #include "../CanvasComponents/SkeletalCanvasComponent.hpp"
+#include "../Export/PsdGroupExport.hpp"
 #include <fstream>
 #include "Layers/DrawingProgramLayer.hpp"
 #include "Layers/DrawingProgramLayerListItem.hpp"
@@ -681,6 +682,7 @@ void DrawingProgram::update() {
     selection.update();
     drawTool->tool_update();
 
+    process_pending_psd_export();   // GL-current: run any queued group→PSD export here
     update_downloading_dropped_files();
     AI::ReangleFlow::tick(*this);   // poll any in-flight AI reangle → place on success
     AI::MeshFlow::tick(*this);      // poll any in-flight AI mesh reference → place on success
@@ -1139,6 +1141,29 @@ void DrawingProgram::trigger_touch_skeletal(Vector2f camPos) {
 #else
     (void)camPos;
 #endif
+}
+
+void DrawingProgram::request_psd_export(const std::filesystem::path& path, NetworkingObjects::NetObjID groupItemId) {
+    // Stash only; the GPU render happens on the GL thread in process_pending_psd_export().
+    pendingPsdExport.active = true;
+    pendingPsdExport.path = path;
+    pendingPsdExport.groupItemId = groupItemId;
+}
+
+void DrawingProgram::process_pending_psd_export() {
+    if (!pendingPsdExport.active) return;
+    pendingPsdExport.active = false;
+    auto ref = world.netObjMan.get_obj_temporary_ref_from_id<DrawingProgramLayerListItem>(pendingPsdExport.groupItemId);
+    if (!ref) {
+        Logger::get().log("USERINFO", "Export PSD: the selected group is no longer available.");
+        return;
+    }
+    try {
+        PsdExport::export_group(*this, *ref, pendingPsdExport.path);
+    }
+    catch (const std::exception& e) {
+        Logger::get().log("WORLDFATAL", std::string("Export PSD failed: ") + e.what());
+    }
 }
 
 void DrawingProgram::update_flipbook_playback(float deltaTime) {
