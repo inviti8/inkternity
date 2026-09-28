@@ -547,6 +547,21 @@ if(NOT EMSCRIPTEN)
                 "${C2PA_RS_SHLIB_PATH}"
                 "$<TARGET_FILE_DIR:main>/${C2PA_RS_SHLIB}")
 
+    # Stage the runtime data next to the executable so a plain dev build is
+    # launchable in place. switch_cwd() (src/SwitchCWD.cpp) chdir's to the
+    # exe's directory on Windows/Linux, then everything is loaded relative to
+    # it (e.g. read_file_to_string("data/icudt77l-small.dat") in main.cpp) — so
+    # without this the app throws on startup and dies. macOS stages the same
+    # tree into ../Resources/data above (its cwd is the bundle Resources dir),
+    # and the installers ship assets/data via install(DIRECTORY ...). This
+    # POST_BUILD is the missing piece for running straight out of the build dir.
+    if(NOT APPLE)
+        add_custom_command(TARGET main POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_SOURCE_DIR}/assets/data"
+                    "$<TARGET_FILE_DIR:main>/data")
+    endif()
+
     # Dev-only repro harness for C2PA embed failures (tools/c2pa_repro.cpp).
     # Excluded from ALL — build explicitly with `--target c2pa_repro`.
     add_executable(c2pa_repro EXCLUDE_FROM_ALL
