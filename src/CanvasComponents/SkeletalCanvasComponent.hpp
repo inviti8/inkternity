@@ -99,5 +99,12 @@ private:
     std::chrono::steady_clock::time_point lastTick{};
     bool pendingTouch = false;   // a trigger_touch() awaiting the next update()
     void ensure_rig(class ResourceManager& rMan) const;
+    // The rig's drawn bounds in local space, grown monotonically as it animates so
+    // the clip/collider box covers the widest pose (a jump won't crop). Empty box +
+    // false until the rig has produced geometry.
+    bool rigBoundsKnown = false;
+    Vector2f rigMinLocal = {0.0f, 0.0f};
+    Vector2f rigMaxLocal = {0.0f, 0.0f};
+    void refresh_rig_bounds();
 #endif
 };

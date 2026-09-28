@@ -77,6 +77,30 @@ void SkiaArmatureProxy::draw(SkCanvas* canvas) const {
     canvas->restore();
 }
 
+void SkiaDisplay::accumulateBounds(const SkMatrix& parent,
+                                   float& minX, float& minY, float& maxX, float& maxY) const {
+    if (!visible || positions.empty()) return;
+    // Bounds of the slot-local vertices, mapped by parent * this display's matrix
+    // (the same transform draw() concats) → rig-local axis-aligned bounds.
+    float lx = positions[0].fX, ly = positions[0].fY, hx = lx, hy = ly;
+    for (const auto& p : positions) {
+        lx = std::min(lx, p.fX); ly = std::min(ly, p.fY);
+        hx = std::max(hx, p.fX); hy = std::max(hy, p.fY);
+    }
+    SkRect mapped;
+    SkMatrix::Concat(parent, matrix).mapRect(&mapped, SkRect::MakeLTRB(lx, ly, hx, hy));
+    minX = std::min(minX, mapped.fLeft);   minY = std::min(minY, mapped.fTop);
+    maxX = std::max(maxX, mapped.fRight);  maxY = std::max(maxY, mapped.fBottom);
+}
+
+void SkiaArmatureProxy::accumulateBounds(const SkMatrix& parent,
+                                         float& minX, float& minY, float& maxX, float& maxY) const {
+    if (!visible) return;
+    const SkMatrix m = SkMatrix::Concat(parent, matrix);
+    for (auto node : _nodes)
+        if (node) node->accumulateBounds(m, minX, minY, maxX, maxY);
+}
+
 // -------------------------------------------------------------------- SkiaSlot
 
 void SkiaSlot::_updateVisible() {

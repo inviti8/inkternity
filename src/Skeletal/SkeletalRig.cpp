@@ -9,6 +9,8 @@
 #include <include/codec/SkCodec.h>
 #include <include/codec/SkPngDecoder.h>
 
+#include <limits>
+
 namespace AI {
 
 struct SkeletalRig::Impl {
@@ -73,6 +75,14 @@ void SkeletalRig::update(float dtSeconds) {
     // Advance THIS armature only (per-rig), not a shared global clock.
     if (_impl->proxy && _impl->proxy->getArmature())
         _impl->proxy->getArmature()->advanceTime(dtSeconds);
+}
+
+bool SkeletalRig::localBounds(float& minX, float& minY, float& maxX, float& maxY) const {
+    if (!_impl->proxy) return false;
+    minX = minY = std::numeric_limits<float>::max();
+    maxX = maxY = std::numeric_limits<float>::lowest();
+    _impl->proxy->accumulateBounds(SkMatrix::I(), minX, minY, maxX, maxY);
+    return maxX >= minX && maxY >= minY;   // false if no drawable geometry contributed
 }
 
 void SkeletalRig::draw(SkCanvas* canvas) const {

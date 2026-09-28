@@ -133,6 +133,11 @@ void SkeletalCanvasComponent::update(DrawingProgram& drawP) {
         // Animated: force a redraw of this component's cache region each frame.
         drawP.invalidate_cache_at_component(&(*compContainer->objInfo));
     }
+    // Size the clip/collider box to the real drawn pose. Recheck while advancing (a
+    // jump extends the box) and until the first bounds are known (initial box for a
+    // resting ON_TOUCH rig).
+    if (advancing || !rigBoundsKnown)
+        refresh_rig_bounds();
 #endif
 }
 
@@ -201,15 +206,59 @@ void SkeletalCanvasComponent::initialize_draw_data(DrawingProgram&) {
 
 void SkeletalCanvasComponent::create_collider() {
     using namespace SCollision;
+    // Box in canvas/collider space. The rig draws as translate(d.pos)·scale(d.scale)
+    // over rig-local coords, so a local point L maps to d.pos + d.scale*L. Prefer the
+    // rig's actual (grown) drawn bounds; fall back to the symmetric halfExtent box
+    // while loading / on non-DragonBones builds.
+    Vector2f tl, br;
+#ifdef HVYM_HAS_DRAGONBONES
+    if (rigBoundsKnown) {
+        tl = d.pos + rigMinLocal * d.scale;
+        br = d.pos + rigMaxLocal * d.scale;
+    } else
+#endif
+    {
+        tl = d.pos - d.halfExtent * d.scale;
+        br = d.pos + d.halfExtent * d.scale;
+    }
     ColliderCollection<float> objs;
-    const Vector2f tl = d.pos - d.halfExtent * d.scale;
-    const Vector2f br = d.pos + d.halfExtent * d.scale;
     std::array<Vector2f, 4> t = triangle_from_rect_points(tl, br);
     objs.triangle.emplace_back(t[0], t[1], t[2]);
     objs.triangle.emplace_back(t[2], t[3], t[0]);
     collisionTree.clear();
     collisionTree.calculate_bvh_recursive(objs);
 }
+
+#ifdef HVYM_HAS_DRAGONBONES
+void SkeletalCanvasComponent::refresh_rig_bounds() {
+    if (!rig || !rig->valid()) return;
+    float minX, minY, maxX, maxY;
+    if (!rig->localBounds(minX, minY, maxX, maxY)) return;   // no geometry yet — retry next frame
+    // A little local-space padding so anti-aliased edges at the extremes aren't
+    // shaved by the clip region.
+    const float pad = 8.0f;
+    Vector2f nmin{minX - pad, minY - pad};
+    Vector2f nmax{maxX + pad, maxY + pad};
+
+    bool changed = false;
+    if (!rigBoundsKnown) {
+        rigMinLocal = nmin; rigMaxLocal = nmax; rigBoundsKnown = true; changed = true;
+    } else {
+        // Grow only (monotonic): once the box covers the tallest jump / widest reach
+        // it stays covering it, so playback never re-clips.
+        if (nmin.x() < rigMinLocal.x()) { rigMinLocal.x() = nmin.x(); changed = true; }
+        if (nmin.y() < rigMinLocal.y()) { rigMinLocal.y() = nmin.y(); changed = true; }
+        if (nmax.x() > rigMaxLocal.x()) { rigMaxLocal.x() = nmax.x(); changed = true; }
+        if (nmax.y() > rigMaxLocal.y()) { rigMaxLocal.y() = nmax.y(); changed = true; }
+    }
+    if (changed) {
+        create_collider();
+        // The container caches its world AABB (drives the draw-cache clip + culling)
+        // and only refreshes on commit — recompute it now or the box stays frozen.
+        if (compContainer) compContainer->calculate_world_bounds();
+    }
+}
+#endif
 
 bool SkeletalCanvasComponent::collides_within_coords(const SCollision::ColliderCollection<float>& checkAgainst) const {
     return collisionTree.is_collide(checkAgainst);

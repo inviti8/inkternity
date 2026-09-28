@@ -42,6 +42,12 @@ public:
     // Advance the animation clock by dtSeconds (recomputes bones + mesh deform).
     void update(float dtSeconds);
 
+    // Axis-aligned bounds of the CURRENT pose in the rig's local space (before the
+    // caller's placement matrix). Returns false if the rig has no drawable geometry
+    // yet. The bounds move as the rig animates, so callers that size a clip region
+    // should union across frames (a jump/reach extends past the setup pose).
+    bool localBounds(float& minX, float& minY, float& maxX, float& maxY) const;
+
     // Draw the current pose. The caller sets the canvas matrix for placement/scale.
     void draw(SkCanvas* canvas) const;
 

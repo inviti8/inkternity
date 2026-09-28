@@ -47,6 +47,12 @@ public:
     }
 
     virtual void draw(SkCanvas* canvas) const = 0;
+
+    // Expand [minX,minY]..[maxX,maxY] (rig-local space) to include this drawable's
+    // geometry under `parent` * this node's own matrix. Used to size the on-canvas
+    // clip/collider box to the actual (animated) pose, so a jump/reach isn't cropped.
+    virtual void accumulateBounds(const SkMatrix& parent,
+                                  float& minX, float& minY, float& maxX, float& maxY) const {}
 };
 
 // A slot's geometry (textured triangles), combining SFMLNode + SFMLDisplay.
@@ -61,6 +67,8 @@ public:
 
     void setColor(SkColor c) override { for (auto& col : colors) col = c; }
     void draw(SkCanvas* canvas) const override;
+    void accumulateBounds(const SkMatrix& parent,
+                          float& minX, float& minY, float& maxX, float& maxY) const override;
 };
 
 class SkiaTextureData : public TextureData {
@@ -138,6 +146,8 @@ public:
     Animation* getAnimation() const override { return _armature->getAnimation(); }
     // SkiaDrawable — draw this armature's slots (child armatures recurse through here)
     void draw(SkCanvas* canvas) const override;
+    void accumulateBounds(const SkMatrix& parent,
+                          float& minX, float& minY, float& maxX, float& maxY) const override;
     void setVisible(bool v) override { visible = v; for (auto n : _nodes) n->setVisible(v); }
     void setColor(SkColor c) override { for (auto n : _nodes) n->setColor(c); }
     // node list
