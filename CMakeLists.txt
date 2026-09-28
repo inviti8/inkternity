@@ -730,13 +730,34 @@ endif()
 
 # ANIMATED_IMPORTS.md: 2D skeletal rig runtime. The vendored DragonBonesCPP core
 # (deps/dragonbones) is renderer-agnostic MIT, built isolated at C++17 via its own
-# CMakeLists (avoids the project's C++23, like timelinefx). Our Skia display adapter
-# sits on top (added next); the app will include only a plain facade header, never
-# DragonBones types. HVYM_HAS_DRAGONBONES gates the skeletal component.
-if(NOT EMSCRIPTEN)
+# CMakeLists (avoids the project's C++23, like timelinefx). dragonbones_skia is our
+# Skia display adapter + the SkeletalRig facade, also isolated at C++17 (it includes
+# DragonBones headers); the C++23 app links it and includes only Skeletal/SkeletalRig.hpp,
+# never a DragonBones type. HVYM_HAS_DRAGONBONES gates the skeletal component. Needs
+# skia-infinipaint, so gated on a Conan build like the render spikes.
+if(NOT EMSCRIPTEN AND NOT NO_CONAN_BUILD)
     add_subdirectory(deps/dragonbones)
-    target_link_libraries(main dragonBones)
+
+    add_library(dragonbones_skia STATIC
+        "src/Skeletal/SkiaDragonBones.cpp"
+        "src/Skeletal/SkeletalRig.cpp")
+    set_target_properties(dragonbones_skia PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(dragonbones_skia PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(dragonbones_skia PUBLIC dragonBones skia-infinipaint::skia-infinipaint)
+    if(WIN32)
+        target_compile_definitions(dragonbones_skia PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    endif()
+
+    target_link_libraries(main dragonbones_skia)
     target_compile_definitions(main PRIVATE HVYM_HAS_DRAGONBONES)
+
+    # Phase-1 render proof: headless PNG of a sample rig (EXCLUDE_FROM_ALL; build with
+    # `--target dragonbones_render_spike`).
+    add_executable(dragonbones_render_spike EXCLUDE_FROM_ALL "tools/dragonbones_render_spike.cpp")
+    target_link_libraries(dragonbones_render_spike dragonbones_skia skia-infinipaint::skia-infinipaint)
+    if(WIN32)
+        target_compile_definitions(dragonbones_render_spike PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    endif()
 endif()
 
 # PHASE5.1: legacy .eff particle path (deps/timelinefx_legacy = damucz/timelinefx,
