@@ -1,8 +1,11 @@
 # ANIMATED_IMPORTS.md — 2D skeletal rig import (SkelForm ⇄ Inkternity)
 
-**Status:** design / decisions locked 2026-09-26. **Import a live 2D skeletal rig onto a
-layer**, plus a group-level **export-for-rigging** round-trip. Import (consume) only — NOT
-an in-app authoring tool.
+**Status:** SHIPPED (v0.14.0-rc17, 2026-09-28) — decisions locked 2026-09-26. Landed on `main`:
+DragonBones rig import as a live component, playback (Auto/on-touch + clip picker), pose-aware
+bounds, group→PSD export (blend modes + nested folders as PSD groups), and atlas re-skin.
+Remaining: Phase 4 (a DragonBones exporter contributed to SkelForm — out of this repo). **Import a
+live 2D skeletal rig onto a layer**, plus a group-level **export-for-rigging** round-trip. Import
+(consume) only — NOT an in-app authoring tool.
 **Owner:** Inkternity client.
 **Related:** [ARMATURE-SCHEMA.md](ARMATURE-SCHEMA.md) + [PHASE9.md](PHASE9.md) (3D armature —
 precedent for a runtime + on-canvas draw), [PHASE10.md](PHASE10.md) (layer groups/flip-book),
