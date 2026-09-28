@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #ifdef HVYM_HAS_DRAGONBONES
 namespace AI { class SkeletalRig; }
@@ -70,6 +71,13 @@ public:
     // Reset live playback to match the current playMode (call after flipping the
     // mode on a selected rig so the change takes effect immediately).
     void apply_play_mode();
+
+    // Clip (animation) selection. Names come from the live rig, so the list is empty
+    // until the rig has been built (first draw). active_clip() is the clip currently
+    // driving the rig; set_clip() switches it and applies live per the play mode.
+    std::vector<std::string> clip_names() const;
+    std::string active_clip() const;
+    void set_clip(const std::string& name);
 
 private:
     virtual void draw(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<void>& predrawData) const override;

@@ -153,6 +153,28 @@ void SkeletalCanvasComponent::apply_play_mode() {
 #endif
 }
 
+std::vector<std::string> SkeletalCanvasComponent::clip_names() const {
+#ifdef HVYM_HAS_DRAGONBONES
+    if (rig && rig->valid()) return rig->animationNames();
+#endif
+    return {};
+}
+
+std::string SkeletalCanvasComponent::active_clip() const {
+#ifdef HVYM_HAS_DRAGONBONES
+    if (!activeClip.empty()) return activeClip;
+#endif
+    return d.clip;
+}
+
+void SkeletalCanvasComponent::set_clip(const std::string& name) {
+    d.clip = name;
+#ifdef HVYM_HAS_DRAGONBONES
+    activeClip = name;
+    apply_play_mode();   // AUTO → loop the new clip now; ON_TOUCH → rest until touched
+#endif
+}
+
 void SkeletalCanvasComponent::draw(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<void>&) const {
 #ifdef HVYM_HAS_DRAGONBONES
     ensure_rig(*drawData.rMan);

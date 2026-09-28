@@ -65,6 +65,26 @@ void DrawingProgramSelection::selection_gui(Toolbar& t) {
                selectedSet[0]->obj->get_comp().get_type() == CanvasComponentType::SKELETAL) {
                 auto* info = selectedSet[0];
                 auto& sk = static_cast<SkeletalCanvasComponent&>(info->obj->get_comp());
+                // Clip picker — only meaningful when the rig has more than one
+                // animation (and once the rig is built, so the list is known).
+                const auto clips = sk.clip_names();
+                if(clips.size() > 1) {
+                    text_label(gui, "Clip:");
+                    gui.new_id("rig clip selector", [&] {
+                        for(size_t i = 0; i < clips.size(); i++) {
+                            gui.new_id(i, [&] {
+                                const std::string clipName = clips[i];
+                                radio_button_field(gui, "clip", clipName,
+                                    [&sk, clipName]() { return sk.active_clip() == clipName; },
+                                    [this, info, &sk, clipName]() {
+                                        sk.set_clip(clipName);
+                                        info->obj->commit_update_dont_invalidate_cache(drawP);
+                                        info->obj->send_comp_update(drawP, false);
+                                    });
+                            });
+                        }
+                    });
+                }
                 checkbox_field(gui, "rig play on touch", "Play on touch",
                     [&sk]() { return sk.d.playMode == SKELETAL_PLAY_ON_TOUCH; },
                     [this, info, &sk]() {
