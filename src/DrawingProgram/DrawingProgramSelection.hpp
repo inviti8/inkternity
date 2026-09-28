@@ -12,6 +12,11 @@ class DrawingProgramSelection {
         DrawingProgramSelection(DrawingProgram& initDrawP);
         void selection_gui(Toolbar& t);
         void phone_selection_gui(PhoneDrawingProgramScreen& t);
+        // Per-single-selection controls for a SKELETAL rig (clip picker + trigger
+        // mode). Rendered both by the select tools' selection_gui and by the Edit
+        // tool's toolbox (that's what shows when you click a rig). Returns true if
+        // it rendered anything (a single skeletal rig was selected).
+        bool render_single_skeletal_settings();
         void add_from_cam_coord_collider_to_selection(const SCollision::ColliderCollection<float>& cC, DrawingProgramLayerManager::LayerSelector layerSelector, bool frontObjectOnly);
         void remove_from_cam_coord_collider_to_selection(const SCollision::ColliderCollection<float>& cC, DrawingProgramLayerManager::LayerSelector layerSelector, bool frontObjectOnly);
         void erase_component(CanvasComponentContainer::ObjInfo* objToCheck);

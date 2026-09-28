@@ -58,45 +58,59 @@ void DrawingProgramSelection::selection_gui(Toolbar& t) {
                 });
                 text_label(gui, "Stroke Color");
             });
-            // ANIMATED_IMPORTS — a single selected 2D skeletal rig exposes its
-            // playback trigger mode (AUTO loop vs play-once on a reader-mode tap),
-            // mirroring the particle AUTO/ON_TOUCH convention. Editable any time.
-            if(selectedSet.size() == 1 &&
-               selectedSet[0]->obj->get_comp().get_type() == CanvasComponentType::SKELETAL) {
-                auto* info = selectedSet[0];
-                auto& sk = static_cast<SkeletalCanvasComponent&>(info->obj->get_comp());
-                // Clip picker — only meaningful when the rig has more than one
-                // animation (and once the rig is built, so the list is known).
-                const auto clips = sk.clip_names();
-                if(clips.size() > 1) {
-                    text_label(gui, "Clip:");
-                    gui.new_id("rig clip selector", [&] {
-                        for(size_t i = 0; i < clips.size(); i++) {
-                            gui.new_id(i, [&] {
-                                const std::string clipName = clips[i];
-                                radio_button_field(gui, "clip", clipName,
-                                    [&sk, clipName]() { return sk.active_clip() == clipName; },
-                                    [this, info, &sk, clipName]() {
-                                        sk.set_clip(clipName);
-                                        info->obj->commit_update_dont_invalidate_cache(drawP);
-                                        info->obj->send_comp_update(drawP, false);
-                                    });
-                            });
-                        }
-                    });
-                }
-                checkbox_field(gui, "rig play on touch", "Play on touch",
-                    [&sk]() { return sk.d.playMode == SKELETAL_PLAY_ON_TOUCH; },
-                    [this, info, &sk]() {
-                        sk.d.playMode = (sk.d.playMode == SKELETAL_PLAY_ON_TOUCH)
-                                            ? SKELETAL_PLAY_AUTO : SKELETAL_PLAY_ON_TOUCH;
-                        sk.apply_play_mode();                                  // take effect live
-                        info->obj->commit_update_dont_invalidate_cache(drawP); // selected → not in cache
-                        info->obj->send_comp_update(drawP, false);             // net-sync the new mode
-                    });
-            }
+            render_single_skeletal_settings();
         }
     });
+}
+
+bool DrawingProgramSelection::render_single_skeletal_settings() {
+    using namespace GUIStuff;
+    using namespace ElementHelpers;
+
+    // ANIMATED_IMPORTS — a single selected 2D skeletal rig exposes its clip choice
+    // and playback trigger mode (AUTO loop vs play-once on a reader-mode tap,
+    // mirroring the particle AUTO/ON_TOUCH convention). Editable any time.
+    if(selectedSet.size() != 1 ||
+       selectedSet[0]->obj->get_comp().get_type() != CanvasComponentType::SKELETAL)
+        return false;
+
+    auto& gui = drawP.world.main.g.gui;
+    auto* info = selectedSet[0];
+    auto& sk = static_cast<SkeletalCanvasComponent&>(info->obj->get_comp());
+
+    gui.new_id("skeletal rig settings", [&] {
+        text_label_centered(gui, "2D Rig");
+        // Clip picker — only meaningful when the rig has more than one animation
+        // (and once the rig is built, so the list is known).
+        const auto clips = sk.clip_names();
+        if(clips.size() > 1) {
+            text_label(gui, "Clip:");
+            gui.new_id("rig clip selector", [&] {
+                for(size_t i = 0; i < clips.size(); i++) {
+                    gui.new_id(i, [&] {
+                        const std::string clipName = clips[i];
+                        radio_button_field(gui, "clip", clipName,
+                            [&sk, clipName]() { return sk.active_clip() == clipName; },
+                            [this, info, &sk, clipName]() {
+                                sk.set_clip(clipName);
+                                info->obj->commit_update_dont_invalidate_cache(drawP);
+                                info->obj->send_comp_update(drawP, false);
+                            });
+                    });
+                }
+            });
+        }
+        checkbox_field(gui, "rig play on touch", "Play on touch",
+            [&sk]() { return sk.d.playMode == SKELETAL_PLAY_ON_TOUCH; },
+            [this, info, &sk]() {
+                sk.d.playMode = (sk.d.playMode == SKELETAL_PLAY_ON_TOUCH)
+                                    ? SKELETAL_PLAY_AUTO : SKELETAL_PLAY_ON_TOUCH;
+                sk.apply_play_mode();                                  // take effect live
+                info->obj->commit_update_dont_invalidate_cache(drawP); // selected → not in cache
+                info->obj->send_comp_update(drawP, false);             // net-sync the new mode
+            });
+    });
+    return true;
 }
 
 void DrawingProgramSelection::phone_selection_gui(PhoneDrawingProgramScreen& t) {
