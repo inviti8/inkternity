@@ -877,6 +877,23 @@ void Toolbar::top_toolbar() {
                                         }, "", false);
                                     });
                                     #endif
+                                    #if !defined(__EMSCRIPTEN__) && defined(HVYM_HAS_DRAGONBONES)
+                                    // ANIMATED_IMPORTS — import a rigged 2D skeleton
+                                    // (DragonBones "<base>_ske.json" + sibling
+                                    // "<base>_tex.json"/"_tex.png") as a live, animated
+                                    // component on the active layer. The native dialog can
+                                    // fire off the GL thread, so defer to the main loop via
+                                    // the add-file event (routed to the rig loader there).
+                                    menu_popup_text_button("import skeletal rig", "Import 2D Skeletal Rig (DragonBones)…", [&] {
+                                        open_file_selector("Import Skeletal Rig", {{"DragonBones Skeleton", "json"}}, [&](const std::filesystem::path& p, const auto& e) {
+                                            CustomEvents::emit_event<CustomEvents::AddFileToCanvasEvent>({
+                                                .type = CustomEvents::AddFileToCanvasEvent::Type::PATH,
+                                                .filePath = p,
+                                                .pos = main.window.size.cast<float>() / 2.0f
+                                            });
+                                        });
+                                    });
+                                    #endif
                                 });
 
                                 // Export ›  — take content out of the canvas.

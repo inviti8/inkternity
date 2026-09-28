@@ -50,6 +50,7 @@
 #include <chrono>
 #include "../CanvasComponents/ImageCanvasComponent.hpp"
 #include "../CanvasComponents/ParticleCanvasComponent.hpp"
+#include "../CanvasComponents/SkeletalCanvasComponent.hpp"
 #include <fstream>
 #include "Layers/DrawingProgramLayer.hpp"
 #include "Layers/DrawingProgramLayerListItem.hpp"
@@ -898,6 +899,10 @@ void DrawingProgram::add_file_to_canvas_by_path(const std::filesystem::path& fil
         }
     }
 
+    // ANIMATED_IMPORTS — a DragonBones skeleton (…_ske.json) becomes a live rig.
+    if (try_import_skeletal_rig(filePath, dropPos))
+        return;
+
     if(layerMan.is_a_layer_being_edited()) {
         NetworkingObjects::NetObjTemporaryPtr<ResourceData> imageTempPtr = world.rMan.add_resource_file(filePath);
         if(imageTempPtr) {
@@ -917,6 +922,54 @@ void DrawingProgram::add_file_to_canvas_by_path(const std::filesystem::path& fil
             layerMan.add_undo_place_component(newObjInfo);
         }
     }
+}
+
+bool DrawingProgram::try_import_skeletal_rig(const std::filesystem::path& skeletonPath, Vector2f dropPos) {
+#ifdef HVYM_HAS_DRAGONBONES
+    // Only handle DragonBones skeletons: "<base>_ske.json". Anything else falls
+    // through to the image-drop path.
+    const std::string fn = skeletonPath.filename().string();
+    const std::string suffix = "_ske.json";
+    if (fn.size() <= suffix.size() ||
+        fn.compare(fn.size() - suffix.size(), suffix.size(), suffix) != 0)
+        return false;
+
+    if (!layerMan.is_a_layer_being_edited()) {
+        Logger::get().log("USERINFO", "Import rig: select a layer to add it to first.");
+        return true;
+    }
+    const std::string base = fn.substr(0, fn.size() - suffix.size());
+    const auto dir = skeletonPath.parent_path();
+    const auto texJsonPath = dir / (base + "_tex.json");
+    const auto texPngPath  = dir / (base + "_tex.png");
+    std::error_code ec;
+    if (!std::filesystem::exists(texJsonPath, ec) || !std::filesystem::exists(texPngPath, ec)) {
+        Logger::get().log("USERINFO",
+            "Import rig: expected '" + base + "_tex.json' and '" + base + "_tex.png' beside the _ske.json.");
+        return true;
+    }
+    auto skeRes     = world.rMan.add_resource_file(skeletonPath);
+    auto texJsonRes = world.rMan.add_resource_file(texJsonPath);
+    auto texPngRes  = world.rMan.add_resource_file(texPngPath);
+    if (!skeRes || !texJsonRes || !texPngRes) {
+        Logger::get().log("USERINFO", "Import rig: could not read the rig files.");
+        return true;
+    }
+    auto* container = new CanvasComponentContainer(world.netObjMan, CanvasComponentType::SKELETAL);
+    auto& comp = static_cast<SkeletalCanvasComponent&>(container->get_comp());
+    comp.d.skeletonResId  = skeRes.get_net_id();
+    comp.d.atlasJsonResId = texJsonRes.get_net_id();
+    comp.d.atlasPngResId  = texPngRes.get_net_id();
+    comp.d.pos = dropPos;                        // draw the rig's local origin at the drop point
+    container->coords = world.drawData.cam.c;    // world-anchored camera space (snapshot)
+    auto newObjInfo = layerMan.add_component_to_layer_being_edited(container);
+    layerMan.add_undo_place_component(newObjInfo);
+    Logger::get().log("USERINFO", "Imported 2D skeletal rig: " + base);
+    return true;
+#else
+    (void)skeletonPath; (void)dropPos;
+    return false;
+#endif
 }
 
 bool DrawingProgram::try_attach_audio_to_selected_waypoint(const std::filesystem::path& filePath) {

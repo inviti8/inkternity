@@ -82,6 +82,10 @@ class DrawingProgram {
         // ParticleCanvasComponent. Intercepts before the image-drop path;
         // returns true if it consumed the file.
         bool try_add_particle_effect(const std::filesystem::path& filePath, Vector2f dropPos);
+        // ANIMATED_IMPORTS — a DragonBones skeleton ("<base>_ske.json", + sibling
+        // _tex.json/_tex.png) imports as a live SkeletalCanvasComponent. Intercepts
+        // before the image-drop path; returns true if it consumed the file.
+        bool try_import_skeletal_rig(const std::filesystem::path& skeletonPath, Vector2f dropPos);
         // PHASE5.1 M0 — import a legacy TimelineFX .eff library: parse + validate,
         // then embed its bytes as a canvas asset (ResourceManager). Host-gated.
         // No-op unless HVYM_HAS_TIMELINEFX_LEGACY.
