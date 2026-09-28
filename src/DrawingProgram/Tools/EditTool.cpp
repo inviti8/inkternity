@@ -41,7 +41,7 @@ void EditTool::gui_toolbox(Toolbar& t) {
             // A selected 2D skeletal rig has no in-canvas edit handles; instead show
             // its clip/trigger settings here (this toolbox is what appears when you
             // click a rig). Falls back to the plain "Edit" label otherwise.
-            if(!drawP.selection.render_single_skeletal_settings())
+            if(!drawP.selection.render_single_skeletal_settings(t))
                 text_label_centered(gui, "Edit");
         });
     }

@@ -25,6 +25,7 @@
 #include "../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/RadioButtonHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
+#include "../GUIStuff/ElementHelpers/ButtonHelpers.hpp"
 #include "../GUIStuff/ElementHelpers/LayoutHelpers.hpp"
 #include "../CanvasComponents/SkeletalCanvasComponent.hpp"
 
@@ -58,12 +59,12 @@ void DrawingProgramSelection::selection_gui(Toolbar& t) {
                 });
                 text_label(gui, "Stroke Color");
             });
-            render_single_skeletal_settings();
+            render_single_skeletal_settings(t);
         }
     });
 }
 
-bool DrawingProgramSelection::render_single_skeletal_settings() {
+bool DrawingProgramSelection::render_single_skeletal_settings(Toolbar& t) {
     using namespace GUIStuff;
     using namespace ElementHelpers;
 
@@ -109,6 +110,21 @@ bool DrawingProgramSelection::render_single_skeletal_settings() {
                 info->obj->commit_update_dont_invalidate_cache(drawP); // selected → not in cache
                 info->obj->send_comp_update(drawP, false);             // net-sync the new mode
             });
+        // Re-skin: swap the rig's texture atlas (pick the new "…_tex.json"; its
+        // "…_tex.png" sibling is loaded too), keeping the skeleton + animations. The
+        // dialog callback can run off-thread, so it only queues the request.
+        text_button(gui, "rig reskin", "Re-skin (swap atlas)…", {
+            .wide = true,
+            .onClick = [this, &t, info] {
+                t.open_file_selector("Re-skin Rig", {{"DragonBones Atlas", "json"}},
+                    [w = make_weak_ptr(drawP.world.main.world), compId = info->obj.get_net_id()]
+                    (const std::filesystem::path& p, const auto& e) {
+                        auto world = w.lock();
+                        if(world)
+                            world->drawProg.request_reskin(p, compId);
+                    }, "", false);
+            }
+        });
     });
     return true;
 }

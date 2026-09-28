@@ -180,6 +180,18 @@ void SkeletalCanvasComponent::set_clip(const std::string& name) {
 #endif
 }
 
+void SkeletalCanvasComponent::reskin(NetworkingObjects::NetObjID newAtlasJsonId,
+                                     NetworkingObjects::NetObjID newAtlasPngId) {
+    d.atlasJsonResId = newAtlasJsonId;
+    d.atlasPngResId  = newAtlasPngId;
+#ifdef HVYM_HAS_DRAGONBONES
+    rig.reset();               // rebuild lazily against the new atlas (skeleton unchanged)
+    loadAttempted = false;
+    activeClip.clear();        // re-resolved from d.clip on rebuild (playback continues)
+    rigBoundsKnown = false;    // recompute bounds for the new art
+#endif
+}
+
 void SkeletalCanvasComponent::draw(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<void>&) const {
 #ifdef HVYM_HAS_DRAGONBONES
     ensure_rig(*drawData.rMan);

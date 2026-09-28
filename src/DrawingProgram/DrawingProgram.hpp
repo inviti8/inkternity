@@ -107,6 +107,17 @@ class DrawingProgram {
         } pendingPsdExport;
         void request_psd_export(const std::filesystem::path& path, NetworkingObjects::NetObjID groupItemId);
         void process_pending_psd_export();
+
+        // ANIMATED_IMPORTS — re-skin (atlas hot-swap) of a selected rig. Requested from
+        // a file-dialog callback (possibly off-thread); the resource load + swap run on
+        // the main thread in process_pending_reskin() (see update()).
+        struct PendingReskin {
+            bool active = false;
+            std::filesystem::path atlasJsonPath;
+            NetworkingObjects::NetObjID compId;
+        } pendingReskin;
+        void request_reskin(const std::filesystem::path& atlasJsonPath, NetworkingObjects::NetObjID compId);
+        void process_pending_reskin();
         // PHASE10 Feature B — per-frame flip-book playback tick (called from
         // World::focus_update) + ON_TOUCH dispatch for a reader-mode tap.
         void update_flipbook_playback(float deltaTime);

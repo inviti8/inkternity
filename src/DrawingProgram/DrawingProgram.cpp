@@ -683,6 +683,7 @@ void DrawingProgram::update() {
     drawTool->tool_update();
 
     process_pending_psd_export();   // GL-current: run any queued group→PSD export here
+    process_pending_reskin();       // main-thread: run any queued rig atlas hot-swap
     update_downloading_dropped_files();
     AI::ReangleFlow::tick(*this);   // poll any in-flight AI reangle → place on success
     AI::MeshFlow::tick(*this);      // poll any in-flight AI mesh reference → place on success
@@ -1164,6 +1165,48 @@ void DrawingProgram::process_pending_psd_export() {
     catch (const std::exception& e) {
         Logger::get().log("WORLDFATAL", std::string("Export PSD failed: ") + e.what());
     }
+}
+
+void DrawingProgram::request_reskin(const std::filesystem::path& atlasJsonPath, NetworkingObjects::NetObjID compId) {
+    pendingReskin.active = true;
+    pendingReskin.atlasJsonPath = atlasJsonPath;
+    pendingReskin.compId = compId;
+}
+
+void DrawingProgram::process_pending_reskin() {
+    if (!pendingReskin.active) return;
+    pendingReskin.active = false;
+    auto ref = world.netObjMan.get_obj_temporary_ref_from_id<CanvasComponentContainer>(pendingReskin.compId);
+    if (!ref) {
+        Logger::get().log("USERINFO", "Re-skin: the rig is no longer available.");
+        return;
+    }
+    if (ref->get_comp().get_type() != CanvasComponentType::SKELETAL) {
+        Logger::get().log("USERINFO", "Re-skin: the selected component is not a 2D rig.");
+        return;
+    }
+    // The artist picks the new "<base>_tex.json"; its atlas image is the sibling
+    // "<base>_tex.png".
+    const std::filesystem::path jsonPath = pendingReskin.atlasJsonPath;
+    std::filesystem::path pngPath = jsonPath;
+    pngPath.replace_extension(".png");
+    std::error_code ec;
+    if (!std::filesystem::exists(pngPath, ec)) {
+        Logger::get().log("USERINFO",
+            "Re-skin: expected a sibling PNG (" + pngPath.filename().string() + ") next to the atlas JSON.");
+        return;
+    }
+    auto jRes = world.rMan.add_resource_file(jsonPath);
+    auto pRes = world.rMan.add_resource_file(pngPath);
+    if (!jRes || !pRes) {
+        Logger::get().log("USERINFO", "Re-skin: could not read the atlas files.");
+        return;
+    }
+    auto& sk = static_cast<SkeletalCanvasComponent&>(ref->get_comp());
+    sk.reskin(jRes.get_net_id(), pRes.get_net_id());
+    ref->commit_update(*this);
+    ref->send_comp_update(*this, true);
+    Logger::get().log("USERINFO", "Re-skinned rig with a new atlas.");
 }
 
 void DrawingProgram::update_flipbook_playback(float deltaTime) {

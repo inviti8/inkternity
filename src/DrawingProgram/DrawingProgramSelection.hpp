@@ -16,7 +16,7 @@ class DrawingProgramSelection {
         // mode). Rendered both by the select tools' selection_gui and by the Edit
         // tool's toolbox (that's what shows when you click a rig). Returns true if
         // it rendered anything (a single skeletal rig was selected).
-        bool render_single_skeletal_settings();
+        bool render_single_skeletal_settings(Toolbar& t);
         void add_from_cam_coord_collider_to_selection(const SCollision::ColliderCollection<float>& cC, DrawingProgramLayerManager::LayerSelector layerSelector, bool frontObjectOnly);
         void remove_from_cam_coord_collider_to_selection(const SCollision::ColliderCollection<float>& cC, DrawingProgramLayerManager::LayerSelector layerSelector, bool frontObjectOnly);
         void erase_component(CanvasComponentContainer::ObjInfo* objToCheck);

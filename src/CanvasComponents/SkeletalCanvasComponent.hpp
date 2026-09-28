@@ -79,6 +79,11 @@ public:
     std::string active_clip() const;
     void set_clip(const std::string& name);
 
+    // Re-skin (atlas hot-swap): point the rig at a new texture atlas (its two resource
+    // ids), keeping the same skeleton + animations, and force a rebuild. Slot names in
+    // the new atlas must match for the art to bind. The current clip keeps playing.
+    void reskin(NetworkingObjects::NetObjID newAtlasJsonId, NetworkingObjects::NetObjID newAtlasPngId);
+
 private:
     virtual void draw(SkCanvas* canvas, const DrawData& drawData, const std::shared_ptr<void>& predrawData) const override;
     virtual void initialize_draw_data(DrawingProgram& drawP) override;
