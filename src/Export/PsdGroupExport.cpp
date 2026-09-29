@@ -232,13 +232,21 @@ bool export_group(DrawingProgram& drawP, DrawingProgramLayerListItem& group,
         }
     };
 
+    // SkelForm's PSD import maps group→bone and ignores any layer that sits outside a
+    // group, so the whole selection is exported inside ONE enclosing PSD group rather
+    // than unwrapped to the top level. Nested Inkternity folders are preserved as
+    // nested groups (group-within-group), which is how the artist carves out bones;
+    // loose layers within a group flatten into that group's bone, per SkelForm.
     if (group.is_folder()) {
-        auto& fl = group.get_folder().folderList;
-        if (fl)
-            for (auto& p : (*fl) | std::views::reverse)
-                if (p.obj) emit(*p.obj);
+        emit(group);   // selected folder → the single top-level group (children/sub-folders inside)
     } else {
-        emit(group);   // a single selected layer
+        // A single selected layer → wrap it in one group so it isn't a bare top-level layer.
+        Layer close; close.kind = LayerKind::GroupClose; close.name = "</Layer group>";
+        records.push_back(std::move(close));
+        records.push_back(make_image_record(group));
+        Layer open; open.kind = LayerKind::GroupOpen; open.name = group.get_name();
+        open.visible = group.get_visible();
+        records.push_back(std::move(open));
     }
 
     const std::string bytes = build_psd(docW, docH, records);
