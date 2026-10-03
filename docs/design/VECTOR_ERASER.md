@@ -1,6 +1,7 @@
 # VECTOR_ERASER.md — partial (point-level) eraser for consolidated vector objects
 
-**Status:** scoped / decisions locked 2026-10-02. Not yet implemented.
+**Status:** IMPLEMENTED (2026-10-02, commit 9cfe091 on main) per the locked scope below;
+needs in-app test. Builds + launches.
 **Owner:** Inkternity client.
 **Related:** Consolidate Vectors (`VectorGroupCanvasComponent`, save version INFPNT000033),
 `EraserTool`, `BrushStrokeTessellation` (`BrushTess`).
