@@ -1,7 +1,10 @@
 #pragma once
 #include <include/core/SkCanvas.h>
+#include <unordered_map>
+#include <vector>
 #include "../../DrawData.hpp"
 #include "DrawingProgramToolBase.hpp"
+#include "../../CanvasComponents/VectorGroupCanvasComponent.hpp"   // EraseSeg (partial mode)
 
 class DrawingProgram;
 
@@ -25,4 +28,8 @@ class EraserTool : public DrawingProgramToolBase {
         void erase_between_points(const Vector2f& start, const Vector2f& end);
         std::optional<Vector2f> lastPosOpt;
         bool isErasing = false;
+        // VECTOR_ERASER.md — Partial mode: eraser segments (in each touched VECTORGROUP's
+        // object space) accumulated across the drag, applied once in switch_tool.
+        std::unordered_map<CanvasComponentContainer::ObjInfo*,
+                           std::vector<VectorGroupCanvasComponent::EraseSeg>> partialErase;
 };

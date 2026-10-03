@@ -15,7 +15,11 @@ class ToolConfiguration {
 
         struct EraserToolConfig {
             float relativeWidth = 15.0f;
-            NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(EraserToolConfig, relativeWidth)
+            // VECTOR_ERASER.md — 0 = Object (delete whole vector components, default),
+            // 1 = Partial vector (erase points of a consolidated VECTORGROUP). Raster
+            // erase is pixel-level regardless.
+            int mode = 0;
+            NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(EraserToolConfig, relativeWidth, mode)
         } eraser;
 
         struct EllipseDrawToolConfig {

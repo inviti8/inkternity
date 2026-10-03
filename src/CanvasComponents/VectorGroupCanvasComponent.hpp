@@ -52,6 +52,15 @@ class VectorGroupCanvasComponent : public CanvasComponent {
         virtual std::unique_ptr<CanvasComponent> get_data_copy() const override;
         virtual void set_data_from(const CanvasComponent& other) override;
 
+        // VECTOR_ERASER.md — partial (point-level) erase. `EraseSeg` is one eraser
+        // segment in GROUP-OBJECT space (the space make_sub_xf maps sub-stroke points
+        // into). erase_along_segments drops points covered by any segment and splits
+        // each sub-stroke into surviving runs; returns true if geometry changed. After
+        // a true return the caller commits the component (or deletes it if d.subStrokes
+        // is now empty).
+        struct EraseSeg { Vector2f a; Vector2f b; float radius; };
+        bool erase_along_segments(const std::vector<EraseSeg>& segs);
+
         // A group carries many colors; report none so the color picker doesn't
         // misrepresent it, and ignore recolor requests.
         virtual std::optional<Vector4f> get_stroke_color() const override;

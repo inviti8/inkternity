@@ -43,6 +43,13 @@ void EraserTool::gui_toolbox(Toolbar& t) {
     gui.new_id("eraser tool", [&] {
         text_label_centered(gui, "Eraser");
         drawP.world.main.toolConfig.relative_width_gui(drawP, "Size");
+        // VECTOR_ERASER.md — Object = delete whole vector components (default);
+        // Partial = erase points of a consolidated VECTORGROUP. Raster erase is
+        // pixel-level either way.
+        radio_button_selector<int>(gui, "eraser mode", &drawP.world.main.toolConfig.eraser.mode, {
+            {"Object", 0},
+            {"Partial (vector)", 1}
+        });
     });
 }
 
@@ -142,6 +149,19 @@ void EraserTool::erase_between_points(const Vector2f& start, const Vector2f& end
             return false;
         }
 #endif
+        // VECTOR_ERASER.md — Partial mode: a consolidated VECTORGROUP is erased
+        // point-wise instead of deleted whole. Accumulate the eraser segment in the
+        // component's object space (same transform the raster branch uses); the split +
+        // rebuild happens once on release (switch_tool). Keep the component in the BVH.
+        if (drawP.world.main.toolConfig.eraser.mode == 1 &&
+            container.get_comp().get_type() == CanvasComponentType::VECTORGROUP) {
+            const Vector2f localStart = container.coords.from_cam_space_to_this(drawP.world, start);
+            const Vector2f localEnd   = container.coords.from_cam_space_to_this(drawP.world, end);
+            const Vector2f probe = container.coords.from_cam_space_to_this(drawP.world, start + Vector2f(width, 0));
+            const float localRadius = (probe - localStart).norm();
+            partialErase[c].push_back({localStart, localEnd, localRadius});
+            return false;
+        }
         erasedComponents.emplace(c);
         drawP.drawCache.invalidate_cache_at_optional_aabb(container.get_world_bounds());
         return true;
@@ -183,6 +203,57 @@ void EraserTool::erase_component(CanvasComponentContainer::ObjInfo* erasedComp) 
 }
 
 void EraserTool::switch_tool(DrawingProgramToolType newTool) {
+    // VECTOR_ERASER.md — apply accumulated partial (point-level) erases to each touched
+    // VECTORGROUP: edit its sub-strokes, rebuild + net-sync + one undo entry; a group
+    // emptied by the erase falls through to the normal whole-delete path.
+    if(!partialErase.empty()) {
+        // Single-component data-swap undo (mirrors EditTool::commit_edit_updates).
+        class EraseVectorPointsUndoAction : public WorldUndoAction {
+            public:
+                EraseVectorPointsUndoAction(std::unique_ptr<CanvasComponent> initData, WorldUndoManager::UndoObjectID initUndoID):
+                    data(std::move(initData)), undoID(initUndoID) {}
+                std::string get_name() const override { return "Erase Vector Points"; }
+                bool undo(WorldUndoManager& undoMan) override { return undo_redo(undoMan); }
+                bool redo(WorldUndoManager& undoMan) override { return undo_redo(undoMan); }
+                bool undo_redo(WorldUndoManager& undoMan) {
+                    std::optional<NetworkingObjects::NetObjID> id = undoMan.get_netid_from_undoid(undoID);
+                    if(!id.has_value()) return false;
+                    auto objPtr = undoMan.world.netObjMan.get_obj_temporary_ref_from_id<CanvasComponentContainer>(id.value());
+                    if(!objPtr) return false;
+                    std::unique_ptr<CanvasComponent> newData = objPtr->get_comp().get_data_copy();
+                    objPtr->get_comp().set_data_from(*data);
+                    data = std::move(newData);
+                    objPtr->commit_update(undoMan.world.drawProg);
+                    objPtr->send_comp_update(undoMan.world.drawProg, true);
+                    return true;
+                }
+                std::unique_ptr<CanvasComponent> data;
+                WorldUndoManager::UndoObjectID undoID;
+        };
+
+        for(auto& [info, segs] : partialErase) {
+            if(!info)
+                continue;
+            auto& container = *info->obj;
+            if(container.get_comp().get_type() != CanvasComponentType::VECTORGROUP)
+                continue;
+            auto& grp = static_cast<VectorGroupCanvasComponent&>(container.get_comp());
+            std::unique_ptr<CanvasComponent> oldData = grp.get_data_copy();
+            if(!grp.erase_along_segments(segs))
+                continue;   // nothing was actually covered
+            if(grp.d.subStrokes.empty()) {
+                erasedComponents.emplace(info);   // emptied → whole-delete below
+                continue;
+            }
+            container.commit_update(drawP);
+            container.send_comp_update(drawP, true);
+            drawP.drawCache.invalidate_cache_at_optional_aabb(container.get_world_bounds());
+            drawP.world.undo.push(std::make_unique<EraseVectorPointsUndoAction>(
+                std::move(oldData), drawP.world.undo.get_undoid_from_netid(info->obj.get_net_id())));
+        }
+        partialErase.clear();
+    }
+
     drawP.layerMan.erase_component_container(erasedComponents);
     isErasing = false;
 }

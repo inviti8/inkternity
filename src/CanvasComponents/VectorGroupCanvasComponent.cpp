@@ -6,6 +6,7 @@
 #include <Helpers/ConvertVec.hpp>
 #include <cereal/types/vector.hpp>
 #include <include/core/SkPaint.h>
+#include <algorithm>
 #include <cmath>
 #include <optional>
 
@@ -36,6 +37,14 @@ SubXf make_sub_xf(const CoordSpaceHelper& rel) {
 
 bool same_color(const Vector4f& a, const Vector4f& b) {
     return a.x() == b.x() && a.y() == b.y() && a.z() == b.z() && a.w() == b.w();
+}
+
+// Distance from point p to segment [a,b] (all in the same space).
+float dist_point_seg(const Vector2f& p, const Vector2f& a, const Vector2f& b) {
+    const Vector2f ab = b - a;
+    const float len2 = ab.squaredNorm();
+    const float t = len2 > 0.0f ? std::clamp((p - a).dot(ab) / len2, 0.0f, 1.0f) : 0.0f;
+    return (p - (a + t * ab)).norm();
 }
 
 }  // namespace
@@ -117,6 +126,71 @@ void VectorGroupCanvasComponent::draw(SkCanvas* canvas, const DrawData& drawData
             canvas->drawVertices(b.verts, SkBlendMode::kSrcOver, paint);
         }
     }
+}
+
+bool VectorGroupCanvasComponent::erase_along_segments(const std::vector<EraseSeg>& segs) {
+    if(segs.empty())
+        return false;
+
+    std::vector<SubStroke> out;
+    out.reserve(d.subStrokes.size());
+    bool changed = false;
+
+    for(const auto& s : d.subStrokes) {
+        const auto& pts = *s.points;
+        if(pts.empty())
+            continue;   // drop degenerate sub-strokes
+
+        // Map each point into group-object space (where segs live) and flag the ones
+        // the eraser covers (disk radius grown by the stroke's own half-width so the
+        // visible body, not just the centreline, is removed).
+        const SubXf xf = make_sub_xf(s.coords);
+        std::vector<char> covered(pts.size(), 0);
+        bool anyCovered = false;
+        for(size_t i = 0; i < pts.size(); i++) {
+            const Vector2f objPos = xf.apply(pts[i].pos);
+            const float halfW = pts[i].width * 0.5f * xf.sc;
+            for(const auto& seg : segs) {
+                if(dist_point_seg(objPos, seg.a, seg.b) <= seg.radius + halfW) {
+                    covered[i] = 1;
+                    anyCovered = true;
+                    break;
+                }
+            }
+        }
+        if(!anyCovered) {
+            out.push_back(s);   // untouched: keep as-is (shares the points buffer)
+            continue;
+        }
+        changed = true;
+
+        // Partition the surviving points into contiguous runs; each run becomes its own
+        // sub-stroke reusing this one's coords/color/caps (points stay in sub-stroke
+        // space, so a run is just a slice). A lone survivor is kept only as a cap dot.
+        size_t i = 0;
+        while(i < pts.size()) {
+            if(covered[i]) { i++; continue; }
+            size_t j = i;
+            while(j < pts.size() && !covered[j]) j++;
+            const size_t runLen = j - i;
+            if(runLen >= 2 || (runLen == 1 && s.hasRoundCaps)) {
+                SubStroke ns;
+                ns.coords = s.coords;
+                ns.color = s.color;
+                ns.hasRoundCaps = s.hasRoundCaps;
+                ns.points = std::make_shared<std::vector<BrushStrokeCanvasComponentPoint>>(
+                    pts.begin() + static_cast<std::ptrdiff_t>(i),
+                    pts.begin() + static_cast<std::ptrdiff_t>(j));
+                out.push_back(std::move(ns));
+            }
+            i = j;
+        }
+    }
+
+    if(!changed)
+        return false;
+    d.subStrokes = std::move(out);
+    return true;   // caller commits (rebuilds batches/collider) or deletes if now empty
 }
 
 void VectorGroupCanvasComponent::initialize_draw_data(DrawingProgram& drawP) {
