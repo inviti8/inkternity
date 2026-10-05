@@ -1,6 +1,7 @@
 # WAYPOINT_BUTTON_TRANSFORM.md — per-waypoint position + scale for reader-mode nav buttons
 
-**Status:** scoped / decisions locked 2026-10-05. **Not yet implemented — awaiting review.**
+**Status:** IMPLEMENTED (2026-10-05, commit c02053d on main) per the locked scope below; builds +
+launches, needs in-app test. Format bump landed as INFPNT000036 / 0.35.0.
 **Owner:** Inkternity client.
 **Related:** `ReaderMode` (branch overlay), `Waypoint` (skins), PHASE1.md §5a (skins),
 TRANSITIONS.md (transition auto-advance), the next-stop skin fix (`ReaderMode::resolve_skin_source_waypoint`, commit 15b250b).
