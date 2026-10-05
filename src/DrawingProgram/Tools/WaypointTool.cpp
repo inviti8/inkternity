@@ -13,6 +13,11 @@
 #include "../../Waypoints/WaypointGraph.hpp"
 #include "../../GUIStuff/ElementHelpers/TextLabelHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/TextBoxHelpers.hpp"
+#include <include/core/SkImage.h>
+#include <include/core/SkRRect.h>
+#include <include/core/SkSamplingOptions.h>
+#include <include/effects/SkDashPathEffect.h>
+#include <algorithm>
 #include "../../GUIStuff/ElementHelpers/NumberSliderHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/LayoutHelpers.hpp"
 #include "../../GUIStuff/ElementHelpers/CheckBoxHelpers.hpp"
@@ -114,6 +119,47 @@ void WaypointTool::draw(SkCanvas* canvas, const DrawData& drawData) {
     outline.setStrokeWidth(0.0f);
     outline.setColor4f({0.88f, 0.69f, 0.25f, 1.0f});  // matches the marker fill — same gold
     canvas->drawPath(pb.detach(), outline);
+
+    // WAYPOINT_BUTTON_TRANSFORM.md — preview the reader-mode nav button in author mode
+    // so the artist can see position/scale while adjusting the sliders. Cam space here
+    // is screen pixels (edge previews above draw cam-space coords directly), so the
+    // normalised buttonPos maps straight to the viewport. Non-interactive: a pure draw,
+    // so it never intercepts canvas clicks. Shows the SELECTED waypoint's own skin +
+    // transform (what's being edited), at buttonPos regardless of the custom flag, so the
+    // X/Y sliders always move the preview. Dashed outline marks it as author chrome.
+    {
+        constexpr float NAV_BUTTON_BASE_SIDE = 140.0f;   // matches ReaderMode BRANCH_BUTTON_SIDE
+        const Vector2f vp = drawP.world.main.window.size.cast<float>();
+        if (vp.x() > 0.0f && vp.y() > 0.0f) {
+            const float side = NAV_BUTTON_BASE_SIDE * wpRef->get_button_scale();
+            const Vector2f c{ wpRef->get_button_pos().x() * vp.x(),
+                              wpRef->get_button_pos().y() * vp.y() };
+            const SkRect box = SkRect::MakeXYWH(c.x() - side * 0.5f, c.y() - side * 0.5f, side, side);
+
+            sk_sp<SkImage> img = wpRef->get_skin();
+            if (img) {
+                const float iw = static_cast<float>(img->width());
+                const float ih = static_cast<float>(img->height());
+                const float s  = std::min((side - 4.0f) / iw, (side - 4.0f) / ih);
+                const float dw = iw * s, dh = ih * s;
+                SkPaint ip; ip.setAntiAlias(drawData.skiaAA); ip.setAlphaf(0.85f);
+                canvas->drawImageRect(img.get(),
+                    SkRect::MakeXYWH(c.x() - dw * 0.5f, c.y() - dh * 0.5f, dw, dh),
+                    SkSamplingOptions{SkFilterMode::kLinear}, &ip);
+            } else {
+                SkPaint fill; fill.setAntiAlias(drawData.skiaAA);
+                fill.setColor4f({0.20f, 0.20f, 0.24f, 0.55f});
+                canvas->drawRRect(SkRRect::MakeRectXY(box, 8.0f, 8.0f), fill);
+            }
+            SkPaint dash; dash.setAntiAlias(drawData.skiaAA);
+            dash.setStyle(SkPaint::kStroke_Style);
+            dash.setStrokeWidth(2.0f);
+            dash.setColor4f({0.95f, 0.85f, 0.45f, 0.9f});
+            const SkScalar intervals[2] = {8.0f, 6.0f};
+            dash.setPathEffect(SkDashPathEffect::Make({intervals, 2}, 0.0f));
+            canvas->drawRRect(SkRRect::MakeRectXY(box, 8.0f, 8.0f), dash);
+        }
+    }
 }
 
 // FRAME_ANIM.md §3 — settings-panel block for the Frame step axis radio.
