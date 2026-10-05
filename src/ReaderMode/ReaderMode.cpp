@@ -421,7 +421,12 @@ class BranchChoiceElement : public GUIStuff::Element {
                 normPos = wpRef->get_button_pos();
             }
             if (customPos) {
-                const Vector2f vp = w->main.window.size.cast<float>();
+                // Clay lays out in LOGICAL units (window size / gui scale, see
+                // GUIManager::update_window), so the floating offset must be logical
+                // too — using physical window pixels here pushes the button ~guiScale×
+                // too far and off-screen on high-DPI displays. The author-mode preview
+                // draws in physical cam-space, hence the different handling there.
+                const Vector2f vp = w->main.window.size.cast<float>() / w->main.g.final_gui_scale();
                 CLAY(id, {
                     .layout = {.sizing = {.width = CLAY_SIZING_FIXED(side),
                                          .height = CLAY_SIZING_FIXED(side)}},
