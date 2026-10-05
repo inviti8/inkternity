@@ -138,7 +138,12 @@ void WaypointTool::draw(SkCanvas* canvas, const DrawData& drawData) {
         constexpr float NAV_BUTTON_BASE_SIDE = 140.0f;   // matches ReaderMode BRANCH_BUTTON_SIDE
         const Vector2f vp = drawP.world.main.window.size.cast<float>();
         if (vp.x() > 0.0f && vp.y() > 0.0f) {
-            const float side = NAV_BUTTON_BASE_SIDE * wpRef->get_button_scale();
+            // The reader button is a Clay element sized in LOGICAL units, so it renders at
+            // BRANCH_BUTTON_SIDE * guiScale physical px (Clay's canvas is scaled up by the gui
+            // scale on draw). This preview draws into cam-space, which is physical px, so match
+            // by the same factor — same reason drag_point_radius() multiplies by final_gui_scale().
+            const float side = NAV_BUTTON_BASE_SIDE * wpRef->get_button_scale()
+                             * drawP.world.main.g.final_gui_scale();
             const Vector2f c{ wpRef->get_button_pos().x() * vp.x(),
                               wpRef->get_button_pos().y() * vp.y() };
             const SkRect box = SkRect::MakeXYWH(c.x() - side * 0.5f, c.y() - side * 0.5f, side, side);
