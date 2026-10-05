@@ -40,6 +40,9 @@
 #include <memory>
 #include "CanvasComponents/CanvasComponent.hpp"
 #include "CanvasComponents/CanvasComponentContainer.hpp"
+#include "CanvasComponents/CanvasComponentType.hpp"
+#include "CanvasComponents/WaypointCanvasComponent.hpp"
+#include "DrawingProgram/Layers/DrawingProgramLayerManager.hpp"
 #include "CanvasComponents/CanvasComponentAllocator.hpp"
 #include "WorldScreenshot.hpp"
 #include <Helpers/Random.hpp>
@@ -1276,6 +1279,23 @@ void World::save_file(cereal::PortableBinaryOutputArchive& a) const {
     drawProg.save_file(a);
     bMan.save_file(a);
     wpGraph.save_file(a);
+    // Marker->node linkage (INFPNT000035): WAYPOINT markers reference a node by
+    // NetObjID, which is reassigned on load, so persist the target as a positional
+    // index into wpGraph (like edges), in flattened-component order. Read back at the
+    // same stream position in load_file.
+    {
+        const auto comps = drawProg.layerMan.get_flattened_component_list();
+        uint32_t markerCount = 0;
+        for (auto* oi : comps)
+            if (oi && oi->obj->get_comp().get_type() == CanvasComponentType::WAYPOINT) ++markerCount;
+        a(markerCount);
+        for (auto* oi : comps) {
+            if (!oi || oi->obj->get_comp().get_type() != CanvasComponentType::WAYPOINT) continue;
+            const auto wpid = static_cast<const WaypointCanvasComponent&>(oi->obj->get_comp()).get_waypoint_id();
+            int32_t idx = wpGraph.node_index_of(wpid);
+            a(idx);
+        }
+    }
     gridMan.save_file(a);
     rMan.save_file(a);
     // P0-C2: subscription metadata. Always written from format v0.11
@@ -1305,6 +1325,27 @@ void World::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber versi
     }
     else
         wpGraph.server_init_no_file();  // M4-b will migrate from bMan instead
+    // Marker->node linkage (INFPNT000035): re-point each WAYPOINT marker at its node
+    // via the positional indices saved after wpGraph (node ids were reassigned above).
+    if (version >= VersionNumber(0, 34, 0)) {
+        mark("wpMarkerLink");
+        uint32_t markerCount = 0;
+        a(markerCount);
+        std::vector<int32_t> idxs(markerCount);
+        for (uint32_t i = 0; i < markerCount; ++i) a(idxs[i]);
+        const auto& nodeIds = wpGraph.loaded_node_ids_by_index();
+        auto comps = drawProg.layerMan.get_flattened_component_list();
+        size_t k = 0;
+        for (auto* oi : comps) {
+            if (!oi || oi->obj->get_comp().get_type() != CanvasComponentType::WAYPOINT) continue;
+            if (k < idxs.size()) {
+                const int32_t idx = idxs[k];
+                if (idx >= 0 && static_cast<size_t>(idx) < nodeIds.size())
+                    static_cast<WaypointCanvasComponent&>(oi->obj->get_comp()).relink_waypoint_id(nodeIds[static_cast<size_t>(idx)]);
+            }
+            ++k;
+        }
+    }
     mark("gridMan");    gridMan.load_file(a, version);
     mark("rMan");       rMan.load_file(a, version);
     if (version >= VersionNumber(0, 11, 0)) {

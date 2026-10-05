@@ -81,8 +81,18 @@ class WaypointGraph {
         // user-facing "Keep first" cleanup action is the trigger.
         void prune_outgoing_edges_to_first(NetworkingObjects::NetObjID from);
 
+        // Marker→node linkage (INFPNT000035). WaypointCanvasComponent markers
+        // reference a node by NetObjID, but node ids are reassigned on load, so the
+        // link is persisted as a positional index (like edges). node_index_of() maps a
+        // live node id to its position for save; loaded_node_ids_by_index() returns the
+        // post-load id for each saved position so World can re-link markers.
+        int node_index_of(NetworkingObjects::NetObjID id) const;
+        const std::vector<NetworkingObjects::NetObjID>& loaded_node_ids_by_index() const { return loadedNodeIdsByIndex; }
+
     private:
         World& world;
+        // Populated by load_file: index (as written on disk) -> fresh node NetObjID.
+        std::vector<NetworkingObjects::NetObjID> loadedNodeIdsByIndex;
 
         NetworkingObjects::NetObjOwnerPtr<NetworkingObjects::NetObjOrderedList<Waypoint>> nodes;
         NetworkingObjects::NetObjOwnerPtr<NetworkingObjects::NetObjOrderedList<Edge>> edges;

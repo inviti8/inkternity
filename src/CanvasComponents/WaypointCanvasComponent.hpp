@@ -34,6 +34,9 @@ class WaypointCanvasComponent : public CanvasComponent {
 
         void set_data(NetworkingObjects::NetObjID waypointId, const Vector2f& markerPos);
         NetworkingObjects::NetObjID get_waypoint_id() const { return d.waypointId; }
+        // VECTOR_ERASER/waypoint fix (INFPNT000035): re-point this marker at its node
+        // after node ids are reassigned on load (World applies the marker-linkage block).
+        void relink_waypoint_id(NetworkingObjects::NetObjID id) { d.waypointId = id; }
         const Vector2f& get_marker_pos() const { return d.markerPos; }
 
         struct Data {

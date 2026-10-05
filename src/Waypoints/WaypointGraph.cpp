@@ -156,6 +156,16 @@ void WaypointGraph::save_file(cereal::PortableBinaryOutputArchive& a) const {
     }
 }
 
+int WaypointGraph::node_index_of(NetworkingObjects::NetObjID id) const {
+    if (!nodes) return -1;
+    int i = 0;
+    for (auto& info : *nodes) {
+        if (info.obj.get_net_id() == id) return i;
+        ++i;
+    }
+    return -1;
+}
+
 void WaypointGraph::load_file(cereal::PortableBinaryInputArchive& a, VersionNumber version) {
     nodes = world.netObjMan.make_obj<NetObjOrderedList<Waypoint>>();
     edges = world.netObjMan.make_obj<NetObjOrderedList<Edge>>();
@@ -184,6 +194,10 @@ void WaypointGraph::load_file(cereal::PortableBinaryInputArchive& a, VersionNumb
         it->obj->load_audio_data_from_archive(a, version);
         idsByIndex.push_back(it->obj.get_net_id());
     }
+
+    // Remember the index->fresh-id mapping so World can re-link marker components
+    // (INFPNT000035) after it reads the marker-linkage block.
+    loadedNodeIdsByIndex = idsByIndex;
 
     // Read edges via positional indices.
     uint32_t edgeCount = 0;
