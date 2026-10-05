@@ -73,6 +73,7 @@ class Waypoint {
         static void publish_is_transition_update(const NetworkingObjects::NetObjTemporaryPtr<Waypoint>& o);
         static void publish_stop_time_update(const NetworkingObjects::NetObjTemporaryPtr<Waypoint>& o);
         static void publish_skin_update(const NetworkingObjects::NetObjTemporaryPtr<Waypoint>& o);
+        static void publish_button_transform_update(const NetworkingObjects::NetObjTemporaryPtr<Waypoint>& o);
 
         const CoordSpaceHelper& get_coords() const { return coords; }
         const Vector<int32_t, 2>& get_window_size() const { return windowSize; }
@@ -86,6 +87,24 @@ class Waypoint {
         sk_sp<SkImage> get_skin() const   { return skin; }
         void set_skin(sk_sp<SkImage> img) { skin = std::move(img); }
         void clear_skin()                 { skin.reset(); }
+
+        // WAYPOINT_BUTTON_TRANSFORM.md — per-waypoint reader-mode nav-button placement,
+        // bundled with the skin (a button takes the skin AND transform of the next-stop
+        // waypoint it advances toward). `buttonPos` is a NORMALISED screen position
+        // (0..1) of the button centre; it only takes effect when `buttonPosCustom` is
+        // set — otherwise the button stays in the default bottom-center row.
+        // `buttonScale` multiplies the base button side and always applies.
+        static constexpr float BUTTON_SCALE_MIN = 0.25f;
+        static constexpr float BUTTON_SCALE_MAX = 4.0f;
+        const Vector2f& get_button_pos() const { return buttonPos; }
+        Vector2f& mutable_button_pos()         { return buttonPos; }
+        void set_button_pos(const Vector2f& p) { buttonPos = p; buttonPosCustom = true; }
+        bool get_button_pos_custom() const     { return buttonPosCustom; }
+        void set_button_pos_custom(bool v)     { buttonPosCustom = v; }
+        bool& mutable_button_pos_custom()      { return buttonPosCustom; }
+        float get_button_scale() const         { return buttonScale; }
+        float& mutable_button_scale()          { return buttonScale; }
+        void set_button_scale(float s)         { buttonScale = std::clamp(s, BUTTON_SCALE_MIN, BUTTON_SCALE_MAX); }
 
         // PHASE2 M4: per-waypoint speed multiplier for the reader-mode
         // camera transition INTO this waypoint. Range 0.01 .. 100.0. The
@@ -191,6 +210,9 @@ class Waypoint {
         // Caller is the WaypointGraph load path; unconditionally
         // invoked since we don't migrate older saves.
         void load_audio_data_from_archive(cereal::PortableBinaryInputArchive& a, VersionNumber version);
+        // WAYPOINT_BUTTON_TRANSFORM.md — reads buttonPos/buttonPosCustom/buttonScale.
+        // Caller gates on file version >= 0.35.0.
+        void load_button_transform_from_archive(cereal::PortableBinaryInputArchive& a, VersionNumber version);
 
         static void register_class(World& w);
 
@@ -201,6 +223,10 @@ class Waypoint {
         CoordSpaceHelper coords;
         Vector<int32_t, 2> windowSize{0, 0};
         sk_sp<SkImage> skin;
+        // WAYPOINT_BUTTON_TRANSFORM.md — nav-button placement (see accessors above).
+        Vector2f buttonPos{0.5f, 0.88f};   // normalised screen position of the button centre
+        bool     buttonPosCustom = false;  // false → default row; true → absolute placement
+        float    buttonScale = 1.0f;       // multiplies the base button side
         float transitionSpeedMultiplier = TRANSITION_SPEED_DEFAULT;
         TransitionEasing transitionEasing = TransitionEasing::EASE;
         bool  isTransition = false;

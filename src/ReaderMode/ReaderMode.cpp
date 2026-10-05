@@ -407,11 +407,42 @@ class BranchChoiceElement : public GUIStuff::Element {
             world = w;
             targetId = target;
             label = std::move(edgeLabel);
-            CLAY(id, {
-                .layout = {.sizing = {.width = CLAY_SIZING_FIXED(BRANCH_BUTTON_SIDE),
-                                     .height = CLAY_SIZING_FIXED(BRANCH_BUTTON_SIDE)}},
-                .custom = {this}
-            }) {}
+            // WAYPOINT_BUTTON_TRANSFORM.md — size + placement come from the same
+            // next-stop waypoint that supplies the skin. Scale always applies; a
+            // custom position floats the button out of the default row to a normalised
+            // screen location (buttonPos * viewport, centred).
+            float side = BRANCH_BUTTON_SIDE;
+            bool customPos = false;
+            Vector2f normPos{0.5f, 0.88f};
+            const auto skinId = w->readerMode.resolve_skin_source_waypoint(target);
+            if (auto wpRef = w->netObjMan.get_obj_temporary_ref_from_id<Waypoint>(skinId)) {
+                side = BRANCH_BUTTON_SIDE * wpRef->get_button_scale();
+                customPos = wpRef->get_button_pos_custom();
+                normPos = wpRef->get_button_pos();
+            }
+            if (customPos) {
+                const Vector2f vp = w->main.window.size.cast<float>();
+                CLAY(id, {
+                    .layout = {.sizing = {.width = CLAY_SIZING_FIXED(side),
+                                         .height = CLAY_SIZING_FIXED(side)}},
+                    .floating = {
+                        .offset = { .x = normPos.x() * vp.x(), .y = normPos.y() * vp.y() },
+                        .zIndex = static_cast<int16_t>(gui.get_z_index() + 11),
+                        .attachPoints = {
+                            .element = CLAY_ATTACH_POINT_CENTER_CENTER,
+                            .parent  = CLAY_ATTACH_POINT_LEFT_TOP
+                        },
+                        .attachTo = CLAY_ATTACH_TO_ROOT
+                    },
+                    .custom = {this}
+                }) {}
+            } else {
+                CLAY(id, {
+                    .layout = {.sizing = {.width = CLAY_SIZING_FIXED(side),
+                                         .height = CLAY_SIZING_FIXED(side)}},
+                    .custom = {this}
+                }) {}
+            }
         }
 
         void clay_draw(SkCanvas* canvas, GUIStuff::UpdateInputData&, Clay_RenderCommand*, bool skiaAA) override {

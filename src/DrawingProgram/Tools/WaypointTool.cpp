@@ -265,6 +265,31 @@ void WaypointTool::gui_toolbox(Toolbar&) {
                             }});
                     }
                 }
+                // WAYPOINT_BUTTON_TRANSFORM.md — per-waypoint reader-mode nav-button
+                // placement (position + scale), bundled with the skin. Scale always
+                // applies; editing X/Y marks the position "custom" so the button leaves
+                // the default bottom-center row. Reset returns it to the row.
+                text_label(gui, "Nav button");
+                slider_scalar_field<float>(gui, "button scale", "Button scale",
+                    &wpRef->mutable_button_scale(),
+                    Waypoint::BUTTON_SCALE_MIN, Waypoint::BUTTON_SCALE_MAX,
+                    { .decimalPrecision = 2,
+                      .onEdit = [wpRef] { Waypoint::publish_button_transform_update(wpRef); } });
+                slider_scalar_field<float>(gui, "button x", "Button X",
+                    &wpRef->mutable_button_pos().x(), 0.0f, 1.0f,
+                    { .decimalPrecision = 2,
+                      .onEdit = [wpRef] { wpRef->set_button_pos_custom(true); Waypoint::publish_button_transform_update(wpRef); } });
+                slider_scalar_field<float>(gui, "button y", "Button Y",
+                    &wpRef->mutable_button_pos().y(), 0.0f, 1.0f,
+                    { .decimalPrecision = 2,
+                      .onEdit = [wpRef] { wpRef->set_button_pos_custom(true); Waypoint::publish_button_transform_update(wpRef); } });
+                if (wpRef->get_button_pos_custom()) {
+                    text_button(gui, "button reset pos", "Reset button position",
+                        { .onClick = [wpRef] {
+                            wpRef->set_button_pos_custom(false);
+                            Waypoint::publish_button_transform_update(wpRef);
+                        }});
+                }
                 // AUDIO.md §4 — per-waypoint audio cue block.
                 gui_audio_block(gui, drawP.world, wpRef);
             }

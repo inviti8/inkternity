@@ -192,6 +192,8 @@ void WaypointGraph::load_file(cereal::PortableBinaryInputArchive& a, VersionNumb
         // AUDIO.md §8 — read unconditionally; we don't preserve older
         // saves (the working assumption is "start clean," no migration).
         it->obj->load_audio_data_from_archive(a, version);
+        if (version >= VersionNumber(0, 35, 0))
+            it->obj->load_button_transform_from_archive(a, version);
         idsByIndex.push_back(it->obj.get_net_id());
     }
 

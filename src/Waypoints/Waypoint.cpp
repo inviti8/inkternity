@@ -107,6 +107,14 @@ void Waypoint::save_file(cereal::PortableBinaryOutputArchive& a) const {
     a(audioId);
     a(audioLoops);
     a(stopAudio);
+    // WAYPOINT_BUTTON_TRANSFORM.md — nav-button placement. Written from v0.35; the
+    // load path gates its read on file version >= 0.35.
+    a(buttonPos, buttonPosCustom, buttonScale);
+}
+
+void Waypoint::load_button_transform_from_archive(cereal::PortableBinaryInputArchive& a, VersionNumber) {
+    a(buttonPos, buttonPosCustom, buttonScale);
+    buttonScale = std::clamp(buttonScale, BUTTON_SCALE_MIN, BUTTON_SCALE_MAX);
 }
 
 void Waypoint::load_skin_from_archive(cereal::PortableBinaryInputArchive& a, VersionNumber) {
@@ -156,7 +164,9 @@ enum class WaypointCommand : uint8_t {
     // ResourceData sync, not these messages.
     SET_AUDIO_ID           = 6,
     SET_AUDIO_LOOPS        = 7,
-    SET_STOP_AUDIO         = 8
+    SET_STOP_AUDIO         = 8,
+    // WAYPOINT_BUTTON_TRANSFORM.md — nav-button pos/custom-flag/scale in one message.
+    SET_BUTTON_TRANSFORM   = 9
 };
 
 void Waypoint::publish_label_update(const NetObjTemporaryPtr<Waypoint>& o) {
@@ -208,6 +218,13 @@ void Waypoint::publish_skin_update(const NetObjTemporaryPtr<Waypoint>& o) {
 // AUDIO.md §9 — small scalar broadcasts for the three audio fields.
 // Fire on artist actions (attach / clear / toggle), never on
 // continuous interaction; no rate-limiting needed.
+void Waypoint::publish_button_transform_update(const NetObjTemporaryPtr<Waypoint>& o) {
+    o.send_update_to_all(RELIABLE_COMMAND_CHANNEL,
+        [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
+            a(WaypointCommand::SET_BUTTON_TRANSFORM, o->buttonPos, o->buttonPosCustom, o->buttonScale);
+        });
+}
+
 void Waypoint::publish_audio_id_update(const NetObjTemporaryPtr<Waypoint>& o) {
     o.send_update_to_all(RELIABLE_COMMAND_CHANNEL,
         [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
@@ -265,6 +282,8 @@ void Waypoint::write_constructor_data(const NetObjTemporaryPtr<Waypoint>& o, cer
     a(o->audioId);
     a(o->audioLoops);
     a(o->stopAudio);
+    // WAYPOINT_BUTTON_TRANSFORM.md — include nav-button placement in the snapshot.
+    a(o->buttonPos, o->buttonPosCustom, o->buttonScale);
 }
 
 void Waypoint::register_class(World& w) {
@@ -290,6 +309,8 @@ void Waypoint::register_class(World& w) {
         a(o->audioId);
         a(o->audioLoops);
         a(o->stopAudio);
+        a(o->buttonPos, o->buttonPosCustom, o->buttonScale);
+        o->buttonScale = std::clamp(o->buttonScale, BUTTON_SCALE_MIN, BUTTON_SCALE_MAX);
         canvas_scale_up_check(*o, w, c);
     };
     // P0.5-LIVE-SYNC: update handlers for every editable Waypoint
@@ -341,6 +362,10 @@ void Waypoint::register_class(World& w) {
                 break;
             case WaypointCommand::SET_STOP_AUDIO:
                 a(o->stopAudio);
+                break;
+            case WaypointCommand::SET_BUTTON_TRANSFORM:
+                a(o->buttonPos, o->buttonPosCustom, o->buttonScale);
+                o->buttonScale = std::clamp(o->buttonScale, BUTTON_SCALE_MIN, BUTTON_SCALE_MAX);
                 break;
         }
     };
@@ -423,6 +448,14 @@ void Waypoint::register_class(World& w) {
                 o.send_server_update_to_all_clients_except(c, RELIABLE_COMMAND_CHANNEL,
                     [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
                         a(WaypointCommand::SET_STOP_AUDIO, o->stopAudio);
+                    });
+                break;
+            case WaypointCommand::SET_BUTTON_TRANSFORM:
+                a(o->buttonPos, o->buttonPosCustom, o->buttonScale);
+                o->buttonScale = std::clamp(o->buttonScale, BUTTON_SCALE_MIN, BUTTON_SCALE_MAX);
+                o.send_server_update_to_all_clients_except(c, RELIABLE_COMMAND_CHANNEL,
+                    [](const NetObjTemporaryPtr<Waypoint>& o, cereal::PortableBinaryOutputArchive& a) {
+                        a(WaypointCommand::SET_BUTTON_TRANSFORM, o->buttonPos, o->buttonPosCustom, o->buttonScale);
                     });
                 break;
         }
