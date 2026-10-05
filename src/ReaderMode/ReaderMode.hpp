@@ -50,6 +50,13 @@ class ReaderMode {
         // branch-choice overlay should render.
         bool is_branch_point() const;
 
+        // Skin resolution for nav buttons: a button navigates to its immediate edge
+        // target, but transition waypoints auto-advance and never show a skin of their
+        // own, so the button should wear the skin of the next STOP it actually lands on.
+        // Walks edges from `targetId` through transition nodes until a non-transition
+        // (stop) waypoint, returning that id (or `targetId` on a dead-end/cycle/unknown).
+        NetworkingObjects::NetObjID resolve_skin_source_waypoint(NetworkingObjects::NetObjID targetId) const;
+
         // Direct navigation: pushes current onto history, sets new
         // current, snaps the camera. Does nothing if reader mode
         // isn't active.

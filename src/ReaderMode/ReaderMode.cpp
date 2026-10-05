@@ -146,6 +146,26 @@ bool ReaderMode::is_branch_point() const {
     return outgoing_choices().size() >= 2;
 }
 
+NetworkingObjects::NetObjID ReaderMode::resolve_skin_source_waypoint(NetworkingObjects::NetObjID targetId) const {
+    auto& edges = world.wpGraph.get_edges();
+    NetworkingObjects::NetObjID cur = targetId;
+    // Bounded walk — guards against a transition cycle.
+    for (int guard = 0; guard < 4096; ++guard) {
+        auto wpRef = world.netObjMan.get_obj_temporary_ref_from_id<Waypoint>(cur);
+        if (!wpRef) return cur;                    // unknown node — hand back what we have
+        if (!wpRef->is_transition()) return cur;   // reached a stop — use its skin
+        if (!edges) return cur;
+        NetworkingObjects::NetObjID next{};
+        bool found = false;
+        for (auto& info : *edges) {                 // follow the transition's (first) outgoing edge
+            if (info.obj->get_from() == cur) { next = info.obj->get_to(); found = true; break; }
+        }
+        if (!found) return cur;                     // dead-end transition
+        cur = next;
+    }
+    return cur;
+}
+
 void ReaderMode::navigate_to(NetworkingObjects::NetObjID id) {
     if (!active) return;
     cancel_auto_advance();
@@ -399,7 +419,10 @@ class BranchChoiceElement : public GUIStuff::Element {
             const auto& bb = boundingBox.value();
             const SkRect rect = SkRect::MakeLTRB(bb.min.x(), bb.min.y(), bb.max.x(), bb.max.y());
 
-            auto wpRef = world->netObjMan.get_obj_temporary_ref_from_id<Waypoint>(targetId);
+            // The button navigates to targetId, but wears the skin of the next STOP it
+            // lands on (transition nodes auto-advance and carry no skin of their own).
+            const auto skinId = world->readerMode.resolve_skin_source_waypoint(targetId);
+            auto wpRef = world->netObjMan.get_obj_temporary_ref_from_id<Waypoint>(skinId);
             const bool hasSkin = wpRef && wpRef->has_skin();
 
             // Hover/held visual feedback — outline brightens.
