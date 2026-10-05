@@ -64,6 +64,13 @@ void WaypointTool::erase_component(CanvasComponentContainer::ObjInfo*) {
 void WaypointTool::tool_update() {}
 
 void WaypointTool::draw(SkCanvas* canvas, const DrawData& drawData) {
+    // Reader mode hides all editor chrome. The waypoint tool can still be the active
+    // tool when the reader starts, and its draw would otherwise overlay edge previews,
+    // the framing-rect outline, and the nav-button preview on top of the reader UI —
+    // most visibly doubling the branch-choice button (the real overlay + this preview).
+    if (drawData.main && drawData.main->world && drawData.main->world->readerMode.is_active())
+        return;
+
     // Anchor for an edge endpoint or a framing-rect overlay: the screen
     // position of the waypoint's framing-rect center in current cam-space.
     const auto wp_anchor_in_cam_space = [&](const Waypoint& wp) -> Vector2f {
