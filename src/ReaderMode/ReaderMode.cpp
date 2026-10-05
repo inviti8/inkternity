@@ -562,6 +562,45 @@ void render_reader_branch_overlay(World& world, GUIStuff::GUIManager& gui) {
     if (choices.empty() && !world.readerMode.has_history()) return;
     using namespace GUIStuff;
 
+    // Back button lives in its OWN floating element, pinned bottom-left at the TOP
+    // z of the overlay. It used to be the first item in the centered choice row, but
+    // a custom-positioned choice button floats at a higher z and defaults near
+    // bottom-center (buttonPos {0.5, 0.88}) — i.e. right on top of the row — so as
+    // soon as an author customized a button's transform it covered the back button
+    // and stole its click, stranding the reader. Separating it spatially AND giving
+    // it the highest z guarantees it's always visible and clickable, wherever the
+    // author places the forward buttons. Sized to ~60% of a choice button so the bare
+    // arrow glyph reads as a symbol; TRANSPARENT_ALL kills the resting background.
+    if (world.readerMode.has_history()) {
+        gui.element<LayoutElement>("reader back container", [&] (LayoutElement*, const Clay_ElementId& bId) {
+            CLAY(bId, {
+                .layout = {
+                    .sizing = {.width = CLAY_SIZING_FIT(0), .height = CLAY_SIZING_FIT(0)},
+                    .padding = CLAY_PADDING_ALL(static_cast<uint16_t>(BRANCH_OVERLAY_PADDING)),
+                },
+                .floating = {
+                    .offset = { .x = BRANCH_OVERLAY_PADDING, .y = -BRANCH_OVERLAY_PADDING },
+                    .zIndex = static_cast<int16_t>(gui.get_z_index() + 12),
+                    .attachPoints = {
+                        .element = CLAY_ATTACH_POINT_LEFT_BOTTOM,
+                        .parent  = CLAY_ATTACH_POINT_LEFT_BOTTOM
+                    },
+                    .attachTo = CLAY_ATTACH_TO_ROOT
+                },
+            }) {
+                GUIStuff::ElementHelpers::svg_icon_button(
+                    gui, "reader back",
+                    "data/icons/RemixIcon/arrow-left-s-line.svg", {
+                    .drawType = GUIStuff::SelectableButton::DrawType::TRANSPARENT_ALL,
+                    .size = BRANCH_BUTTON_SIDE * 0.6f,
+                    .onClick = [&world] { world.readerMode.back(); }
+                });
+            }
+        });
+    }
+
+    if (choices.empty()) return;  // dead-end: back button (above) is the only chrome
+
     gui.element<LayoutElement>("reader branch overlay", [&] (LayoutElement*, const Clay_ElementId& lId) {
         CLAY(lId, {
             .layout = {
@@ -585,21 +624,6 @@ void render_reader_branch_overlay(World& world, GUIStuff::GUIManager& gui) {
                 .attachTo = CLAY_ATTACH_TO_ROOT
             },
         }) {
-            // Back button as the first item, only when there's history
-            // to pop. Sized down to ~60% of the choice-button side so
-            // the bare arrow glyph dominates and reads as "just a
-            // symbol" rather than a button-in-a-box. TRANSPARENT_ALL
-            // already kills the resting background; the smaller hit
-            // box collapses the empty padding around the glyph.
-            if (world.readerMode.has_history()) {
-                GUIStuff::ElementHelpers::svg_icon_button(
-                    gui, "reader back",
-                    "data/icons/RemixIcon/arrow-left-s-line.svg", {
-                    .drawType = GUIStuff::SelectableButton::DrawType::TRANSPARENT_ALL,
-                    .size = BRANCH_BUTTON_SIDE * 0.6f,
-                    .onClick = [&world] { world.readerMode.back(); }
-                });
-            }
             for (size_t i = 0; i < choices.size(); ++i) {
                 gui.new_id(static_cast<int64_t>(i), [&] {
                     gui.element<BranchChoiceElement>("button", &world, choices[i].first, choices[i].second);
