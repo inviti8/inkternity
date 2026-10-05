@@ -1,7 +1,8 @@
 # WAYPOINT_BUTTON_TRANSFORM.md — per-waypoint position + scale for reader-mode nav buttons
 
-**Status:** IMPLEMENTED (2026-10-05, commit c02053d on main) per the locked scope below; builds +
-launches, needs in-app test. Format bump landed as INFPNT000036 / 0.35.0.
+**Status:** IMPLEMENTED + TESTED (2026-10-05) per the locked scope below. Format bump landed as
+INFPNT000036 / 0.35.0. Core landed in c02053d; author-mode preview in 174ac60; three follow-up
+fixes in the DPI/units pass (see §8).
 **Owner:** Inkternity client.
 **Related:** `ReaderMode` (branch overlay), `Waypoint` (skins), PHASE1.md §5a (skins),
 TRANSITIONS.md (transition auto-advance), the next-stop skin fix (`ReaderMode::resolve_skin_source_waypoint`, commit 15b250b).
@@ -94,3 +95,30 @@ navigates toward; harmless otherwise.) A live drag-to-place handle in reader mod
 - `src/DrawingProgram/Tools/WaypointTool.cpp` — scale + X/Y sliders + reset.
 
 **Effort:** moderate, ~1–2 sessions. No new geometry; format bump only.
+
+## 8. Post-implementation fixes (2026-10-05)
+
+All three bugs below share one root cause: **Clay lays out in LOGICAL units**
+(`window size / final_gui_scale()`, see `GUIManager::update_window` /
+`GUIManager.cpp:539,574`) and its output canvas is scaled back up by the gui scale on
+draw, **while the author-mode tool preview draws directly into cam-space, which is
+PHYSICAL pixels**. Anything shared between the reader overlay and the author preview has
+to cross that physical↔logical seam explicitly, or it's off by `final_gui_scale()`
+(≈2 on a typical high-DPI display) — invisible on a 1× monitor, broken on 2×.
+
+- **Reader chrome double-rendered (2b5675e).** With the Waypoint tool still active when
+  reader mode started, `WaypointTool::draw` kept painting the author preview over the real
+  reader overlay → two buttons. Fixed by early-returning the whole tool draw when
+  `readerMode.is_active()`.
+- **Preview button too small (c10ce58).** The author preview sized the button at the raw
+  `BRANCH_BUTTON_SIDE * scale` (physical px); the reader button is a Clay element at
+  `BRANCH_BUTTON_SIDE * scale` logical → `* gui scale` physical. Fixed by multiplying the
+  preview side by `final_gui_scale()` (same as `drag_point_radius()`).
+- **Custom position vanished in reader (8f22a4c).** The custom floating offset used
+  `buttonPos * physical window size`, but Clay's floating offset is in logical units, so any
+  custom Y pushed the button ~gui scale× down and off-screen. Fixed by dividing the offset by
+  `final_gui_scale()`. (Default/row positions were immune — they place by attach points, not a
+  pixel offset.)
+
+Rule of thumb for future waypoint-button work: **author preview = physical px; reader/Clay =
+logical px.** If a placement is off by roughly the display scale, this seam is the suspect.
